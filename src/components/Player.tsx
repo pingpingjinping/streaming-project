@@ -35,7 +35,8 @@ import PlayerSettingsModal, {
   DEFAULT_PLAYER_SETTINGS,
 } from "./PlayerSettingsModal";
 import IframePlayer from "./IframePlayer";
-import { isReanimeId, ServerSource } from "@/lib/providers";
+import { isReanimeId } from "@/lib/providers/ids";
+import type { ServerSource } from "@/lib/providers/types";
 
 export interface EpisodeItem {
   number: number;
