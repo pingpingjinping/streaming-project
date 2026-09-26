@@ -272,6 +272,23 @@ export async function initDb() {
     console.warn("[initDb manual_subtitle_links warning]:", e);
   }
 
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS uploaded_subtitles (
+        user_id VARCHAR(100) NOT NULL,
+        anime_id VARCHAR(100) NOT NULL,
+        episode_number INT NOT NULL,
+        filename VARCHAR(255) NOT NULL,
+        content TEXT NOT NULL,
+        format VARCHAR(3) NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, anime_id, episode_number)
+      )
+    `;
+  } catch (e) {
+    console.warn("[initDb uploaded_subtitles warning]:", e);
+  }
+
   // Resolved international titles are shared by subtitle lookup and search.
   try {
     await sql`
@@ -1334,6 +1351,36 @@ export async function setAnissiaStreamCache(data: AnissiaStreamCache): Promise<b
     console.error("[db.setAnissiaStreamCache error]:", e);
     return false;
   }
+}
+
+export async function getUploadedSubtitle(userId: string, animeId: string, episodeNumber: number) {
+  const sql = getDb();
+  if (!sql) return null;
+  await initDb();
+  const rows = await sql`SELECT filename, content, format FROM uploaded_subtitles
+    WHERE user_id = ${userId} AND anime_id = ${animeId} AND episode_number = ${episodeNumber} LIMIT 1`;
+  if (!rows[0]) return null;
+  return { name: `Pi 저장: ${String(rows[0].filename)}`, orig_filename: String(rows[0].filename),
+    content: String(rows[0].content), format: rows[0].format === "ASS" ? "ASS" as const : "VTT" as const,
+    is_ass: rows[0].format === "ASS" };
+}
+
+export async function saveUploadedSubtitle(userId: string, animeId: string, episodeNumber: number,
+  filename: string, content: string, format: "ASS" | "VTT") {
+  const sql = getDb();
+  if (!sql) throw new Error("Database not connected");
+  await initDb();
+  await sql`INSERT INTO uploaded_subtitles (user_id, anime_id, episode_number, filename, content, format)
+    VALUES (${userId}, ${animeId}, ${episodeNumber}, ${filename}, ${content}, ${format})
+    ON CONFLICT (user_id, anime_id, episode_number) DO UPDATE SET filename = EXCLUDED.filename,
+      content = EXCLUDED.content, format = EXCLUDED.format, updated_at = CURRENT_TIMESTAMP`;
+}
+
+export async function deleteUploadedSubtitle(userId: string, animeId: string, episodeNumber: number) {
+  const sql = getDb();
+  if (!sql) return;
+  await initDb();
+  await sql`DELETE FROM uploaded_subtitles WHERE user_id = ${userId} AND anime_id = ${animeId} AND episode_number = ${episodeNumber}`;
 }
 
 export async function getManualSubtitleLink(userId: string, animeId: string, episodeNumber: number): Promise<string | null> {

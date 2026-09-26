@@ -7,7 +7,7 @@ import {
 } from "@/lib/subtitles";
 import { assertSafeProxyUrl, UnsafeProxyUrlError } from "@/lib/proxyGuard";
 import { getSessionUser } from "@/lib/auth";
-import { getManualSubtitleLink } from "@/lib/db";
+import { getManualSubtitleLink, getUploadedSubtitle } from "@/lib/db";
 
 export async function GET(request: NextRequest) {
   // 보안: 미인증 사용자가 서버를 오픈 크롤링/퍼치 서비스로 악용하는 것을 방지
@@ -40,6 +40,11 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    const uploaded = animeIdParam ? await getUploadedSubtitle(user.username, animeIdParam, ep) : null;
+    if (uploaded) {
+      return NextResponse.json({ success: true, anime_title: title, episode: ep, count: 1,
+        subtitles: [uploaded], creators: [] }, { headers: { "Cache-Control": "no-store" } });
+    }
     const savedUrl = animeIdParam ? await getManualSubtitleLink(user.username, animeIdParam, ep) : null;
     if (savedUrl) {
       const manual = await fetchCreatorSubtitle("직접 자막", savedUrl, title, ep, 12000);

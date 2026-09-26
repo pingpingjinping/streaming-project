@@ -1,4 +1,5 @@
 "use client";
+import LocalizedAnimeTitle from "@/components/LocalizedAnimeTitle";
 
 import { useEffect, useState } from "react";
 import FavoriteButton from "@/components/FavoriteButton";
@@ -190,7 +191,7 @@ export default function ReanimeDetailFallback({
               </div>
 
               <h1 className="mt-3 text-2xl font-black tracking-tight text-white sm:text-3xl lg:text-4xl">
-                {anime.title}
+                <LocalizedAnimeTitle title={anime.title} />
               </h1>
 
               {anime.genres.length > 0 && (

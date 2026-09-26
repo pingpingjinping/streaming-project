@@ -241,6 +241,29 @@ function ManualSubtitleLink({ animeId, episodeNumber }: { animeId: string; episo
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [uploadMessage, setUploadMessage] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const upload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setUploadMessage("Pi에 저장 중...");
+    try {
+      const form = new FormData();
+      form.set("animeId", animeId);
+      form.set("ep", String(episodeNumber));
+      form.set("file", file);
+      const response = await fetch("/api/anime/uploaded-subtitle", { method: "POST", body: form });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || "저장하지 못했습니다.");
+      setUploadMessage(`${file.name} Pi에 저장됨. 이 회차를 다시 열면 자동 적용됩니다.`);
+    } catch (error) {
+      setUploadMessage(error instanceof Error ? error.message : "업로드에 실패했습니다.");
+    } finally {
+      setUploading(false);
+      event.target.value = "";
+    }
+  };
   useEffect(() => {
     let cancelled = false;
     setSavedUrl("");
@@ -291,6 +314,14 @@ function ManualSubtitleLink({ animeId, episodeNumber }: { animeId: string; episo
         {savedUrl && <button type="button" onClick={remove} disabled={busy} className="rounded-lg border border-rose-500/30 px-3 py-2 text-xs text-rose-300 disabled:opacity-50">삭제</button>}
       </form>
       {message && <p className="mt-2 text-xs text-slate-300">{message}</p>}
+      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-white/10 pt-3 text-xs text-slate-300">
+        <label className="cursor-pointer rounded-lg border border-sky-500/40 px-3 py-2 text-sky-300 hover:bg-sky-600/20">
+          {uploading ? "Pi에 저장 중..." : "받은 자막 파일 Pi에 저장"}
+          <input type="file" accept=".ass,.ssa,.smi,.srt,.vtt,.zip" className="hidden" disabled={uploading} onChange={upload} />
+        </label>
+        <span>이 회차의 ASS/SRT/SMI/VTT 또는 ZIP</span>
+      </div>
+      {uploadMessage && <p className="mt-2 text-xs text-slate-300">{uploadMessage}</p>}
     </div>
   );
 }

@@ -122,7 +122,7 @@ export async function GET(request: NextRequest) {
       : DEFAULT_LINKKF_URL;
     const checkTargetUrl = isReanime ? `${currentBaseUrl}/api/v1/home` : currentBaseUrl;
     const health = isOhli24
-      ? await checkUrlWithChromium(checkTargetUrl, 10_000)
+      ? await checkUrlWithChromium(checkTargetUrl, 16_000)
       : await checkUrlHealth(checkTargetUrl, isReanime ? 8000 : 5000);
 
     return NextResponse.json({
@@ -218,7 +218,7 @@ export async function POST(request: NextRequest) {
     // 연결성 테스트 (저장 시에는 캐시 우회)
     const checkTarget = provider === "reanime" ? `${formatted}/api/v1/home` : formatted;
     const health = provider === "ohli24"
-      ? await checkUrlWithChromium(checkTarget, 10_000)
+      ? await checkUrlWithChromium(checkTarget, 16_000)
       : await checkUrlHealth(checkTarget, 8000, true);
     if (!health.ok && !force) {
       return NextResponse.json(

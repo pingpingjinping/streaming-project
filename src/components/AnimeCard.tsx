@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { AnimeListItem } from "@/lib/linkkf";
 import { PlayCircle } from "lucide-react";
+import LocalizedAnimeTitle from "@/components/LocalizedAnimeTitle";
 
 export default function AnimeCard({ anime }: { anime: AnimeListItem }) {
   const targetHref = anime.id
@@ -78,7 +79,7 @@ export default function AnimeCard({ anime }: { anime: AnimeListItem }) {
           className="line-clamp-2 text-sm font-bold text-slate-100 transition group-hover:text-purple-300 leading-snug"
           title={anime.title}
         >
-          {anime.title}
+          <LocalizedAnimeTitle title={anime.title} />
         </h3>
         <div className="mt-2 flex items-center justify-between text-xs text-slate-400">
           <div className="flex items-center transition group-hover:text-purple-400">

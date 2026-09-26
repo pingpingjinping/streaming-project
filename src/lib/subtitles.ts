@@ -123,6 +123,12 @@ function titleKind(value: string): "movie" | "ova" | "season" | "series" {
   return "series";
 }
 
+// Verified titles missing Korean labels and NamuWiki IDs on Wikidata.
+const VERIFIED_KOREAN_TITLES = new Map([
+  [normalizeLookupTitle("Ascendance of a Bookworm: Adopted Daughter of an Archduke").replace(/\s+/g, ""),
+    "책벌레의 하극상 ~사서가 되기 위해서라면 뭐든지 할 수 있어~ 영주의 양녀"],
+]);
+
 async function findVerifiedKoreanTitle(rawTitle: string): Promise<{ title: string; source: string } | null> {
   const searched = normalizeLookupTitle(rawTitle);
   if (searched.length < 3) return null;
@@ -143,7 +149,7 @@ async function findVerifiedKoreanTitle(rawTitle: string): Promise<{ title: strin
   for (const entity of Object.values(data.entities || {}) as Array<any>) {
     const names: string[] = [entity.labels?.en?.value, ...(entity.aliases?.en || []).map((alias: { value: string }) => alias.value)]
       .filter((name): name is string => typeof name === "string");
-    if (!names.some((name) => normalizeLookupTitle(name) === searched)) continue;
+    if (!names.some((name) => normalizeLookupTitle(name).replace(/\s+/g, "") === searched.replace(/\s+/g, ""))) continue;
     for (const claim of entity.claims?.P8885 || []) {
       const title = claim.mainsnak?.datavalue?.value;
       if (typeof title !== "string" || !/[가-힣]{2}/.test(title)) continue;
@@ -175,6 +181,13 @@ export async function resolveKoreanTitle(rawTitle: string): Promise<string> {
   if (!rawTitle) return "";
   const trimmed = rawTitle.trim();
   if (koreanTitleCache.has(trimmed)) return koreanTitleCache.get(trimmed)!;
+
+  const verifiedTitle = VERIFIED_KOREAN_TITLES.get(normalizeLookupTitle(trimmed).replace(/\s+/g, ""));
+  if (verifiedTitle) {
+    koreanTitleCache.set(trimmed, verifiedTitle);
+    await saveKoreanAnimeTitleMapping(trimmed, verifiedTitle, "verified-namuwiki");
+    return verifiedTitle;
+  }
 
   const storedTitle = await getCachedKoreanAnimeTitle(trimmed);
   if (storedTitle) {
@@ -494,7 +507,8 @@ export function convertToVtt(rawText: string, origExt: string): { content: strin
 export function extractSubtitleFromBuffer(
   buffer: Buffer,
   episodeNumber: number,
-  urlPath: string
+  urlPath: string,
+  strictEpisode = false
 ): { filename: string; orig_filename: string; content: string; format: "ASS" | "VTT"; is_ass: boolean } | null {
   const isZip =
     buffer.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04])) ||
@@ -561,7 +575,7 @@ export function extractSubtitleFromBuffer(
         candidates.sort((a, b) => a.priority - b.priority);
         matchedEntry = candidates[0].entry;
         matchedDecName = candidates[0].decName;
-      } else if (subEntries.length === 1) {
+      } else if (subEntries.length === 1 && !strictEpisode && parseEpisodes(subEntries[0].entryName).length === 0) {
         matchedEntry = subEntries[0];
         matchedDecName = matchedEntry.name;
       }
@@ -585,6 +599,7 @@ export function extractSubtitleFromBuffer(
       console.error("[Zip Extractor error]:", e);
     }
   } else {
+    if (strictEpisode) return null;
     const rawText = decodeSubtitleBuffer(buffer);
     const textLower = rawText.slice(0, 500).toLowerCase();
 
@@ -599,11 +614,12 @@ export function extractSubtitleFromBuffer(
 
     const isAss = textLower.includes("[script info]") || textLower.includes("dialogue:");
     const isSmi = textLower.includes("<sami") || textLower.includes("<sync");
+    const isVtt = /^\uFEFF?WEBVTT\b/.test(rawText);
     const isSrt = /^\s*\d+\s*[\r\n]+\d{2}:\d{2}/.test(rawText.slice(0, 100)) || rawText.includes("-->");
 
-    if (isAss || isSmi || isSrt) {
-      const origExt = isAss ? ".ass" : isSmi ? ".smi" : ".srt";
-      const { content, ext } = convertToVtt(rawText, origExt);
+    if (isAss || isSmi || isSrt || isVtt) {
+      const origExt = isAss ? ".ass" : isSmi ? ".smi" : isVtt ? ".vtt" : ".srt";
+      const { content, ext } = isVtt ? { content: rawText.replace(/^\uFEFF/, ""), ext: ".vtt" } : convertToVtt(rawText, origExt);
       const isAssResult = ext === ".ass" || ext === ".ssa";
       let displayFn = urlPath.split("/").pop() || `subtitle${origExt}`;
       if (displayFn.includes("?") || displayFn.length > 60) {
@@ -996,7 +1012,7 @@ export async function fetchCreatorSubtitle(
     const targetSeason = parseSeason(resolvedTitle) || parseSeason(animeTitle);
 
     // 단일 페이지에서 자막 파일(첨부파일/구글드라이브/다운로드링크) 추출 헬퍼 함수
-    const tryExtractFromPage = async (targetUrl: string): Promise<SubtitleResult | null> => {
+    const tryExtractFromPage = async (targetUrl: string, providedHtml?: string): Promise<SubtitleResult | null> => {
       try {
         let postUrl = targetUrl;
         const reqHeaders: Record<string, string> = { ...HEADERS };
@@ -1011,13 +1027,15 @@ export async function fetchCreatorSubtitle(
           reqHeaders["Referer"] = "https://blog.naver.com/";
         }
 
-        const res = await fetch(postUrl, {
-          headers: reqHeaders,
-          signal: AbortSignal.timeout(timeoutMs),
-        });
-        if (!res.ok) return null;
-
-        const html = await res.text();
+        let html = providedHtml;
+        if (!html) {
+          const res = await fetch(postUrl, {
+            headers: reqHeaders,
+            signal: AbortSignal.timeout(timeoutMs),
+          });
+          if (!res.ok) return null;
+          html = await res.text();
+        }
         const $ = cheerio.load(html);
 
         // 1) 티스토리 첨부파일 (tfile, attachment, kakaocdn.net)
@@ -1076,33 +1094,31 @@ export async function fetchCreatorSubtitle(
         interface ScoredLink {
           url: string;
           score: number;
+          exactEpisode: boolean;
         }
         const gdriveMatches: ScoredLink[] = [];
         const seenGdrive = new Set<string>();
-        const epStr = String(episodeNumber);
-        const epPad = epStr.padStart(2, "0");
+        const postTitleEpisodes = parseEpisodes($("title").text());
+        const postIsCurrentEpisode = postTitleEpisodes.length === 1 && postTitleEpisodes[0] === episodeNumber;
 
         $("a[href]").each((_, a) => {
           const href = $(a).attr("href")?.trim() || "";
-          if (extractGdriveId(href) && !seenGdrive.has(href)) {
-            seenGdrive.add(href);
+          const driveId = extractGdriveId(href);
+          if (driveId && !seenGdrive.has(driveId)) {
+            seenGdrive.add(driveId);
             const text = $(a).text().trim().toLowerCase();
+            const episodes = parseEpisodes(text);
+            // For example, 1화 must never match the link labelled 11화.
+            if (episodes.length && !episodes.includes(episodeNumber)) return;
             let score = 0;
-            if (
-              text.includes(`${epStr}화`) ||
-              text.includes(`${epPad}화`) ||
-              text.includes(` ${epStr} `) ||
-              text.includes(` ${epPad} `)
-            ) {
-              score += 60;
-            }
-            if (text.includes("~") || text.includes("전편") || text.includes("통합") || text.includes("완결")) {
+            if (episodes.length === 1 && episodes[0] === episodeNumber) score += 60;
+            if (episodes.length > 1 || text.includes("전편") || text.includes("통합") || text.includes("완결")) {
               score += 20;
             }
-            if (text.includes("폰트") || text.includes("font") || text.includes("op") || text.includes("ed")) {
+            if (episodes.length === 0 && (text.includes("폰트") || text.includes("font") || text.includes("op") || text.includes("ed"))) {
               score -= 60;
             }
-            gdriveMatches.push({ url: href, score });
+            gdriveMatches.push({ url: href, score, exactEpisode: episodes.length === 1 && episodes[0] === episodeNumber });
           }
         });
 
@@ -1111,9 +1127,10 @@ export async function fetchCreatorSubtitle(
         );
         if (bodyMatches) {
           for (const bm of bodyMatches) {
-            if (!seenGdrive.has(bm)) {
-              seenGdrive.add(bm);
-              gdriveMatches.push({ url: bm, score: 0 });
+            const driveId = extractGdriveId(bm);
+            if (driveId && !seenGdrive.has(driveId)) {
+              seenGdrive.add(driveId);
+              gdriveMatches.push({ url: bm, score: 0, exactEpisode: false });
             }
           }
         }
@@ -1122,9 +1139,10 @@ export async function fetchCreatorSubtitle(
         gdriveMatches.sort((a, b) => b.score - a.score);
 
         for (const item of gdriveMatches) {
-          const buf = await downloadFileWithTimeout(item.url, postUrl, timeoutMs + 1500);
+          const buf = await downloadFileWithTimeout(item.url, postUrl, Math.max(timeoutMs + 1500, 20000));
           if (buf && buf.length > 50) {
-            const extracted = extractSubtitleFromBuffer(buf, episodeNumber, item.url);
+            const extracted = extractSubtitleFromBuffer(buf, episodeNumber, item.url,
+              !item.exactEpisode && !postIsCurrentEpisode);
             if (extracted) {
               return {
                 name: creatorName,
@@ -1192,6 +1210,7 @@ export async function fetchCreatorSubtitle(
 
     let isInitialUrlCurrentEp = false;
     let postSeasonMatch = true;
+    let initialPageHtml = "";
 
     try {
       const initRes = await fetch(website, {
@@ -1200,6 +1219,7 @@ export async function fetchCreatorSubtitle(
       });
       if (initRes.ok) {
         const initHtml = await initRes.text();
+        initialPageHtml = initHtml;
         const $init = cheerio.load(initHtml);
         const pageTitle = $init("title").text().trim() || "";
         const pSeason = parseSeason(`${pageTitle} ${website}`);
@@ -1211,6 +1231,15 @@ export async function fetchCreatorSubtitle(
 
         if (postSeasonMatch && pEps.includes(episodeNumber)) {
           isInitialUrlCurrentEp = true;
+        }
+
+        // A single Blogger post can hold individually labelled Drive links or
+        // a range ZIP, while the post title itself has no episode number.
+        if (domain.includes("blogspot.com") && isSpecificPost && postSeasonMatch && !isInitialUrlCurrentEp) {
+          isInitialUrlCurrentEp = $init("a[href]").toArray().some((a) => {
+            const href = $init(a).attr("href") || "";
+            return Boolean(extractGdriveId(href)) && parseEpisodes($init(a).text()).includes(episodeNumber);
+          });
         }
 
         // Tistory's latest post usually links to the entire subtitle category.
@@ -1251,7 +1280,7 @@ export async function fetchCreatorSubtitle(
     } catch {}
 
     if (isInitialUrlCurrentEp) {
-      const initExtracted = await tryExtractFromPage(website);
+      const initExtracted = await tryExtractFromPage(website, initialPageHtml);
       if (initExtracted) return initExtracted;
     }
 
@@ -1419,6 +1448,15 @@ export function scoreAnimeMatch(
     if (itemSubject.includes(w)) overlapWords++;
   }
   score += overlapWords * 15;
+
+  // A separately named sequel must not inherit subtitles from its parent
+  // series merely because their long shared prefix has more matching words.
+  const sequelName = (resolvedTitle || rawTitle).match(/~[^~]+~\s+(.+)$/)?.[1];
+  if (sequelName && sequelName.length >= 3) {
+    const normalizedSequel = sequelName.replace(/\s+/g, "");
+    const normalizedSubject = itemSubject.replace(/\s+/g, "");
+    score += normalizedSubject.includes(normalizedSequel) ? 140 : -140;
+  }
 
   return score;
 }

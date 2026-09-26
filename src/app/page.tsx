@@ -19,6 +19,7 @@ import { checkAndPromoteNewEpisodes } from "@/lib/historyPromotion";
 import { resolveKoreanTitle } from "@/lib/subtitles";
 import { getCurrentUserId, requireAuth } from "@/lib/auth";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import {
   Flame,
   Tv,
@@ -47,6 +48,20 @@ interface SearchParams {
   scope?: string;
 }
 
+function anissiaIdFromUrl(query: string): number | null {
+  try {
+    const url = new URL(query);
+    if (url.protocol !== "https:" || !["anissia.net", "www.anissia.net"].includes(url.hostname)) return null;
+    if (url.pathname !== "/anime") return null;
+    const rawId = url.searchParams.get("animeNo");
+    if (!rawId || !/^\d+$/.test(rawId)) return null;
+    const id = Number(rawId);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 export default async function HomePage({
   searchParams,
 }: {
@@ -68,6 +83,8 @@ export default async function HomePage({
   const defaultTab = activeSource === "anissia" ? "recent_caption" : "airing";
   const tab = params.tab || (params.q ? "search" : defaultTab);
   const q = params.q?.trim() || "";
+  const directAnissiaId = anissiaIdFromUrl(q);
+  if (directAnissiaId) redirect(`/anime/ani_${directAnissiaId}`);
   const searchScope = params.scope === "all" ? "all" : "current";
   const page = parseInt(params.page || "1", 10) || 1;
   const genre = params.genre || "";
@@ -89,13 +106,23 @@ export default async function HomePage({
       ohli24: "Ohli24",
       linkkf: "Linkkf",
     };
-    const koreanTitle = await resolveKoreanTitle(q).catch(() => q);
-    const terms = [...new Set([q, koreanTitle].filter(Boolean))];
+    const normalizedQuery = q.replace(/\s+/g, " ").trim();
+    const koreanTitle = await resolveKoreanTitle(normalizedQuery).catch(() => normalizedQuery);
+    const withoutMiddleSubtitle = koreanTitle.replace(/~[^~]*~/g, " ").replace(/\s+/g, " ").trim();
+    const leadingWords = withoutMiddleSubtitle.split(/\s+/).slice(0, 2).join(" ");
+    const compactQuery = normalizedQuery.replace(/\s+/g, "");
+    const hangulPrefix = /^[가-힣]{6,}$/.test(compactQuery) ? compactQuery.slice(0, 3) : "";
+    const terms = [...new Set([normalizedQuery, koreanTitle, withoutMiddleSubtitle, leadingWords, compactQuery, hangulPrefix]
+      .filter((term) => term.length >= 2))];
     const results = await Promise.allSettled(
-      sources.flatMap((source) => terms.map(async (term) => ({
-        source,
-        result: await getProvider(source).searchAnime(term, page),
-      })))
+      sources.map(async (source) => {
+        const providerForSource = getProvider(source);
+        for (const term of terms) {
+          const result = await providerForSource.searchAnime(term, page);
+          if (result.items.length > 0) return { source, result };
+        }
+        return { source, result: { items: [], has_next: false, total_pages: 1 } };
+      })
     );
     const fulfilled = results.flatMap((entry) => entry.status === "fulfilled" ? [entry.value] : []);
     const uniqueItems = new Map<string, AnimeListItem>();
