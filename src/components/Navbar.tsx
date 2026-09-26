@@ -34,6 +34,7 @@ export default function Navbar() {
     if (match && (match[1] === "anissia" || match[1] === "ohli24" || match[1] === "linkkf" || match[1] === "reanime")) {
       setActiveSource(match[1] as StreamingSource);
     }
+    setSearchScope(new URLSearchParams(window.location.search).get("scope") === "all" ? "all" : "current");
   }, []);
 
   // 외부 클릭 시 드롭다운 닫기
