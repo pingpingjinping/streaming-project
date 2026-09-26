@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { cookies } from "next/headers";
+import type { NextRequest } from "next/server";
 
 // 보안: AUTH_SECRET 미설정 시 DATABASE_URL / POSTGRES_URL을 기반으로 고유한 시크릿 키를 자동 파생합니다.
 // 둘 다 없으면 토큰 발급/검증이 fail-closed 처리됩니다.
@@ -22,6 +23,26 @@ function resolveSecretKey(): string | undefined {
 const SECRET_KEY = resolveSecretKey();
 
 export const AUTH_COOKIE_NAME = "anime_auth_token";
+
+export function isSecureRequest(request: NextRequest): boolean {
+  const forwardedProto = request.headers
+    .get("x-forwarded-proto")
+    ?.split(",")[0]
+    ?.trim()
+    .toLowerCase();
+
+  return request.nextUrl.protocol === "https:" || forwardedProto === "https";
+}
+
+export function getAuthCookieOptions(request: NextRequest) {
+  return {
+    httpOnly: true,
+    secure: isSecureRequest(request),
+    sameSite: "lax" as const,
+    maxAge: 30 * 86400,
+    path: "/",
+  };
+}
 
 export interface AuthUser {
   id: number;
