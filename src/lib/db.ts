@@ -219,7 +219,7 @@ export async function initDb() {
         ani_rating REAL,
         ani_description TEXT,
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        CONSTRAINT uq_anissia_cache_id UNIQUE (anissia_id)
+        CONSTRAINT uq_anissia_stream_cache UNIQUE (anissia_id)
       )
     `;
     await sql`
