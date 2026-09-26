@@ -1,5 +1,6 @@
 import * as cheerio from "cheerio";
 import { getOhli24BaseUrl, DEFAULT_OHLI24_URL } from "@/lib/db";
+import { fetchHtmlWithChromium } from "@/lib/chromiumFetch";
 import {
   AnimeDetail,
   AnimeListFilterParams,
@@ -164,13 +165,10 @@ export async function getAnimeList(params: {
   }
 
   try {
-    const headers = { ...OHLI24_HEADERS, Referer: `${baseUrl}/` };
-    const res = await fetch(url, { headers, next: { revalidate: 60 } });
-    if (!res.ok) {
-      return { items: [], page, has_next: false, total_pages: 1 };
-    }
-
-    const html = await res.text();
+    const html = await fetchHtmlWithChromium(url, {
+      timeoutMs: 12_000,
+      cacheTtlMs: 60_000,
+    });
     const $ = cheerio.load(html);
     const items = parseShowItems($, baseUrl);
     const { hasNext, totalPages } = parsePagination($, page);
@@ -205,13 +203,10 @@ export async function searchAnime(keyword: string, page = 1): Promise<AnimeListR
     : `${baseUrl}/search/keyword-${encoded}.html`;
 
   try {
-    const headers = { ...OHLI24_HEADERS, Referer: `${baseUrl}/` };
-    const res = await fetch(url, { headers, next: { revalidate: 60 } });
-    if (!res.ok) {
-      return { items: [], page, has_next: false, total_pages: 1 };
-    }
-
-    const html = await res.text();
+    const html = await fetchHtmlWithChromium(url, {
+      timeoutMs: 12_000,
+      cacheTtlMs: 60_000,
+    });
     const $ = cheerio.load(html);
     const items = parseShowItems($, baseUrl);
     const { hasNext, totalPages } = parsePagination($, page);
@@ -252,19 +247,14 @@ export async function getAnimeDetail(animeId: string): Promise<AnimeDetail | nul
 
   for (const testUrl of candidateUrls) {
     try {
-      const headers = { ...OHLI24_HEADERS, Referer: `${baseUrl}/` };
-      const res = await fetch(testUrl, {
-        headers,
-        redirect: "follow",
-        next: { revalidate: 120 },
+      const text = await fetchHtmlWithChromium(testUrl, {
+        timeoutMs: 12_000,
+        cacheTtlMs: 120_000,
       });
-      if (res.ok) {
-        const text = await res.text();
-        if (text.includes("article-box") || text.includes("eps-box") || text.includes("movie-coment")) {
-          html = text;
-          finalUrl = res.url || testUrl;
-          break;
-        }
+      if (text.includes("article-box") || text.includes("eps-box") || text.includes("movie-coment")) {
+        html = text;
+        finalUrl = testUrl;
+        break;
       }
     } catch {}
   }
@@ -367,11 +357,10 @@ export async function getEpisodeStream(watchUrl: string): Promise<EpisodeStreamI
   const baseUrl = await getBaseUrl();
 
   try {
-    const headers = { ...OHLI24_HEADERS, Referer: `${baseUrl}/` };
-    const res = await fetch(watchUrl, { headers, next: { revalidate: 300 } });
-    if (!res.ok) return null;
-
-    const html = await res.text();
+    const html = await fetchHtmlWithChromium(watchUrl, {
+      timeoutMs: 12_000,
+      cacheTtlMs: 300_000,
+    });
     const $ = cheerio.load(html);
 
     // 회차 페이지 내 iframe(플레이어) 태그 탐색
