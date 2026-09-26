@@ -1089,8 +1089,9 @@ export async function fetchCreatorSubtitle(
 
         $("a[href]").each((_, a) => {
           const href = $(a).attr("href")?.trim() || "";
-          if (extractGdriveId(href) && !seenGdrive.has(href)) {
-            seenGdrive.add(href);
+          const driveId = extractGdriveId(href);
+          if (driveId && !seenGdrive.has(driveId)) {
+            seenGdrive.add(driveId);
             const text = $(a).text().trim().toLowerCase();
             const episodes = parseEpisodes(text);
             // For example, 1화 must never match the link labelled 11화.
@@ -1100,7 +1101,7 @@ export async function fetchCreatorSubtitle(
             if (episodes.length > 1 || text.includes("전편") || text.includes("통합") || text.includes("완결")) {
               score += 20;
             }
-            if (text.includes("폰트") || text.includes("font") || text.includes("op") || text.includes("ed")) {
+            if (episodes.length === 0 && (text.includes("폰트") || text.includes("font") || text.includes("op") || text.includes("ed"))) {
               score -= 60;
             }
             gdriveMatches.push({ url: href, score, exactEpisode: episodes.length === 1 && episodes[0] === episodeNumber });
@@ -1112,8 +1113,9 @@ export async function fetchCreatorSubtitle(
         );
         if (bodyMatches) {
           for (const bm of bodyMatches) {
-            if (!seenGdrive.has(bm)) {
-              seenGdrive.add(bm);
+            const driveId = extractGdriveId(bm);
+            if (driveId && !seenGdrive.has(driveId)) {
+              seenGdrive.add(driveId);
               gdriveMatches.push({ url: bm, score: 0, exactEpisode: false });
             }
           }
