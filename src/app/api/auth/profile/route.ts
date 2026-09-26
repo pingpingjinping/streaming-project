@@ -5,6 +5,7 @@ import {
   hashPassword,
   createAuthToken,
   AUTH_COOKIE_NAME,
+  getAuthCookieOptions,
 } from "@/lib/auth";
 import { findUserByUsername, updateUserProfile } from "@/lib/db";
 
@@ -101,13 +102,7 @@ export async function PATCH(request: NextRequest) {
         isFirstLogin: false,
       });
 
-      response.cookies.set(AUTH_COOKIE_NAME, newToken, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        maxAge: 30 * 86400,
-        path: "/",
-      });
+      response.cookies.set(AUTH_COOKIE_NAME, newToken, getAuthCookieOptions(request));
     }
 
     return response;
