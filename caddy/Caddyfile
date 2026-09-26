@@ -1,0 +1,4 @@
+https://anime.home.arpa:8443 {
+    tls internal
+    reverse_proxy anime:3000
+}
