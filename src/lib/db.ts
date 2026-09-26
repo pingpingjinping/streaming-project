@@ -257,6 +257,21 @@ export async function initDb() {
     }
   }
 
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS manual_subtitle_links (
+        user_id VARCHAR(100) NOT NULL,
+        anime_id VARCHAR(100) NOT NULL,
+        episode_number INT NOT NULL,
+        url TEXT NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, anime_id, episode_number)
+      )
+    `;
+  } catch (e) {
+    console.warn("[initDb manual_subtitle_links warning]:", e);
+  }
+
   // Resolved international titles are shared by subtitle lookup and search.
   try {
     await sql`
@@ -1319,4 +1334,28 @@ export async function setAnissiaStreamCache(data: AnissiaStreamCache): Promise<b
     console.error("[db.setAnissiaStreamCache error]:", e);
     return false;
   }
+}
+
+export async function getManualSubtitleLink(userId: string, animeId: string, episodeNumber: number): Promise<string | null> {
+  const sql = getDb();
+  if (!sql) return null;
+  await initDb();
+  const rows = await sql`SELECT url FROM manual_subtitle_links WHERE user_id = ${userId} AND anime_id = ${animeId} AND episode_number = ${episodeNumber} LIMIT 1`;
+  return rows[0]?.url ? String(rows[0].url) : null;
+}
+
+export async function saveManualSubtitleLink(userId: string, animeId: string, episodeNumber: number, url: string): Promise<void> {
+  const sql = getDb();
+  if (!sql) throw new Error("Database not connected");
+  await initDb();
+  await sql`INSERT INTO manual_subtitle_links (user_id, anime_id, episode_number, url)
+    VALUES (${userId}, ${animeId}, ${episodeNumber}, ${url})
+    ON CONFLICT (user_id, anime_id, episode_number) DO UPDATE SET url = EXCLUDED.url`;
+}
+
+export async function deleteManualSubtitleLink(userId: string, animeId: string, episodeNumber: number): Promise<void> {
+  const sql = getDb();
+  if (!sql) throw new Error("Database not connected");
+  await initDb();
+  await sql`DELETE FROM manual_subtitle_links WHERE user_id = ${userId} AND anime_id = ${animeId} AND episode_number = ${episodeNumber}`;
 }
