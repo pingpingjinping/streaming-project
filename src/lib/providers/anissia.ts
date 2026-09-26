@@ -7,7 +7,7 @@ import {
   EpisodeItem,
   EpisodeStreamInfo,
 } from "./types";
-import { ANISSIA_PREFIX, stripAnissiaId, toAnissiaId } from "./index";
+import { ANISSIA_PREFIX, stripAnissiaId, toAnissiaId } from "./ids";
 import { resolveAnissiaStream } from "../resolvers/videoResolver";
 
 export const ANISSIA_BASE_URL = "https://api.anissia.net";
