@@ -12,6 +12,7 @@ import {
 } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
 import { assertSafeProxyUrl, UnsafeProxyUrlError } from "@/lib/proxyGuard";
+import { checkUrlWithChromium } from "@/lib/chromiumFetch";
 
 export const dynamic = "force-dynamic";
 
@@ -120,7 +121,9 @@ export async function GET(request: NextRequest) {
       ? DEFAULT_OHLI24_URL
       : DEFAULT_LINKKF_URL;
     const checkTargetUrl = isReanime ? `${currentBaseUrl}/api/v1/home` : currentBaseUrl;
-    const health = await checkUrlHealth(checkTargetUrl, isReanime ? 8000 : 5000);
+    const health = isOhli24
+      ? await checkUrlWithChromium(checkTargetUrl, 10_000)
+      : await checkUrlHealth(checkTargetUrl, isReanime ? 8000 : 5000);
 
     return NextResponse.json({
       success: true,
@@ -214,7 +217,9 @@ export async function POST(request: NextRequest) {
 
     // 연결성 테스트 (저장 시에는 캐시 우회)
     const checkTarget = provider === "reanime" ? `${formatted}/api/v1/home` : formatted;
-    const health = await checkUrlHealth(checkTarget, 8000, true);
+    const health = provider === "ohli24"
+      ? await checkUrlWithChromium(checkTarget, 10_000)
+      : await checkUrlHealth(checkTarget, 8000, true);
     if (!health.ok && !force) {
       return NextResponse.json(
         {
