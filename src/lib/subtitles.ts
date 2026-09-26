@@ -109,9 +109,8 @@ export const ANIME_ABBREVIATIONS: Record<string, string> = {
 // Memory cache for resolved Korean titles to avoid redundant fetches
 const koreanTitleCache = new Map<string, string>();
 
-// Only accept an exact English alias attached to a Wikidata item with a Korean
-// NamuWiki article ID. A NamuWiki page cannot reliably be fetched by the Pi
-// (Cloudflare may reject server requests), so P8885 supplies its article title.
+// Prefer a NamuWiki article ID when an exact English Wikidata alias matches.
+// If that ID is absent, accept only a unique Korean label on the same entity.
 function normalizeLookupTitle(value: string): string {
   return value.normalize("NFKC").toLowerCase().replace(/[’']/g, "'")
     .replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/\s+/g, " ");
@@ -124,22 +123,23 @@ function titleKind(value: string): "movie" | "ova" | "season" | "series" {
   return "series";
 }
 
-async function findNamuWikiTitle(rawTitle: string): Promise<string | null> {
+async function findVerifiedKoreanTitle(rawTitle: string): Promise<{ title: string; source: string } | null> {
   const searched = normalizeLookupTitle(rawTitle);
   if (searched.length < 3) return null;
   const url = `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(rawTitle)}&language=en&format=json&limit=10`;
   const headers = { "User-Agent": "NetizenAnime/1.0 (https://github.com/pingpingjinping/streaming-project)", Accept: "application/json" };
-  const searchResponse = await fetch(url, { headers, signal: AbortSignal.timeout(4000) });
+  const searchResponse = await fetch(url, { headers, signal: AbortSignal.timeout(6500) });
   if (!searchResponse.ok) return null;
   const searchData = await searchResponse.json();
   const ids = (searchData.search || []).map((item: { id?: string }) => item.id)
     .filter((id: unknown): id is string => typeof id === "string" && /^Q\d+$/.test(id));
   if (!ids.length) return null;
-  const entityUrl = `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${ids.join("|")}&props=labels|aliases|claims&languages=en&format=json`;
-  const response = await fetch(entityUrl, { headers, signal: AbortSignal.timeout(4000) });
+  const entityUrl = `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${ids.join("|")}&props=labels|aliases|claims&languages=en|ko&format=json`;
+  const response = await fetch(entityUrl, { headers, signal: AbortSignal.timeout(6500) });
   if (!response.ok) return null;
   const data = await response.json();
-  const matches = new Set<string>();
+  const matches = new Map<string, string>();
+  const fallbackMatches = new Set<string>();
   for (const entity of Object.values(data.entities || {}) as Array<any>) {
     const names: string[] = [entity.labels?.en?.value, ...(entity.aliases?.en || []).map((alias: { value: string }) => alias.value)]
       .filter((name): name is string => typeof name === "string");
@@ -150,13 +150,27 @@ async function findNamuWikiTitle(rawTitle: string): Promise<string | null> {
       // A franchise page must never become an OVA/movie/season subtitle search.
       if (titleKind(rawTitle) !== titleKind(title)) continue;
       if (titleKind(rawTitle) === "season" && parseSeason(rawTitle) !== parseSeason(title)) continue;
-      matches.add(title);
+      matches.set(title, "namuwiki-id");
+    }
+    // Some anime have a Korean Wikidata label but no linked NamuWiki ID.
+    // Matching the entire English name and requiring one unambiguous result
+    // prevents the previous "first Korean label wins" false positives.
+    const label = entity.labels?.ko?.value;
+    if (typeof label === "string" && /[가-힣]{2}/.test(label) &&
+        titleKind(rawTitle) === titleKind(label) &&
+        (titleKind(rawTitle) !== "season" || parseSeason(rawTitle) === parseSeason(label))) {
+      fallbackMatches.add(label);
     }
   }
-  return matches.size === 1 ? [...matches][0] : null;
+  if (matches.size === 0 && fallbackMatches.size === 1) {
+    matches.set([...fallbackMatches][0], "wikidata-exact");
+  }
+  if (matches.size !== 1) return null;
+  const [title, source] = [...matches][0];
+  return { title, source };
 }
 
-/** Resolve an English anime title only when a matching NamuWiki article is identified. */
+/** Resolve English anime titles using verified Korean titles when available. */
 export async function resolveKoreanTitle(rawTitle: string): Promise<string> {
   if (!rawTitle) return "";
   const trimmed = rawTitle.trim();
@@ -181,14 +195,14 @@ export async function resolveKoreanTitle(rawTitle: string): Promise<string> {
 
   if (/[가-힣]{2,}/.test(trimmed)) return trimmed;
   try {
-    const title = await findNamuWikiTitle(trimmed);
-    if (title) {
-      koreanTitleCache.set(trimmed, title);
-      await saveKoreanAnimeTitleMapping(trimmed, title, "namuwiki-id");
-      return title;
+    const found = await findVerifiedKoreanTitle(trimmed);
+    if (found) {
+      koreanTitleCache.set(trimmed, found.title);
+      await saveKoreanAnimeTitleMapping(trimmed, found.title, found.source);
+      return found.title;
     }
   } catch (error) {
-    console.warn("[findNamuWikiTitle warning]:", error);
+    console.warn("[findVerifiedKoreanTitle warning]:", error);
   }
   koreanTitleCache.set(trimmed, trimmed);
   return trimmed;
@@ -1015,7 +1029,7 @@ export async function fetchCreatorSubtitle(
           });
 
           for (const dlUrl of links) {
-            const buf = await downloadFileWithTimeout(dlUrl, postUrl, timeoutMs + 1000);
+            const buf = await downloadFileWithTimeout(dlUrl, postUrl, Math.max(timeoutMs + 1000, 12000));
             if (buf && buf.length > 50) {
               const extracted = extractSubtitleFromBuffer(buf, episodeNumber, dlUrl);
               if (extracted) {
@@ -1182,7 +1196,7 @@ export async function fetchCreatorSubtitle(
     try {
       const initRes = await fetch(website, {
         headers: HEADERS,
-        signal: AbortSignal.timeout(4000),
+        signal: AbortSignal.timeout(domain.includes("tistory.com") ? 8000 : 4000),
       });
       if (initRes.ok) {
         const initHtml = await initRes.text();
@@ -1197,6 +1211,41 @@ export async function fetchCreatorSubtitle(
 
         if (postSeasonMatch && pEps.includes(episodeNumber)) {
           isInitialUrlCurrentEp = true;
+        }
+
+        // Tistory's latest post usually links to the entire subtitle category.
+        // Search that category for the requested episode before relying on
+        // site search, whose query may not match an English provider title.
+        if (domain.includes("tistory.com") && isSpecificPost && !isInitialUrlCurrentEp) {
+          const category = $init('a[href*="/category/"]').toArray()
+            .map((a) => $init(a).attr("href") || "")
+            .find((href) => {
+              try { return href.startsWith("/category/") && decodeURIComponent(href).includes("/category/자막/"); } catch { return false; }
+            });
+          if (category) {
+            const categoryUrl = new URL(category, website).toString();
+            const categoryResponse = await fetch(categoryUrl, {
+              headers: HEADERS,
+              signal: AbortSignal.timeout(10000),
+            });
+            if (categoryResponse.ok) {
+              const $category = cheerio.load(await categoryResponse.text());
+              let matchingPost = "";
+              $category(".article-content a.link-article").each((_, a) => {
+                const heading = $category(a).text().trim().split(/\r?\n/)[0].trim();
+                const href = $category(a).attr("href") || "";
+                if (!matchingPost && /\d+\s*화/.test(heading) &&
+                    parseEpisodes(heading).includes(episodeNumber) &&
+                    /^\/\d+(?:\?|$)/.test(href)) {
+                  matchingPost = new URL(href, categoryUrl).toString();
+                }
+              });
+              if (matchingPost) {
+                const categorySubtitle = await tryExtractFromPage(matchingPost);
+                if (categorySubtitle) return categorySubtitle;
+              }
+            }
+          }
         }
       }
     } catch {}
@@ -1472,7 +1521,7 @@ export async function getAnissiaCreators(
 export async function searchAllSubtitlesParallel(
   title: string,
   episodeNumber: number,
-  maxTotalTimeMs = 13000,
+  maxTotalTimeMs = 45000,
   directAnimeNo?: number | null
 ): Promise<{ subtitles: SubtitleResult[]; creators: CreatorInfo[] }> {
   // Create an overall timeout promise that resolves at 13 seconds
@@ -1506,7 +1555,7 @@ export async function searchAllSubtitlesParallel(
 
     // 3. Parallel fetch creator subtitles with individual 3.5s timeouts
     const creatorSubPromises = topCreators.map((c) =>
-      fetchCreatorSubtitle(c.name, c.website, targetTitle, episodeNumber, 3500)
+      fetchCreatorSubtitle(c.name, c.website, targetTitle, episodeNumber, 10000)
     );
 
     const settled = await Promise.allSettled(creatorSubPromises);
