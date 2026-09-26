@@ -57,7 +57,11 @@ export default function AnimeCard({ anime }: { anime: AnimeListItem }) {
         ) : null}
 
         {/* 우측 상단 뱃지: 자막 현황 or remarks */}
-        {anime.remarks ? (
+        {anime.source_name ? (
+          <span className="absolute top-2 right-2 rounded-lg bg-black/80 px-2 py-0.5 text-[10px] font-bold text-sky-200 border border-sky-500/40 backdrop-blur-md z-10">
+            {anime.source_name}
+          </span>
+        ) : anime.remarks ? (
           <span className="absolute top-2 right-2 rounded-lg bg-black/80 px-2 py-0.5 text-xs font-bold text-purple-300 border border-purple-500/40 backdrop-blur-md z-10">
             {anime.remarks}
           </span>

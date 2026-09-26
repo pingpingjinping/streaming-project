@@ -14,6 +14,7 @@ export interface AnimeListItem {
   creator_name?: string | null;
   caption_url?: string | null;
   status?: string | null;
+  source_name?: string;
 }
 
 export interface AnimeListResponse {

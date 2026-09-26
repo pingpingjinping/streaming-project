@@ -1,6 +1,7 @@
 import * as cheerio from "cheerio";
 import iconv from "iconv-lite";
 import AdmZip from "adm-zip";
+import { getCachedKoreanAnimeTitle, saveKoreanAnimeTitleMapping } from "@/lib/db";
 
 export const HEADERS: Record<string, string> = {
   "User-Agent":
@@ -160,6 +161,12 @@ export async function resolveKoreanTitle(rawTitle: string): Promise<string> {
     return koreanTitleCache.get(trimmed)!;
   }
 
+  const storedTitle = await getCachedKoreanAnimeTitle(trimmed);
+  if (storedTitle) {
+    koreanTitleCache.set(trimmed, storedTitle);
+    return storedTitle;
+  }
+
   const season = parseSeason(trimmed);
 
   // 1. 한국어 줄임말 및 영문/로마자 별칭 사전 매칭 (0ms)
@@ -168,6 +175,7 @@ export async function resolveKoreanTitle(rawTitle: string): Promise<string> {
     if (lower.includes(abbr.toLowerCase())) {
       const res = season && season > 1 && !full.includes(`${season}기`) ? `${full} ${season}기` : full;
       koreanTitleCache.set(trimmed, res);
+      await saveKoreanAnimeTitleMapping(trimmed, res, "alias");
       return res;
     }
   }
@@ -195,6 +203,7 @@ export async function resolveKoreanTitle(rawTitle: string): Promise<string> {
         const cleanOrig = item.originalSubject.replace(/\s*第?\d+期/g, "").trim();
         if (cleanOrig.length >= 2 && (cleanRaw.includes(cleanOrig) || cleanOrig.includes(cleanRaw))) {
           koreanTitleCache.set(trimmed, item.subject);
+          await saveKoreanAnimeTitleMapping(trimmed, item.subject, "anissia");
           return item.subject;
         }
       }
@@ -254,6 +263,7 @@ export async function resolveKoreanTitle(rawTitle: string): Promise<string> {
                   ? `${koLabel} ${season}기`
                   : koLabel;
                 koreanTitleCache.set(trimmed, res);
+                await saveKoreanAnimeTitleMapping(trimmed, res, "wikidata");
                 return res;
               }
             }
