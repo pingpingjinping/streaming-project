@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import AdmZip from "adm-zip";
 import { getSessionUser } from "@/lib/auth";
-import { deleteUploadedSubtitle, getUploadedSubtitle, saveUploadedSubtitle } from "@/lib/db";
+import { deleteUploadedSubtitle, getUploadedSubtitle, saveUploadedSubtitle, saveUploadedSubtitles } from "@/lib/db";
 import { extractSubtitleFromBuffer } from "@/lib/subtitles";
+import { inspectSubtitleArchive } from "@/lib/subtitleUpload";
 
 function target(animeId: unknown, episode: unknown) {
   const id = typeof animeId === "string" ? animeId.trim() : "";
@@ -42,13 +42,38 @@ export async function POST(request: NextRequest) {
   }
   if (isZip) {
     try {
-      const entries = new AdmZip(buffer).getEntries();
-      if (entries.length > 1000 || entries.some((entry) =>
-        /\.(ass|ssa|smi|srt|vtt)$/i.test(entry.entryName) && entry.header.size > 2 * 1024 * 1024)) {
-        return NextResponse.json({ message: "압축 파일에 너무 크거나 많은 자막이 있습니다." }, { status: 413 });
+      const { zip, entries } = inspectSubtitleArchive(buffer);
+      if (form?.get("mode") === "preview") {
+        return NextResponse.json({ entries }, { headers: { "Cache-Control": "no-store" } });
       }
-    } catch {
-      return NextResponse.json({ message: "압축 파일을 읽을 수 없습니다." }, { status: 400 });
+      const rawAssignments = form?.get("assignments");
+      if (typeof rawAssignments === "string") {
+        const selected = JSON.parse(rawAssignments);
+        if (!Array.isArray(selected) || !selected.length || selected.length > entries.length ||
+            selected.some((row) => !Number.isInteger(row?.index) || !Number.isInteger(row?.episode) ||
+              row.episode < 1 || row.episode > 10000 || !entries.some((entry) => entry.index === row.index)) ||
+            new Set(selected.map((row) => row.episode)).size !== selected.length ||
+            new Set(selected.map((row) => row.index)).size !== selected.length) {
+          return NextResponse.json({ message: "회차 배치에 중복되거나 잘못된 값이 있습니다." }, { status: 400 });
+        }
+        const subtitles = selected.map((row: { index: number; episode: number }) => {
+          const entry = zip.getEntries()[row.index];
+          const filename = entries.find((item) => item.index === row.index)!.filename;
+          const subtitle = extractSubtitleFromBuffer(entry.getData(), row.episode, filename);
+          if (!subtitle || Buffer.byteLength(subtitle.content) > 2 * 1024 * 1024) {
+            throw new Error(`${filename}: 자막 내용을 읽지 못했습니다.`);
+          }
+          return { episode: row.episode, filename: filename.slice(0, 255), content: subtitle.content, format: subtitle.format };
+        });
+        await saveUploadedSubtitles(user.username, key.id, subtitles);
+        return NextResponse.json({ success: true, saved: subtitles.map((subtitle) => subtitle.episode) },
+          { headers: { "Cache-Control": "no-store" } });
+      }
+      if (entries.length > 1) {
+        return NextResponse.json({ message: "묶음 ZIP은 아래 '받은 자막 파일 Pi에 저장'에서 회차를 확인한 후 올려 주세요." }, { status: 422 });
+      }
+    } catch (error) {
+      return NextResponse.json({ message: error instanceof Error ? error.message : "압축 파일을 읽을 수 없습니다." }, { status: 400 });
     }
   }
   const subtitle = extractSubtitleFromBuffer(buffer, key.ep, file.name);

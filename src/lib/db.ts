@@ -1376,6 +1376,21 @@ export async function saveUploadedSubtitle(userId: string, animeId: string, epis
       content = EXCLUDED.content, format = EXCLUDED.format, updated_at = CURRENT_TIMESTAMP`;
 }
 
+export async function saveUploadedSubtitles(userId: string, animeId: string,
+  subtitles: Array<{ episode: number; filename: string; content: string; format: "ASS" | "VTT" }>) {
+  const sql = getDb();
+  if (!sql) throw new Error("Database not connected");
+  await initDb();
+  await sql.begin(async (tx) => {
+    for (const subtitle of subtitles) {
+      await tx`INSERT INTO uploaded_subtitles (user_id, anime_id, episode_number, filename, content, format)
+        VALUES (${userId}, ${animeId}, ${subtitle.episode}, ${subtitle.filename}, ${subtitle.content}, ${subtitle.format})
+        ON CONFLICT (user_id, anime_id, episode_number) DO UPDATE SET filename = EXCLUDED.filename,
+          content = EXCLUDED.content, format = EXCLUDED.format, updated_at = CURRENT_TIMESTAMP`;
+    }
+  });
+}
+
 export async function deleteUploadedSubtitle(userId: string, animeId: string, episodeNumber: number) {
   const sql = getDb();
   if (!sql) return;
