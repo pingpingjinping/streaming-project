@@ -109,57 +109,58 @@ export const ANIME_ABBREVIATIONS: Record<string, string> = {
 // Memory cache for resolved Korean titles to avoid redundant fetches
 const koreanTitleCache = new Map<string, string>();
 
-// Schedule cache to quickly match Japanese native title / animeNo from Anissia
-let anissiaScheduleCache: { data: Array<{ subject: string; originalSubject: string; animeNo: number }>; timestamp: number } | null = null;
-
-async function fetchAnissiaSchedule(): Promise<Array<{ subject: string; originalSubject: string; animeNo: number }>> {
-  const now = Date.now();
-  if (anissiaScheduleCache && now - anissiaScheduleCache.timestamp < 3600_000) {
-    return anissiaScheduleCache.data;
-  }
-  try {
-    const days = [0, 1, 2, 3, 4, 5, 6, 7];
-    const results = await Promise.allSettled(
-      days.map((d) =>
-        fetch(`https://api.anissia.net/anime/schedule/${d}`, {
-          headers: HEADERS,
-          signal: AbortSignal.timeout(3000),
-        }).then((r) => r.json())
-      )
-    );
-    const list: Array<{ subject: string; originalSubject: string; animeNo: number }> = [];
-    for (const r of results) {
-      if (r.status === "fulfilled" && Array.isArray(r.value?.data)) {
-        for (const item of r.value.data) {
-          if (item?.subject) {
-            list.push({
-              subject: String(item.subject).trim(),
-              originalSubject: String(item.originalSubject || "").trim(),
-              animeNo: Number(item.animeNo || 0),
-            });
-          }
-        }
-      }
-    }
-    if (list.length > 0) {
-      anissiaScheduleCache = { data: list, timestamp: now };
-    }
-    return list;
-  } catch {
-    return anissiaScheduleCache?.data || [];
-  }
+// Only accept an exact English alias attached to a Wikidata item with a Korean
+// NamuWiki article ID. A NamuWiki page cannot reliably be fetched by the Pi
+// (Cloudflare may reject server requests), so P8885 supplies its article title.
+function normalizeLookupTitle(value: string): string {
+  return value.normalize("NFKC").toLowerCase().replace(/[’']/g, "'")
+    .replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/\s+/g, " ");
 }
 
-/**
- * 영문/로마자/일본어 제목이나 줄임말(전생슬, 귀칼 등)을 애니시아/블로그에서 검색 가능한
- * 정식 한국어 명칭으로 자동 변환합니다. (Wikidata & Anissia Schedule 연동)
- */
+function titleKind(value: string): "movie" | "ova" | "season" | "series" {
+  if (/\b(movie|film|theatrical|gekijouban|gekijoban)\b|劇場版|극장판/i.test(value)) return "movie";
+  if (/\b(ova|oad|special)\b|\b스페셜\b/i.test(value)) return "ova";
+  if (/\b(?:season|part|cour)\s*\d+\b|\b\d+(?:st|nd|rd|th)\s+season\b|\d+기|第?\d+期/i.test(value)) return "season";
+  return "series";
+}
+
+async function findNamuWikiTitle(rawTitle: string): Promise<string | null> {
+  const searched = normalizeLookupTitle(rawTitle);
+  if (searched.length < 3) return null;
+  const url = `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(rawTitle)}&language=en&format=json&limit=10`;
+  const headers = { "User-Agent": "NetizenAnime/1.0 (https://github.com/pingpingjinping/streaming-project)", Accept: "application/json" };
+  const searchResponse = await fetch(url, { headers, signal: AbortSignal.timeout(4000) });
+  if (!searchResponse.ok) return null;
+  const searchData = await searchResponse.json();
+  const ids = (searchData.search || []).map((item: { id?: string }) => item.id)
+    .filter((id: unknown): id is string => typeof id === "string" && /^Q\d+$/.test(id));
+  if (!ids.length) return null;
+  const entityUrl = `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${ids.join("|")}&props=labels|aliases|claims&languages=en&format=json`;
+  const response = await fetch(entityUrl, { headers, signal: AbortSignal.timeout(4000) });
+  if (!response.ok) return null;
+  const data = await response.json();
+  const matches = new Set<string>();
+  for (const entity of Object.values(data.entities || {}) as Array<any>) {
+    const names: string[] = [entity.labels?.en?.value, ...(entity.aliases?.en || []).map((alias: { value: string }) => alias.value)]
+      .filter((name): name is string => typeof name === "string");
+    if (!names.some((name) => normalizeLookupTitle(name) === searched)) continue;
+    for (const claim of entity.claims?.P8885 || []) {
+      const title = claim.mainsnak?.datavalue?.value;
+      if (typeof title !== "string" || !/[가-힣]{2}/.test(title)) continue;
+      // A franchise page must never become an OVA/movie/season subtitle search.
+      if (titleKind(rawTitle) !== titleKind(title)) continue;
+      if (titleKind(rawTitle) === "season" && parseSeason(rawTitle) !== parseSeason(title)) continue;
+      matches.add(title);
+    }
+  }
+  return matches.size === 1 ? [...matches][0] : null;
+}
+
+/** Resolve an English anime title only when a matching NamuWiki article is identified. */
 export async function resolveKoreanTitle(rawTitle: string): Promise<string> {
   if (!rawTitle) return "";
   const trimmed = rawTitle.trim();
-  if (koreanTitleCache.has(trimmed)) {
-    return koreanTitleCache.get(trimmed)!;
-  }
+  if (koreanTitleCache.has(trimmed)) return koreanTitleCache.get(trimmed)!;
 
   const storedTitle = await getCachedKoreanAnimeTitle(trimmed);
   if (storedTitle) {
@@ -167,112 +168,28 @@ export async function resolveKoreanTitle(rawTitle: string): Promise<string> {
     return storedTitle;
   }
 
-  const season = parseSeason(trimmed);
-
-  // 1. 한국어 줄임말 및 영문/로마자 별칭 사전 매칭 (0ms)
   const lower = trimmed.toLowerCase();
   for (const [abbr, full] of Object.entries(ANIME_ABBREVIATIONS)) {
-    if (lower.includes(abbr.toLowerCase())) {
-      const res = season && season > 1 && !full.includes(`${season}기`) ? `${full} ${season}기` : full;
-      koreanTitleCache.set(trimmed, res);
-      await saveKoreanAnimeTitleMapping(trimmed, res, "alias");
-      return res;
-    }
+    if (!lower.includes(abbr.toLowerCase())) continue;
+    // Short aliases apply only to the whole title; otherwise a movie or sequel
+    // could be silently mapped to the parent series.
+    if (normalizeLookupTitle(trimmed) !== normalizeLookupTitle(abbr)) continue;
+    koreanTitleCache.set(trimmed, full);
+    await saveKoreanAnimeTitleMapping(trimmed, full, "alias");
+    return full;
   }
 
-  // 2. 이미 2글자 이상의 한글이 포함된 경우 (단, 줄임말이 아닌 일반 한국어 제목)
-  const hangulMatch = trimmed.match(/[가-힣]{2,}/g);
-  if (hangulMatch && hangulMatch.join("").length >= 2) {
-    koreanTitleCache.set(trimmed, trimmed);
-    return trimmed;
+  if (/[가-힣]{2,}/.test(trimmed)) return trimmed;
+  try {
+    const title = await findNamuWikiTitle(trimmed);
+    if (title) {
+      koreanTitleCache.set(trimmed, title);
+      await saveKoreanAnimeTitleMapping(trimmed, title, "namuwiki-id");
+      return title;
+    }
+  } catch (error) {
+    console.warn("[findNamuWikiTitle warning]:", error);
   }
-
-  // 3. 애니시아 방영 스케줄 캐시와 원제(일문) 대조 매칭
-  try {
-    const schedule = await fetchAnissiaSchedule();
-    const cleanRaw = trimmed
-      .replace(/[\(\[\{<~].*?[\]\)\}>~]/g, "")
-      .replace(/\bseason\s*\d+\b/gi, "")
-      .replace(/\b\d+(?:st|nd|rd|th)\s*season\b/gi, "")
-      .replace(/\s*第?\d+期/g, "")
-      .replace(/\bpart\s*\d+\b/gi, "")
-      .trim();
-
-    for (const item of schedule) {
-      if (item.originalSubject) {
-        const cleanOrig = item.originalSubject.replace(/\s*第?\d+期/g, "").trim();
-        if (cleanOrig.length >= 2 && (cleanRaw.includes(cleanOrig) || cleanOrig.includes(cleanRaw))) {
-          koreanTitleCache.set(trimmed, item.subject);
-          await saveKoreanAnimeTitleMapping(trimmed, item.subject, "anissia");
-          return item.subject;
-        }
-      }
-    }
-  } catch {}
-
-  // 4. Wikidata 공개 엔티티 검색을 통한 다국어 -> 한국어 자동 번역
-  try {
-    const cleanSearch = trimmed
-      .replace(/[\(\[\{<~].*?[\]\)\}>~]/g, "")
-      .replace(/\bseason\s*\d+\b/gi, "")
-      .replace(/\b\d+(?:st|nd|rd|th)\s*season\b/gi, "")
-      .replace(/\bpart\s*\d+\b/gi, "")
-      .replace(/\b(tv|bd|uncensored|cour\s*\d+)\b/gi, "")
-      .replace(/[^\w\s가-힣]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    const searchCandidates: string[] = [];
-    if (cleanSearch.length >= 2) searchCandidates.push(cleanSearch);
-    const prefix = cleanSearch.split(/\s*[:\-\~\|]\s*/)[0].trim();
-    if (prefix && prefix !== cleanSearch && prefix.length >= 3) {
-      searchCandidates.push(prefix);
-    }
-
-    for (const cand of searchCandidates) {
-      const searchUrl = `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(cand)}&language=en&format=json&limit=5`;
-      const res = await fetch(searchUrl, {
-        headers: {
-          "User-Agent": "NetizenAnime/1.0 (https://a-sigma-ecru.vercel.app; support@netizen.kr)",
-          Accept: "application/json",
-        },
-        signal: AbortSignal.timeout(3000),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        const entities = data.search || [];
-        if (entities.length > 0) {
-          const ids = entities.slice(0, 4).map((e: any) => e.id).join("|");
-          const getUrl = `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${ids}&props=labels|aliases&languages=ko&format=json`;
-          const getRes = await fetch(getUrl, {
-            headers: {
-              "User-Agent": "NetizenAnime/1.0 (https://a-sigma-ecru.vercel.app; support@netizen.kr)",
-              Accept: "application/json",
-            },
-            signal: AbortSignal.timeout(3000),
-          });
-
-          if (getRes.ok) {
-            const getData = await getRes.json();
-            for (const ent of Object.values(getData.entities || {})) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const koLabel = (ent as any)?.labels?.ko?.value;
-              if (koLabel) {
-                const res = season && season > 1 && !koLabel.includes(`${season}기`)
-                  ? `${koLabel} ${season}기`
-                  : koLabel;
-                koreanTitleCache.set(trimmed, res);
-                await saveKoreanAnimeTitleMapping(trimmed, res, "wikidata");
-                return res;
-              }
-            }
-          }
-        }
-      }
-    }
-  } catch {}
-
   koreanTitleCache.set(trimmed, trimmed);
   return trimmed;
 }
