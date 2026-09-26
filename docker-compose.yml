@@ -47,5 +47,23 @@ services:
       retries: 3
       start_period: 30s
 
+  caddy:
+    image: caddy:2-alpine
+    container_name: anime-caddy
+    restart: unless-stopped
+    depends_on:
+      anime:
+        condition: service_healthy
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - anime-caddy-data:/data
+      - anime-caddy-config:/config
+
 volumes:
   anime-postgres-data:
+  anime-caddy-data:
+    name: anime-caddy-data
+  anime-caddy-config:
+    name: anime-caddy-config
