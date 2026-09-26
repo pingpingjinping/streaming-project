@@ -494,7 +494,8 @@ export function convertToVtt(rawText: string, origExt: string): { content: strin
 export function extractSubtitleFromBuffer(
   buffer: Buffer,
   episodeNumber: number,
-  urlPath: string
+  urlPath: string,
+  strictEpisode = false
 ): { filename: string; orig_filename: string; content: string; format: "ASS" | "VTT"; is_ass: boolean } | null {
   const isZip =
     buffer.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04])) ||
@@ -561,7 +562,7 @@ export function extractSubtitleFromBuffer(
         candidates.sort((a, b) => a.priority - b.priority);
         matchedEntry = candidates[0].entry;
         matchedDecName = candidates[0].decName;
-      } else if (subEntries.length === 1) {
+      } else if (subEntries.length === 1 && !strictEpisode && parseEpisodes(subEntries[0].entryName).length === 0) {
         matchedEntry = subEntries[0];
         matchedDecName = matchedEntry.name;
       }
@@ -585,6 +586,7 @@ export function extractSubtitleFromBuffer(
       console.error("[Zip Extractor error]:", e);
     }
   } else {
+    if (strictEpisode) return null;
     const rawText = decodeSubtitleBuffer(buffer);
     const textLower = rawText.slice(0, 500).toLowerCase();
 
@@ -1076,33 +1078,30 @@ export async function fetchCreatorSubtitle(
         interface ScoredLink {
           url: string;
           score: number;
+          exactEpisode: boolean;
         }
         const gdriveMatches: ScoredLink[] = [];
         const seenGdrive = new Set<string>();
-        const epStr = String(episodeNumber);
-        const epPad = epStr.padStart(2, "0");
+        const postTitleEpisodes = parseEpisodes($("title").text());
+        const postIsCurrentEpisode = postTitleEpisodes.length === 1 && postTitleEpisodes[0] === episodeNumber;
 
         $("a[href]").each((_, a) => {
           const href = $(a).attr("href")?.trim() || "";
           if (extractGdriveId(href) && !seenGdrive.has(href)) {
             seenGdrive.add(href);
             const text = $(a).text().trim().toLowerCase();
+            const episodes = parseEpisodes(text);
+            // For example, 1화 must never match the link labelled 11화.
+            if (episodes.length && !episodes.includes(episodeNumber)) return;
             let score = 0;
-            if (
-              text.includes(`${epStr}화`) ||
-              text.includes(`${epPad}화`) ||
-              text.includes(` ${epStr} `) ||
-              text.includes(` ${epPad} `)
-            ) {
-              score += 60;
-            }
-            if (text.includes("~") || text.includes("전편") || text.includes("통합") || text.includes("완결")) {
+            if (episodes.length === 1 && episodes[0] === episodeNumber) score += 60;
+            if (episodes.length > 1 || text.includes("전편") || text.includes("통합") || text.includes("완결")) {
               score += 20;
             }
             if (text.includes("폰트") || text.includes("font") || text.includes("op") || text.includes("ed")) {
               score -= 60;
             }
-            gdriveMatches.push({ url: href, score });
+            gdriveMatches.push({ url: href, score, exactEpisode: episodes.length === 1 && episodes[0] === episodeNumber });
           }
         });
 
@@ -1113,7 +1112,7 @@ export async function fetchCreatorSubtitle(
           for (const bm of bodyMatches) {
             if (!seenGdrive.has(bm)) {
               seenGdrive.add(bm);
-              gdriveMatches.push({ url: bm, score: 0 });
+              gdriveMatches.push({ url: bm, score: 0, exactEpisode: false });
             }
           }
         }
@@ -1124,7 +1123,8 @@ export async function fetchCreatorSubtitle(
         for (const item of gdriveMatches) {
           const buf = await downloadFileWithTimeout(item.url, postUrl, timeoutMs + 1500);
           if (buf && buf.length > 50) {
-            const extracted = extractSubtitleFromBuffer(buf, episodeNumber, item.url);
+            const extracted = extractSubtitleFromBuffer(buf, episodeNumber, item.url,
+              !item.exactEpisode && !postIsCurrentEpisode);
             if (extracted) {
               return {
                 name: creatorName,
