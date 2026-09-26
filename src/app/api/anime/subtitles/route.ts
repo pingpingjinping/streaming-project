@@ -79,7 +79,7 @@ export async function GET(request: NextRequest) {
     }
 
     // 13초 타임아웃 방어 가드 적용 (directAnimeNo 지원)
-    const result = await searchAllSubtitlesParallel(searchTarget, ep, 13000, directAnimeNo);
+    const result = await searchAllSubtitlesParallel(searchTarget, ep, 45000, directAnimeNo);
 
     // HTML 등 비정상 자막 필터링
     const validSubtitles = (result.subtitles || []).filter((s) => {
