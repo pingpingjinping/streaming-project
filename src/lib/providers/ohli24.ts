@@ -10,7 +10,7 @@ import {
   EpisodeStreamInfo,
   ServerSource,
 } from "./types";
-import { OHLI24_PREFIX, stripOhli24Id, toOhli24Id } from "./index";
+import { OHLI24_PREFIX, stripOhli24Id, toOhli24Id } from "./ids";
 
 export const BASE_URL = DEFAULT_OHLI24_URL;
 
