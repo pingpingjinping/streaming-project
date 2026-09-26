@@ -6,6 +6,7 @@ import { getProviderByAnimeId } from "@/lib/providers";
 import { requireAuth, getCurrentUserId } from "@/lib/auth";
 import { getAnimeHistoryMap } from "@/lib/db";
 import Link from "next/link";
+import LocalizedAnimeTitle from "@/components/LocalizedAnimeTitle";
 import { notFound } from "next/navigation";
 import { Play, Film, Calendar, CheckCircle2 } from "lucide-react";
 
@@ -85,7 +86,7 @@ export default async function AnimeDetailPage({
                 </div>
 
                 <h1 className="mt-3 text-2xl font-black tracking-tight text-white sm:text-3xl lg:text-4xl">
-                  {anime.title}
+                  <LocalizedAnimeTitle title={anime.title} />
                 </h1>
 
                 {anime.genres.length > 0 && (

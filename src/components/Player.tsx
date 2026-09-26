@@ -1,4 +1,5 @@
 "use client";
+import LocalizedAnimeTitle from "@/components/LocalizedAnimeTitle";
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import {
@@ -588,6 +589,8 @@ export default function Player(props: PlayerProps) {
     return 22;
   });
   const localFileInputRef = useRef<HTMLInputElement>(null);
+  const uploadFileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadingSub, setUploadingSub] = useState(false);
 
   // Skip States & Preferences
   const [skipIntervals, setSkipIntervals] = useState<SkipInterval[]>([]);
@@ -1875,6 +1878,46 @@ export default function Player(props: PlayerProps) {
     } finally {
       if (e.target) e.target.value = "";
     }
+  };
+
+  const handleUploadSubFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingSub(true);
+    try {
+      const form = new FormData();
+      form.set("animeId", animeId);
+      form.set("ep", String(currentEp));
+      form.set("file", file);
+      const response = await fetch("/api/anime/uploaded-subtitle", { method: "POST", body: form });
+      const data = await response.json();
+      if (!response.ok || !data.subtitle) throw new Error(data.message || "업로드에 실패했습니다.");
+      const uploaded: SubtitleItem = data.subtitle;
+      setSubs((previous) => {
+        const next = [uploaded, ...previous.filter((sub) => !sub.name.startsWith("Pi 저장:"))];
+        setSelectedSubIndex(0);
+        applySubtitle(uploaded, currentSyncOffset);
+        setTimeout(() => refreshSubtitleSettings(next, 0), 100);
+        return next;
+      });
+      if (artRef.current) artRef.current.notice.show = `Pi에 자막 저장 완료: ${file.name}`;
+    } catch (error) {
+      if (artRef.current) artRef.current.notice.show = error instanceof Error ? error.message : "자막 업로드에 실패했습니다.";
+    } finally {
+      setUploadingSub(false);
+      e.target.value = "";
+    }
+  };
+
+  const removeUploadedSub = async () => {
+    const response = await fetch(`/api/anime/uploaded-subtitle?animeId=${encodeURIComponent(animeId)}&ep=${currentEp}`, { method: "DELETE" });
+    if (!response.ok) {
+      if (artRef.current) artRef.current.notice.show = "저장된 자막을 삭제하지 못했습니다.";
+      return;
+    }
+    setSubs((previous) => previous.filter((sub) => !sub.name.startsWith("Pi 저장:")));
+    setSelectedSubIndex(-1);
+    if (artRef.current) artRef.current.notice.show = "Pi에 저장된 이 회차 자막을 삭제했습니다.";
   };
 
   // On-demand creator subtitle loader
@@ -3598,7 +3641,7 @@ export default function Player(props: PlayerProps) {
             ) : (
               <ArrowLeft className="h-4 w-4" />
             )}
-            {animeTitle}
+            <LocalizedAnimeTitle title={animeTitle} />
           </Link>
           <span className="text-slate-600">/</span>
           <span className="font-extrabold text-purple-300">
@@ -4032,6 +4075,16 @@ export default function Player(props: PlayerProps) {
 
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-400 mr-1">총 {subs.length}개 발견</span>
+            <input type="file" ref={uploadFileInputRef} accept=".ass,.ssa,.smi,.srt,.vtt,.zip"
+              onChange={handleUploadSubFile} className="hidden" />
+            <button type="button" disabled={uploadingSub} onClick={() => uploadFileInputRef.current?.click()}
+              className="rounded-xl border border-sky-500/40 bg-sky-500/10 px-3 py-1.5 text-xs font-bold text-sky-300 hover:bg-sky-600 hover:text-white disabled:opacity-50"
+              title="받은 자막 파일을 Pi에 업로드하고 이 회차에 저장">
+              {uploadingSub ? "Pi에 저장 중..." : "Pi에 자막 저장"}
+            </button>
+            {subs.some((sub) => sub.name.startsWith("Pi 저장:")) && (
+              <button type="button" onClick={removeUploadedSub} className="text-xs text-rose-300 hover:text-rose-200">저장 삭제</button>
+            )}
             {playerSettings.localSubBtn && (
               <>
                 <input

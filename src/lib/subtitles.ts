@@ -123,6 +123,12 @@ function titleKind(value: string): "movie" | "ova" | "season" | "series" {
   return "series";
 }
 
+// Verified titles missing Korean labels and NamuWiki IDs on Wikidata.
+const VERIFIED_KOREAN_TITLES = new Map([
+  [normalizeLookupTitle("Ascendance of a Bookworm: Adopted Daughter of an Archduke").replace(/\s+/g, ""),
+    "책벌레의 하극상 ~사서가 되기 위해서라면 뭐든지 할 수 있어~ 영주의 양녀"],
+]);
+
 async function findVerifiedKoreanTitle(rawTitle: string): Promise<{ title: string; source: string } | null> {
   const searched = normalizeLookupTitle(rawTitle);
   if (searched.length < 3) return null;
@@ -143,7 +149,7 @@ async function findVerifiedKoreanTitle(rawTitle: string): Promise<{ title: strin
   for (const entity of Object.values(data.entities || {}) as Array<any>) {
     const names: string[] = [entity.labels?.en?.value, ...(entity.aliases?.en || []).map((alias: { value: string }) => alias.value)]
       .filter((name): name is string => typeof name === "string");
-    if (!names.some((name) => normalizeLookupTitle(name) === searched)) continue;
+    if (!names.some((name) => normalizeLookupTitle(name).replace(/\s+/g, "") === searched.replace(/\s+/g, ""))) continue;
     for (const claim of entity.claims?.P8885 || []) {
       const title = claim.mainsnak?.datavalue?.value;
       if (typeof title !== "string" || !/[가-힣]{2}/.test(title)) continue;
@@ -175,6 +181,13 @@ export async function resolveKoreanTitle(rawTitle: string): Promise<string> {
   if (!rawTitle) return "";
   const trimmed = rawTitle.trim();
   if (koreanTitleCache.has(trimmed)) return koreanTitleCache.get(trimmed)!;
+
+  const verifiedTitle = VERIFIED_KOREAN_TITLES.get(normalizeLookupTitle(trimmed).replace(/\s+/g, ""));
+  if (verifiedTitle) {
+    koreanTitleCache.set(trimmed, verifiedTitle);
+    await saveKoreanAnimeTitleMapping(trimmed, verifiedTitle, "verified-namuwiki");
+    return verifiedTitle;
+  }
 
   const storedTitle = await getCachedKoreanAnimeTitle(trimmed);
   if (storedTitle) {
@@ -601,11 +614,12 @@ export function extractSubtitleFromBuffer(
 
     const isAss = textLower.includes("[script info]") || textLower.includes("dialogue:");
     const isSmi = textLower.includes("<sami") || textLower.includes("<sync");
+    const isVtt = /^\uFEFF?WEBVTT\b/.test(rawText);
     const isSrt = /^\s*\d+\s*[\r\n]+\d{2}:\d{2}/.test(rawText.slice(0, 100)) || rawText.includes("-->");
 
-    if (isAss || isSmi || isSrt) {
-      const origExt = isAss ? ".ass" : isSmi ? ".smi" : ".srt";
-      const { content, ext } = convertToVtt(rawText, origExt);
+    if (isAss || isSmi || isSrt || isVtt) {
+      const origExt = isAss ? ".ass" : isSmi ? ".smi" : isVtt ? ".vtt" : ".srt";
+      const { content, ext } = isVtt ? { content: rawText.replace(/^\uFEFF/, ""), ext: ".vtt" } : convertToVtt(rawText, origExt);
       const isAssResult = ext === ".ass" || ext === ".ssa";
       let displayFn = urlPath.split("/").pop() || `subtitle${origExt}`;
       if (displayFn.includes("?") || displayFn.length > 60) {
@@ -1434,6 +1448,15 @@ export function scoreAnimeMatch(
     if (itemSubject.includes(w)) overlapWords++;
   }
   score += overlapWords * 15;
+
+  // A separately named sequel must not inherit subtitles from its parent
+  // series merely because their long shared prefix has more matching words.
+  const sequelName = (resolvedTitle || rawTitle).match(/~[^~]+~\s+(.+)$/)?.[1];
+  if (sequelName && sequelName.length >= 3) {
+    const normalizedSequel = sequelName.replace(/\s+/g, "");
+    const normalizedSubject = itemSubject.replace(/\s+/g, "");
+    score += normalizedSubject.includes(normalizedSequel) ? 140 : -140;
+  }
 
   return score;
 }
