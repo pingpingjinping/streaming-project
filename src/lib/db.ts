@@ -274,6 +274,20 @@ export async function initDb() {
     }
   }
 
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS streaming_provider_settings (
+        provider_key VARCHAR(32) PRIMARY KEY,
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `;
+  } catch (e: any) {
+    if (e?.code !== "23505" && !e?.message?.includes("already exists")) {
+      console.warn("[initDb streaming_provider_settings warning]:", e?.message);
+    }
+  }
+
   isInitialized = true;
 }
 
@@ -316,6 +330,58 @@ export async function saveKoreanAnimeTitleMapping(
     `;
   } catch (e) {
     console.warn("[saveKoreanAnimeTitleMapping warning]:", e);
+  }
+}
+
+export const STREAMING_PROVIDERS = ["anissia", "reanime", "ohli24", "linkkf"] as const;
+export type StreamingProviderKey = (typeof STREAMING_PROVIDERS)[number];
+
+export const STREAMING_PROVIDER_LABELS: Record<StreamingProviderKey, string> = {
+  anissia: "애니시아",
+  reanime: "Re:Anime",
+  ohli24: "Ohli24",
+  linkkf: "Linkkf",
+};
+
+export async function getStreamingProviderSettings(): Promise<Array<{ key: StreamingProviderKey; name: string; enabled: boolean }>> {
+  const sql = getDb();
+  const enabled = new Set<StreamingProviderKey>(STREAMING_PROVIDERS);
+  if (sql) {
+    await initDb();
+    try {
+      const rows = await sql`SELECT provider_key, enabled FROM streaming_provider_settings`;
+      for (const row of rows) {
+        if ((STREAMING_PROVIDERS as readonly string[]).includes(String(row.provider_key))) {
+          const key = row.provider_key as StreamingProviderKey;
+          if (row.enabled) enabled.add(key);
+          else enabled.delete(key);
+        }
+      }
+    } catch (e) {
+      console.warn("[getStreamingProviderSettings warning]:", e);
+    }
+  }
+  return STREAMING_PROVIDERS.map((key) => ({ key, name: STREAMING_PROVIDER_LABELS[key], enabled: enabled.has(key) }));
+}
+
+export async function getEnabledStreamingProviders(): Promise<StreamingProviderKey[]> {
+  return (await getStreamingProviderSettings()).filter((source) => source.enabled).map((source) => source.key);
+}
+
+export async function setStreamingProviderEnabled(key: StreamingProviderKey, enabled: boolean): Promise<boolean> {
+  const sql = getDb();
+  if (!sql || !(STREAMING_PROVIDERS as readonly string[]).includes(key)) return false;
+  await initDb();
+  try {
+    await sql`
+      INSERT INTO streaming_provider_settings (provider_key, enabled, updated_at)
+      VALUES (${key}, ${enabled}, CURRENT_TIMESTAMP)
+      ON CONFLICT (provider_key) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = CURRENT_TIMESTAMP
+    `;
+    return true;
+  } catch (e) {
+    console.error("[setStreamingProviderEnabled error]:", e);
+    return false;
   }
 }
 

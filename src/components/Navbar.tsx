@@ -264,6 +264,17 @@ export default function Navbar() {
                         </Link>
                       )}
 
+                      {currentUser.isAdmin && (
+                        <Link
+                          href="/admin/sites"
+                          onClick={() => setIsMenuOpen(false)}
+                          className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-medium text-sky-200 hover:bg-sky-500/10 hover:text-white transition"
+                        >
+                          <Globe className="h-3.5 w-3.5 text-sky-400" />
+                          <span>스트리밍 사이트 관리</span>
+                        </Link>
+                      )}
+
                       <div className="my-1 border-t border-white/10" />
 
                       {/* 5. 로그아웃 */}

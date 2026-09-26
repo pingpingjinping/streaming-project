@@ -14,7 +14,7 @@ import {
   AnimeListItem,
 } from "@/lib/providers";
 import { OHLI24_GENRES } from "@/lib/providers/ohli24";
-import { getDb, initDb } from "@/lib/db";
+import { getDb, initDb, getEnabledStreamingProviders } from "@/lib/db";
 import { checkAndPromoteNewEpisodes } from "@/lib/historyPromotion";
 import { resolveKoreanTitle } from "@/lib/subtitles";
 import { getCurrentUserId, requireAuth } from "@/lib/auth";
@@ -56,10 +56,12 @@ export default async function HomePage({
   await requireAuth();
 
   const cookieStore = await cookies();
+  const enabledSources = await getEnabledStreamingProviders();
   const rawSource = cookieStore.get("anime_source")?.value;
-  const activeSource = (
-    rawSource === "linkkf" ? "linkkf" : rawSource === "reanime" ? "reanime" : rawSource === "ohli24" ? "ohli24" : "anissia"
-  ) as "anissia" | "linkkf" | "ohli24" | "reanime";
+  const requestedSource = rawSource === "linkkf" || rawSource === "reanime" || rawSource === "ohli24" || rawSource === "anissia"
+    ? rawSource
+    : "anissia";
+  const activeSource = enabledSources.includes(requestedSource) ? requestedSource : enabledSources[0] || "anissia";
   const provider = getProvider(activeSource);
 
   const params = await searchParams;
@@ -80,9 +82,7 @@ export default async function HomePage({
   let total_pages = 1;
 
   if (q) {
-    const sources = searchScope === "all"
-      ? ["anissia", "reanime", "ohli24", "linkkf"] as const
-      : [activeSource] as const;
+    const sources = searchScope === "all" ? enabledSources : [activeSource];
     const labels: Record<string, string> = {
       anissia: "애니시아",
       reanime: "Re:Anime",
