@@ -257,7 +257,132 @@ export async function initDb() {
     }
   }
 
+  // Resolved international titles are shared by subtitle lookup and search.
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS anime_title_aliases (
+        normalized_title VARCHAR(512) PRIMARY KEY,
+        original_title TEXT NOT NULL,
+        korean_title TEXT NOT NULL,
+        source VARCHAR(40) NOT NULL DEFAULT 'lookup',
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `;
+  } catch (e: any) {
+    if (e?.code !== "23505" && !e?.message?.includes("already exists")) {
+      console.warn("[initDb anime_title_aliases warning]:", e?.message);
+    }
+  }
+
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS streaming_provider_settings (
+        provider_key VARCHAR(32) PRIMARY KEY,
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `;
+  } catch (e: any) {
+    if (e?.code !== "23505" && !e?.message?.includes("already exists")) {
+      console.warn("[initDb streaming_provider_settings warning]:", e?.message);
+    }
+  }
+
   isInitialized = true;
+}
+
+function normalizeAnimeTitleKey(title: string): string {
+  return title.normalize("NFKC").trim().toLocaleLowerCase("en-US").replace(/\s+/g, " ");
+}
+
+export async function getCachedKoreanAnimeTitle(title: string): Promise<string | null> {
+  const sql = getDb();
+  if (!sql || !title.trim()) return null;
+  await initDb();
+  try {
+    const key = normalizeAnimeTitleKey(title);
+    const rows = await sql`SELECT korean_title FROM anime_title_aliases WHERE normalized_title = ${key} LIMIT 1`;
+    return rows[0]?.korean_title ? String(rows[0].korean_title) : null;
+  } catch (e) {
+    console.warn("[getCachedKoreanAnimeTitle warning]:", e);
+    return null;
+  }
+}
+
+export async function saveKoreanAnimeTitleMapping(
+  originalTitle: string,
+  koreanTitle: string,
+  source = "lookup"
+): Promise<void> {
+  const sql = getDb();
+  if (!sql || !originalTitle.trim() || !koreanTitle.trim()) return;
+  await initDb();
+  try {
+    const key = normalizeAnimeTitleKey(originalTitle);
+    await sql`
+      INSERT INTO anime_title_aliases (normalized_title, original_title, korean_title, source, updated_at)
+      VALUES (${key}, ${originalTitle.trim()}, ${koreanTitle.trim()}, ${source.slice(0, 40)}, CURRENT_TIMESTAMP)
+      ON CONFLICT (normalized_title) DO UPDATE SET
+        original_title = EXCLUDED.original_title,
+        korean_title = EXCLUDED.korean_title,
+        source = EXCLUDED.source,
+        updated_at = CURRENT_TIMESTAMP
+    `;
+  } catch (e) {
+    console.warn("[saveKoreanAnimeTitleMapping warning]:", e);
+  }
+}
+
+export const STREAMING_PROVIDERS = ["anissia", "reanime", "ohli24", "linkkf"] as const;
+export type StreamingProviderKey = (typeof STREAMING_PROVIDERS)[number];
+
+export const STREAMING_PROVIDER_LABELS: Record<StreamingProviderKey, string> = {
+  anissia: "애니시아",
+  reanime: "Re:Anime",
+  ohli24: "Ohli24",
+  linkkf: "Linkkf",
+};
+
+export async function getStreamingProviderSettings(): Promise<Array<{ key: StreamingProviderKey; name: string; enabled: boolean }>> {
+  const sql = getDb();
+  const enabled = new Set<StreamingProviderKey>(STREAMING_PROVIDERS);
+  if (sql) {
+    await initDb();
+    try {
+      const rows = await sql`SELECT provider_key, enabled FROM streaming_provider_settings`;
+      for (const row of rows) {
+        if ((STREAMING_PROVIDERS as readonly string[]).includes(String(row.provider_key))) {
+          const key = row.provider_key as StreamingProviderKey;
+          if (row.enabled) enabled.add(key);
+          else enabled.delete(key);
+        }
+      }
+    } catch (e) {
+      console.warn("[getStreamingProviderSettings warning]:", e);
+    }
+  }
+  return STREAMING_PROVIDERS.map((key) => ({ key, name: STREAMING_PROVIDER_LABELS[key], enabled: enabled.has(key) }));
+}
+
+export async function getEnabledStreamingProviders(): Promise<StreamingProviderKey[]> {
+  return (await getStreamingProviderSettings()).filter((source) => source.enabled).map((source) => source.key);
+}
+
+export async function setStreamingProviderEnabled(key: StreamingProviderKey, enabled: boolean): Promise<boolean> {
+  const sql = getDb();
+  if (!sql || !(STREAMING_PROVIDERS as readonly string[]).includes(key)) return false;
+  await initDb();
+  try {
+    await sql`
+      INSERT INTO streaming_provider_settings (provider_key, enabled, updated_at)
+      VALUES (${key}, ${enabled}, CURRENT_TIMESTAMP)
+      ON CONFLICT (provider_key) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = CURRENT_TIMESTAMP
+    `;
+    return true;
+  } catch (e) {
+    console.error("[setStreamingProviderEnabled error]:", e);
+    return false;
+  }
 }
 
 export async function getUserCount(): Promise<number> {
@@ -1195,4 +1320,3 @@ export async function setAnissiaStreamCache(data: AnissiaStreamCache): Promise<b
     return false;
   }
 }
-

@@ -28,6 +28,7 @@ export default function SourceSelectModal({
 }: SourceSelectModalProps) {
   const [mounted, setMounted] = useState(false);
   const [selectedSource, setSelectedSource] = useState<StreamingSource>(currentSource);
+  const [enabledSources, setEnabledSources] = useState<StreamingSource[]>(["anissia", "reanime", "ohli24", "linkkf"]);
   const [anissiaHealth, setAnissiaHealth] = useState<SourceHealth>({
     baseUrl: "https://api.anissia.net",
     isHealthy: true,
@@ -52,6 +53,15 @@ export default function SourceSelectModal({
   useEffect(() => {
     if (isOpen) {
       setSelectedSource(currentSource);
+      fetch("/api/settings/providers", { cache: "no-store" })
+        .then((r) => r.json())
+        .then((data) => {
+          if (!data.success || !Array.isArray(data.providers)) return;
+          const enabled = data.providers.filter((source: { enabled: boolean }) => source.enabled).map((source: { key: StreamingSource }) => source.key);
+          setEnabledSources(enabled);
+          if (enabled.length > 0 && !enabled.includes(currentSource)) setSelectedSource(enabled[0]);
+        })
+        .catch(() => {});
 
       // Anissia Hub 헬스체크
       const anissiaStart = Date.now();
@@ -228,6 +238,7 @@ export default function SourceSelectModal({
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3 scrollbar-thin scrollbar-thumb-purple-500/30">
           {/* 1. Anissia Hub Card (최고 추천) */}
           <div
+            style={{ display: enabledSources.includes("anissia") ? undefined : "none" }}
             onClick={() => setSelectedSource("anissia")}
             className={`cursor-pointer rounded-2xl border p-4 transition-all ${
               selectedSource === "anissia"
@@ -280,6 +291,7 @@ export default function SourceSelectModal({
 
           {/* 2. ReAnime Card */}
           <div
+            style={{ display: enabledSources.includes("reanime") ? undefined : "none" }}
             onClick={() => setSelectedSource("reanime")}
             className={`cursor-pointer rounded-2xl border p-4 transition-all ${
               selectedSource === "reanime"
@@ -332,6 +344,7 @@ export default function SourceSelectModal({
 
           {/* 2. Linkkf Card */}
           <div
+            style={{ display: enabledSources.includes("linkkf") ? undefined : "none" }}
             onClick={() => setSelectedSource("linkkf")}
             className={`cursor-pointer rounded-2xl border p-4 transition-all ${
               selectedSource === "linkkf"
@@ -381,6 +394,7 @@ export default function SourceSelectModal({
 
           {/* 3. Ohli24 Card */}
           <div
+            style={{ display: enabledSources.includes("ohli24") ? undefined : "none" }}
             onClick={() => setSelectedSource("ohli24")}
             className={`cursor-pointer rounded-2xl border p-4 transition-all ${
               selectedSource === "ohli24"

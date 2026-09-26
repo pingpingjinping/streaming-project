@@ -16,6 +16,7 @@ interface CurrentUser {
 
 export default function Navbar() {
   const [keyword, setKeyword] = useState("");
+  const [searchScope, setSearchScope] = useState<"current" | "all">("current");
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -33,6 +34,7 @@ export default function Navbar() {
     if (match && (match[1] === "anissia" || match[1] === "ohli24" || match[1] === "linkkf" || match[1] === "reanime")) {
       setActiveSource(match[1] as StreamingSource);
     }
+    setSearchScope(new URLSearchParams(window.location.search).get("scope") === "all" ? "all" : "current");
   }, []);
 
   // 외부 클릭 시 드롭다운 닫기
@@ -93,7 +95,8 @@ export default function Navbar() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (keyword.trim()) {
-      router.push(`/?tab=search&q=${encodeURIComponent(keyword.trim())}`);
+      const scopeParam = searchScope === "all" ? "&scope=all" : "";
+      router.push(`/?tab=search&q=${encodeURIComponent(keyword.trim())}${scopeParam}`);
     }
   };
 
@@ -122,13 +125,22 @@ export default function Navbar() {
         </Link>
 
         {/* Search Input */}
-        <form onSubmit={handleSearch} className="relative flex-1 max-w-xs sm:max-w-sm mx-auto sm:mx-4">
+        <form onSubmit={handleSearch} className="relative flex flex-1 max-w-sm sm:max-w-lg mx-auto sm:mx-4 gap-1.5">
+          <select
+            aria-label="검색 사이트 범위"
+            value={searchScope}
+            onChange={(e) => setSearchScope(e.target.value as "current" | "all")}
+            className="max-w-[92px] rounded-full border border-purple-500/20 bg-slate-900/80 px-2 py-1.5 text-[10px] sm:text-xs text-slate-300 outline-none focus:border-purple-500"
+          >
+            <option value="current">현재 사이트</option>
+            <option value="all">전체 사이트</option>
+          </select>
           <input
             type="text"
             placeholder="애니 제목 검색..."
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
-            className="w-full rounded-full border border-purple-500/20 bg-slate-900/80 px-4 py-1.5 pl-9 text-xs sm:text-sm text-slate-200 placeholder-slate-400 outline-none transition focus:border-purple-500 focus:ring-1 focus:ring-purple-500"
+            className="min-w-0 w-full rounded-full border border-purple-500/20 bg-slate-900/80 px-4 py-1.5 pl-9 text-xs sm:text-sm text-slate-200 placeholder-slate-400 outline-none transition focus:border-purple-500 focus:ring-1 focus:ring-purple-500"
           />
           <Search className="absolute left-3 top-2 sm:top-2.5 h-3.5 w-3.5 sm:h-4 sm:w-4 text-slate-400" />
         </form>
@@ -249,6 +261,17 @@ export default function Navbar() {
                         >
                           <Users className="h-3.5 w-3.5 text-emerald-400" />
                           <span>사용자 계정 관리</span>
+                        </Link>
+                      )}
+
+                      {currentUser.isAdmin && (
+                        <Link
+                          href="/admin/sites"
+                          onClick={() => setIsMenuOpen(false)}
+                          className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-medium text-sky-200 hover:bg-sky-500/10 hover:text-white transition"
+                        >
+                          <Globe className="h-3.5 w-3.5 text-sky-400" />
+                          <span>스트리밍 사이트 관리</span>
                         </Link>
                       )}
 

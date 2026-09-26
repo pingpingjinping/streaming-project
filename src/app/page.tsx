@@ -14,8 +14,9 @@ import {
   AnimeListItem,
 } from "@/lib/providers";
 import { OHLI24_GENRES } from "@/lib/providers/ohli24";
-import { getDb, initDb } from "@/lib/db";
+import { getDb, initDb, getEnabledStreamingProviders } from "@/lib/db";
 import { checkAndPromoteNewEpisodes } from "@/lib/historyPromotion";
+import { resolveKoreanTitle } from "@/lib/subtitles";
 import { getCurrentUserId, requireAuth } from "@/lib/auth";
 import Link from "next/link";
 import {
@@ -43,6 +44,7 @@ interface SearchParams {
   type?: string;
   period?: "day" | "week" | "month" | "all";
   day?: string;
+  scope?: string;
 }
 
 export default async function HomePage({
@@ -54,16 +56,19 @@ export default async function HomePage({
   await requireAuth();
 
   const cookieStore = await cookies();
+  const enabledSources = await getEnabledStreamingProviders();
   const rawSource = cookieStore.get("anime_source")?.value;
-  const activeSource = (
-    rawSource === "linkkf" ? "linkkf" : rawSource === "reanime" ? "reanime" : rawSource === "ohli24" ? "ohli24" : "anissia"
-  ) as "anissia" | "linkkf" | "ohli24" | "reanime";
+  const requestedSource = rawSource === "linkkf" || rawSource === "reanime" || rawSource === "ohli24" || rawSource === "anissia"
+    ? rawSource
+    : "anissia";
+  const activeSource = enabledSources.includes(requestedSource) ? requestedSource : enabledSources[0] || "anissia";
   const provider = getProvider(activeSource);
 
   const params = await searchParams;
   const defaultTab = activeSource === "anissia" ? "recent_caption" : "airing";
   const tab = params.tab || (params.q ? "search" : defaultTab);
   const q = params.q?.trim() || "";
+  const searchScope = params.scope === "all" ? "all" : "current";
   const page = parseInt(params.page || "1", 10) || 1;
   const genre = params.genre || "";
   const year = params.year || "";
@@ -77,10 +82,34 @@ export default async function HomePage({
   let total_pages = 1;
 
   if (q) {
-    const res = await provider.searchAnime(q, page);
-    items = res.items;
-    has_next = res.has_next;
-    total_pages = res.total_pages;
+    const sources = searchScope === "all" ? enabledSources : [activeSource];
+    const labels: Record<string, string> = {
+      anissia: "애니시아",
+      reanime: "Re:Anime",
+      ohli24: "Ohli24",
+      linkkf: "Linkkf",
+    };
+    const koreanTitle = await resolveKoreanTitle(q).catch(() => q);
+    const terms = [...new Set([q, koreanTitle].filter(Boolean))];
+    const results = await Promise.allSettled(
+      sources.flatMap((source) => terms.map(async (term) => ({
+        source,
+        result: await getProvider(source).searchAnime(term, page),
+      })))
+    );
+    const fulfilled = results.flatMap((entry) => entry.status === "fulfilled" ? [entry.value] : []);
+    const uniqueItems = new Map<string, AnimeListItem>();
+    for (const { source, result } of fulfilled) {
+      for (const item of result.items) {
+        uniqueItems.set(`${source}:${item.id || item.detail_url}`, {
+          ...item,
+          source_name: labels[source] || source,
+        });
+      }
+    }
+    items = Array.from(uniqueItems.values());
+    has_next = fulfilled.some(({ result }) => result.has_next);
+    total_pages = Math.max(1, ...fulfilled.map(({ result }) => result.total_pages));
   } else if (tab === "favorites") {
     const sql = getDb();
     if (sql) {
@@ -242,6 +271,7 @@ export default async function HomePage({
     const p = new URLSearchParams();
     if (tab) p.set("tab", tab);
     if (q) p.set("q", q);
+    if (q && searchScope === "all") p.set("scope", "all");
     if (genre) p.set("genre", genre);
     if (year) p.set("year", year);
     if (typeLang) p.set("type", typeLang);
@@ -270,7 +300,7 @@ export default async function HomePage({
   let sectionSubtitle = "";
 
   if (q) {
-    sectionTitle = `"${q}" 검색 결과 (${items.length}개)`;
+    sectionTitle = `"${q}" 검색 결과 (${items.length}개 · ${searchScope === "all" ? "전체 사이트" : "현재 사이트"})`;
   } else if (activeSource === "anissia") {
     const dayNames = ["일", "월", "화", "수", "목", "금", "토", "기타"];
     if (tab === "recent_caption") {
