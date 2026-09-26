@@ -1,4 +1,6 @@
-import { neon } from "@neondatabase/serverless";
+import postgres from "postgres";
+
+let dbClient: ReturnType<typeof postgres> | null = null;
 
 export function getDb() {
   const connectionString =
@@ -11,7 +13,15 @@ export function getDb() {
     return null;
   }
 
-  return neon(connectionString);
+  if (!dbClient) {
+    dbClient = postgres(connectionString, {
+      max: 5,
+      idle_timeout: 20,
+      connect_timeout: 10,
+    });
+  }
+
+  return dbClient;
 }
 
 let isInitialized = false;
