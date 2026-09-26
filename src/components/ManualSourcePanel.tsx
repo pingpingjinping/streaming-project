@@ -243,20 +243,36 @@ function ManualSubtitleLink({ animeId, episodeNumber }: { animeId: string; episo
   const [message, setMessage] = useState("");
   const [uploadMessage, setUploadMessage] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [archiveFile, setArchiveFile] = useState<File | null>(null);
+  const [archiveEntries, setArchiveEntries] = useState<Array<{ index: number; filename: string; episode: number | null }>>([]);
+  const [assigned, setAssigned] = useState<Record<number, string>>({});
   const upload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
     setUploading(true);
     setUploadMessage("Pi에 저장 중...");
+    setArchiveEntries([]);
+    setArchiveFile(null);
     try {
       const form = new FormData();
       form.set("animeId", animeId);
       form.set("ep", String(episodeNumber));
       form.set("file", file);
+      if (/\.zip$/i.test(file.name)) form.set("mode", "preview");
       const response = await fetch("/api/anime/uploaded-subtitle", { method: "POST", body: form });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || "저장하지 못했습니다.");
-      setUploadMessage(`${file.name} Pi에 저장됨. 이 회차를 다시 열면 자동 적용됩니다.`);
+      if (Array.isArray(data.entries)) {
+        setArchiveFile(file);
+        setArchiveEntries(data.entries);
+        const counts = new Map<number, number>();
+        for (const entry of data.entries) if (entry.episode) counts.set(entry.episode, (counts.get(entry.episode) || 0) + 1);
+        setAssigned(Object.fromEntries(data.entries.map((entry: { index: number; episode: number | null }) =>
+          [entry.index, entry.episode && counts.get(entry.episode) === 1 ? String(entry.episode) : ""])));
+        setUploadMessage("파일별 회차를 확인하고 '선택한 회차 저장'을 눌러 줘.");
+      } else {
+        setUploadMessage(`${file.name} Pi에 저장됨. 이 회차를 다시 열면 자동 적용됩니다.`);
+      }
     } catch (error) {
       setUploadMessage(error instanceof Error ? error.message : "업로드에 실패했습니다.");
     } finally {
@@ -264,6 +280,38 @@ function ManualSubtitleLink({ animeId, episodeNumber }: { animeId: string; episo
       event.target.value = "";
     }
   };
+  const saveArchive = async () => {
+    if (!archiveFile) return;
+    const assignments = archiveEntries.flatMap((entry) => {
+      const raw = assigned[entry.index]?.trim();
+      return raw ? [{ index: entry.index, episode: Number(raw) }] : [];
+    });
+    if (!assignments.length || assignments.some(({ episode }) => !Number.isInteger(episode) || episode < 1 || episode > 10000) ||
+      new Set(assignments.map(({ episode }) => episode)).size !== assignments.length) {
+      setUploadMessage("회차를 1~10000 사이 숫자로 지정하고, 중복된 회차는 하나만 남겨 줘.");
+      return;
+    }
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.set("animeId", animeId);
+      form.set("ep", String(episodeNumber));
+      form.set("file", archiveFile);
+      form.set("assignments", JSON.stringify(assignments));
+      const response = await fetch("/api/anime/uploaded-subtitle", { method: "POST", body: form });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || "묶음 저장에 실패했습니다.");
+      setUploadMessage(`${data.saved.join(", ")}화 Pi에 저장됨. 회차를 다시 열면 자동 적용됩니다.`);
+      setArchiveFile(null);
+      setArchiveEntries([]);
+    } catch (error) {
+      setUploadMessage(error instanceof Error ? error.message : "묶음 저장에 실패했습니다.");
+    } finally { setUploading(false); }
+  };
+  const archiveRange = archiveFile?.name.match(/(?:^|[^\d])(\d{1,3})\s*[-~]\s*(\d{1,3})(?!\d)/);
+  const rangeStart = archiveRange ? Number(archiveRange[1]) : 0;
+  const rangeEnd = archiveRange ? Number(archiveRange[2]) : 0;
+  const canAssignInOrder = rangeStart > 0 && rangeEnd - rangeStart + 1 === archiveEntries.length;
   useEffect(() => {
     let cancelled = false;
     setSavedUrl("");
@@ -322,6 +370,32 @@ function ManualSubtitleLink({ animeId, episodeNumber }: { animeId: string; episo
         <span>이 회차의 ASS/SRT/SMI/VTT 또는 ZIP</span>
       </div>
       {uploadMessage && <p className="mt-2 text-xs text-slate-300">{uploadMessage}</p>}
+      {archiveFile && archiveEntries.length > 0 && (
+        <div className="mt-3 space-y-2 rounded-xl border border-sky-500/30 p-3 text-xs text-slate-300">
+          <div className="font-semibold text-sky-200">ZIP 안의 자막 {archiveEntries.length}개 · 작품 내 회차를 확인해 줘</div>
+          {canAssignInOrder && <button type="button" disabled={uploading}
+            onClick={() => setAssigned(Object.fromEntries([...archiveEntries]
+              .sort((a, b) => a.filename.localeCompare(b.filename, undefined, { numeric: true }))
+              .map((entry, index) => [entry.index, String(rangeStart + index)])))}
+            className="rounded border border-amber-500/40 px-2 py-1 text-amber-200">
+            파일명순 {rangeStart}~{rangeEnd}화 임시 배치 (저장 전 확인)
+          </button>}
+          <div className="max-h-64 space-y-1 overflow-y-auto">
+            {archiveEntries.map((entry) => (
+              <label key={entry.index} className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate" title={entry.filename}>{entry.filename}</span>
+                <input type="number" min={1} max={10000} placeholder="제외" aria-label={`${entry.filename} 회차`}
+                  value={assigned[entry.index] || ""}
+                  onChange={(event) => setAssigned((previous) => ({ ...previous, [entry.index]: event.target.value }))}
+                  className="w-20 rounded border border-white/10 bg-slate-950 px-2 py-1 text-white" />
+                <span>화</span>
+              </label>
+            ))}
+          </div>
+          <button type="button" disabled={uploading} onClick={saveArchive}
+            className="rounded-lg bg-sky-600 px-3 py-2 font-semibold text-white disabled:opacity-50">선택한 회차 Pi에 저장</button>
+        </div>
+      )}
     </div>
   );
 }
