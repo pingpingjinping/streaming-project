@@ -20,7 +20,6 @@ import {
   Loader2,
   FolderOpen,
   Film,
-  ExternalLink,
 } from "lucide-react";
 import { EpisodeItem } from "./Player";
 import SubtitleSelectModal, { CreatorInfo, SubtitleOption } from "./SubtitleSelectModal";
@@ -99,7 +98,6 @@ export default function IframePlayer({
   const [isOctopusActive, setIsOctopusActive] = useState(false);
   const [navigatingTarget, setNavigatingTarget] = useState<string | null>(null);
   const [showFsControls, setShowFsControls] = useState(false);
-  const isExternalFlixCloud = embedUrl.includes("flixcloud.cc");
   const fsControlsTimerRef = useRef<NodeJS.Timeout | null>(null);
   const syncOffsetRef = useRef(syncOffset);
   syncOffsetRef.current = syncOffset;
@@ -1057,25 +1055,8 @@ export default function IframePlayer({
           isFullscreen ? "fixed inset-0 z-50 h-[100dvh] w-screen rounded-none border-none" : ""
         }`}
       >
-        {/* Layer 1: Embedded player / external FlixCloud fallback */}
-        {isExternalFlixCloud ? (
-          <div className="absolute inset-0 z-0 flex flex-col items-center justify-center bg-black/95 p-6 text-center">
-            <Film className="mb-4 h-10 w-10 text-purple-400" />
-            <p className="text-base font-bold text-white">외부 플레이어에서 재생해야 합니다.</p>
-            <p className="mt-2 max-w-md text-sm text-slate-400">
-              FlixCloud는 앱 내부 iframe에서 영상 URL 복호화에 실패할 수 있어 새 탭에서 엽니다.
-            </p>
-            <a
-              href={embedUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-5 inline-flex items-center gap-2 rounded-xl bg-purple-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-purple-500 active:scale-95"
-            >
-              <ExternalLink className="h-4 w-4" />
-              외부 플레이어 열기
-            </a>
-          </div>
-        ) : embedUrl && !embedUrl.includes("reanime.to/watch") ? (
+        {/* Layer 1: Sandboxed FlixCloud Iframe */}
+        {embedUrl && !embedUrl.includes("reanime.to/watch") ? (
           <iframe
             ref={iframeRef}
             src={embedUrl}
@@ -1083,7 +1064,7 @@ export default function IframePlayer({
             className="absolute inset-0 h-full w-full border-0 z-0"
             allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
             sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
-            referrerPolicy="no-referrer"
+            referrerPolicy="no-referrer-when-downgrade"
           />
         ) : (
           <div className="absolute inset-0 z-0 flex flex-col items-center justify-center bg-black/90 p-6 text-center">
