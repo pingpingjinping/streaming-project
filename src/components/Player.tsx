@@ -136,7 +136,10 @@ declare global {
 }
 
 export default function Player(props: PlayerProps) {
-  if (props.streamType === "iframe" || isReanimeId(props.animeId)) {
+  if (
+    props.streamType === "iframe" ||
+    (isReanimeId(props.animeId) && !props.m3u8Url)
+  ) {
     return <IframePlayer {...props} />;
   }
 
