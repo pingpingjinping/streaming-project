@@ -27,6 +27,13 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
+ENV CHROMIUM_BIN=/usr/bin/chromium
+
+# Ohli24/Cloudflare가 Node/curl TLS fingerprint를 차단하므로,
+# 실제 Chromium은 런타임에 필요한 경우에만 실행합니다.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends chromium \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder --chown=node:node /app/public ./public
 COPY --from=builder --chown=node:node /app/.next/standalone ./
