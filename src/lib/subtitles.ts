@@ -1268,7 +1268,7 @@ export async function fetchCreatorSubtitle(
           postSeasonMatch = false;
         }
 
-        if (postSeasonMatch && (pEps.includes(episodeNumber) || isSpecificPost)) {
+        if (postSeasonMatch && pEps.includes(episodeNumber)) {
           isInitialUrlCurrentEp = true;
         }
       }
