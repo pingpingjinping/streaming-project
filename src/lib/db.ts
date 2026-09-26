@@ -219,7 +219,7 @@ export async function initDb() {
         ani_rating REAL,
         ani_description TEXT,
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        CONSTRAINT uq_anissia_stream_cache UNIQUE (anissia_id)
+        CONSTRAINT uq_anissia_cache_id UNIQUE (anissia_id)
       )
     `;
     await sql`
@@ -228,6 +228,32 @@ export async function initDb() {
   } catch (e: any) {
     if (e?.code !== "23505" && !e?.message?.includes("already exists")) {
       console.warn("[initDb anissia_stream_cache warning]:", e?.message);
+    }
+  }
+
+  // 11. Manual Stream Sources (사용자별/회차별 직접 입력 스트림)
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS manual_stream_sources (
+        id SERIAL PRIMARY KEY,
+        user_id VARCHAR(100) NOT NULL,
+        anime_id VARCHAR(100) NOT NULL,
+        episode_number INT NOT NULL,
+        label VARCHAR(100) NOT NULL DEFAULT '직접 링크',
+        url TEXT NOT NULL,
+        source_type VARCHAR(16) NOT NULL DEFAULT 'iframe',
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT uq_manual_stream_source UNIQUE (user_id, anime_id, episode_number, url)
+      )
+    `;
+    await sql`
+      CREATE INDEX IF NOT EXISTS idx_manual_stream_lookup
+      ON manual_stream_sources(user_id, anime_id, episode_number);
+    `;
+  } catch (e: any) {
+    if (e?.code !== "23505" && !e?.message?.includes("already exists")) {
+      console.warn("[initDb manual_stream_sources warning]:", e?.message);
     }
   }
 
@@ -507,6 +533,140 @@ export async function getAnimeHistoryMap(
   } catch (e) {
     console.error("[db.getAnimeHistoryMap error]:", e);
     return {};
+  }
+}
+
+// ----------------------------------------------------
+// Manual Stream Source Helpers
+// ----------------------------------------------------
+
+export type ManualStreamSourceType = "iframe" | "m3u8";
+
+export interface ManualStreamSource {
+  id: number;
+  user_id: string;
+  anime_id: string;
+  episode_number: number;
+  label: string;
+  url: string;
+  source_type: ManualStreamSourceType;
+  created_at?: string;
+  updated_at?: string;
+}
+
+function mapManualStreamSource(row: any): ManualStreamSource {
+  return {
+    id: Number(row.id),
+    user_id: String(row.user_id),
+    anime_id: String(row.anime_id),
+    episode_number: Number(row.episode_number),
+    label: String(row.label || "직접 링크"),
+    url: String(row.url || ""),
+    source_type: row.source_type === "m3u8" ? "m3u8" : "iframe",
+    created_at: row.created_at ? String(row.created_at) : undefined,
+    updated_at: row.updated_at ? String(row.updated_at) : undefined,
+  };
+}
+
+export async function getManualStreamSources(
+  userId: string,
+  animeId: string,
+  episodeNumber: number
+): Promise<ManualStreamSource[]> {
+  const sql = getDb();
+  if (!sql) return [];
+  await initDb();
+  try {
+    const rows = await sql`
+      SELECT id, user_id, anime_id, episode_number, label, url, source_type, created_at, updated_at
+      FROM manual_stream_sources
+      WHERE user_id = ${userId}
+        AND anime_id = ${animeId}
+        AND episode_number = ${episodeNumber}
+      ORDER BY updated_at DESC, id DESC;
+    `;
+    return rows.map(mapManualStreamSource);
+  } catch (e) {
+    console.error("[db.getManualStreamSources error]:", e);
+    return [];
+  }
+}
+
+export async function getManualStreamSourceById(
+  userId: string,
+  id: number
+): Promise<ManualStreamSource | null> {
+  const sql = getDb();
+  if (!sql || !Number.isInteger(id) || id <= 0) return null;
+  await initDb();
+  try {
+    const rows = await sql`
+      SELECT id, user_id, anime_id, episode_number, label, url, source_type, created_at, updated_at
+      FROM manual_stream_sources
+      WHERE user_id = ${userId} AND id = ${id}
+      LIMIT 1;
+    `;
+    return rows.length ? mapManualStreamSource(rows[0]) : null;
+  } catch (e) {
+    console.error("[db.getManualStreamSourceById error]:", e);
+    return null;
+  }
+}
+
+export async function upsertManualStreamSource(params: {
+  userId: string;
+  animeId: string;
+  episodeNumber: number;
+  label: string;
+  url: string;
+  sourceType: ManualStreamSourceType;
+}): Promise<ManualStreamSource | null> {
+  const sql = getDb();
+  if (!sql) return null;
+  await initDb();
+  try {
+    const rows = await sql`
+      INSERT INTO manual_stream_sources (
+        user_id, anime_id, episode_number, label, url, source_type, updated_at
+      ) VALUES (
+        ${params.userId},
+        ${params.animeId},
+        ${params.episodeNumber},
+        ${params.label},
+        ${params.url},
+        ${params.sourceType},
+        CURRENT_TIMESTAMP
+      )
+      ON CONFLICT (user_id, anime_id, episode_number, url) DO UPDATE SET
+        label = EXCLUDED.label,
+        source_type = EXCLUDED.source_type,
+        updated_at = CURRENT_TIMESTAMP
+      RETURNING id, user_id, anime_id, episode_number, label, url, source_type, created_at, updated_at;
+    `;
+    return rows.length ? mapManualStreamSource(rows[0]) : null;
+  } catch (e) {
+    console.error("[db.upsertManualStreamSource error]:", e);
+    return null;
+  }
+}
+
+export async function deleteManualStreamSource(
+  userId: string,
+  id: number
+): Promise<boolean> {
+  const sql = getDb();
+  if (!sql || !Number.isInteger(id) || id <= 0) return false;
+  await initDb();
+  try {
+    const rows = await sql`
+      DELETE FROM manual_stream_sources
+      WHERE user_id = ${userId} AND id = ${id}
+      RETURNING id;
+    `;
+    return rows.length > 0;
+  } catch (e) {
+    console.error("[db.deleteManualStreamSource error]:", e);
+    return false;
   }
 }
 
