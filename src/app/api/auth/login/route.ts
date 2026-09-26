@@ -6,7 +6,7 @@ import {
   clearLoginFailures,
   LOGIN_RATE_LIMIT,
 } from "@/lib/db";
-import { verifyPassword, createAuthToken, AUTH_COOKIE_NAME } from "@/lib/auth";
+import { verifyPassword, createAuthToken, AUTH_COOKIE_NAME, getAuthCookieOptions } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
   try {
@@ -81,13 +81,7 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    response.cookies.set(AUTH_COOKIE_NAME, token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 30 * 86400,
-      path: "/",
-    });
+    response.cookies.set(AUTH_COOKIE_NAME, token, getAuthCookieOptions(request));
 
     return response;
   } catch (error: any) {
