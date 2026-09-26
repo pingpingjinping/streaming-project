@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Player from "@/components/Player";
-import { stripReanimeId } from "@/lib/providers";
+import { stripReanimeId } from "@/lib/providers/ids";
 import { EpisodeItem } from "@/lib/providers/types";
 import Link from "next/link";
 import { ArrowLeft, Loader2, RefreshCw } from "lucide-react";

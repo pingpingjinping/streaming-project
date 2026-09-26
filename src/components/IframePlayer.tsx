@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { EpisodeItem } from "./Player";
 import SubtitleSelectModal, { CreatorInfo, SubtitleOption } from "./SubtitleSelectModal";
-import { ServerSource } from "@/lib/providers";
+import type { ServerSource } from "@/lib/providers/types";
 
 interface SubtitleCue {
   start: number;

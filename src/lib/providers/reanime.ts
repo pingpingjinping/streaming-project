@@ -8,7 +8,7 @@ import {
   EpisodeStreamInfo,
   ServerSource,
 } from "./types";
-import { REANIME_PREFIX, stripReanimeId, toReanimeId } from "./index";
+import { REANIME_PREFIX, stripReanimeId, toReanimeId } from "./ids";
 import { getReanimeBaseUrl, DEFAULT_REANIME_URL } from "@/lib/db";
 
 export const BASE_URL = DEFAULT_REANIME_URL;

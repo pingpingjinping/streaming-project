@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import FavoriteButton from "@/components/FavoriteButton";
 import EpisodeListSection from "@/components/EpisodeListSection";
 import { AnimeDetail, EpisodeItem } from "@/lib/providers/types";
-import { stripReanimeId } from "@/lib/providers";
+import { stripReanimeId } from "@/lib/providers/ids";
 import Link from "next/link";
 import { Play, Calendar, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
 

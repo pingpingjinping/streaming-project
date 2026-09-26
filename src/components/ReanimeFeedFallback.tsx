@@ -2,13 +2,10 @@
 
 import { useEffect, useState } from "react";
 import AnimeCard from "@/components/AnimeCard";
-import { AnimeListItem } from "@/lib/providers/types";
+import type { AnimeListItem } from "@/lib/providers/types";
+import { toReanimeId } from "@/lib/providers/ids";
 import { Loader2, RefreshCw } from "lucide-react";
 
-function toReanimeId(rawId: string | number): string {
-  const id = String(rawId);
-  return id.startsWith("re_") ? id : `re_${id}`;
-}
 
 interface ReanimeFeedFallbackProps {
   tab: string;
