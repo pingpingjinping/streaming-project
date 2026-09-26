@@ -166,7 +166,7 @@ export async function getAnimeList(params: {
 
   try {
     const html = await fetchHtmlWithChromium(url, {
-      timeoutMs: 12_000,
+      timeoutMs: 16_000,
       cacheTtlMs: 60_000,
     });
     const $ = cheerio.load(html);
@@ -204,7 +204,7 @@ export async function searchAnime(keyword: string, page = 1): Promise<AnimeListR
 
   try {
     const html = await fetchHtmlWithChromium(url, {
-      timeoutMs: 12_000,
+      timeoutMs: 16_000,
       cacheTtlMs: 60_000,
     });
     const $ = cheerio.load(html);
@@ -248,7 +248,7 @@ export async function getAnimeDetail(animeId: string): Promise<AnimeDetail | nul
   for (const testUrl of candidateUrls) {
     try {
       const text = await fetchHtmlWithChromium(testUrl, {
-        timeoutMs: 12_000,
+        timeoutMs: 16_000,
         cacheTtlMs: 120_000,
       });
       if (text.includes("article-box") || text.includes("eps-box") || text.includes("movie-coment")) {
@@ -358,7 +358,7 @@ export async function getEpisodeStream(watchUrl: string): Promise<EpisodeStreamI
 
   try {
     const html = await fetchHtmlWithChromium(watchUrl, {
-      timeoutMs: 12_000,
+      timeoutMs: 16_000,
       cacheTtlMs: 300_000,
     });
     const $ = cheerio.load(html);
