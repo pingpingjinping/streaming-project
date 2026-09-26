@@ -257,7 +257,66 @@ export async function initDb() {
     }
   }
 
+  // Resolved international titles are shared by subtitle lookup and search.
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS anime_title_aliases (
+        normalized_title VARCHAR(512) PRIMARY KEY,
+        original_title TEXT NOT NULL,
+        korean_title TEXT NOT NULL,
+        source VARCHAR(40) NOT NULL DEFAULT 'lookup',
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `;
+  } catch (e: any) {
+    if (e?.code !== "23505" && !e?.message?.includes("already exists")) {
+      console.warn("[initDb anime_title_aliases warning]:", e?.message);
+    }
+  }
+
   isInitialized = true;
+}
+
+function normalizeAnimeTitleKey(title: string): string {
+  return title.normalize("NFKC").trim().toLocaleLowerCase("en-US").replace(/\s+/g, " ");
+}
+
+export async function getCachedKoreanAnimeTitle(title: string): Promise<string | null> {
+  const sql = getDb();
+  if (!sql || !title.trim()) return null;
+  await initDb();
+  try {
+    const key = normalizeAnimeTitleKey(title);
+    const rows = await sql`SELECT korean_title FROM anime_title_aliases WHERE normalized_title = ${key} LIMIT 1`;
+    return rows[0]?.korean_title ? String(rows[0].korean_title) : null;
+  } catch (e) {
+    console.warn("[getCachedKoreanAnimeTitle warning]:", e);
+    return null;
+  }
+}
+
+export async function saveKoreanAnimeTitleMapping(
+  originalTitle: string,
+  koreanTitle: string,
+  source = "lookup"
+): Promise<void> {
+  const sql = getDb();
+  if (!sql || !originalTitle.trim() || !koreanTitle.trim()) return;
+  await initDb();
+  try {
+    const key = normalizeAnimeTitleKey(originalTitle);
+    await sql`
+      INSERT INTO anime_title_aliases (normalized_title, original_title, korean_title, source, updated_at)
+      VALUES (${key}, ${originalTitle.trim()}, ${koreanTitle.trim()}, ${source.slice(0, 40)}, CURRENT_TIMESTAMP)
+      ON CONFLICT (normalized_title) DO UPDATE SET
+        original_title = EXCLUDED.original_title,
+        korean_title = EXCLUDED.korean_title,
+        source = EXCLUDED.source,
+        updated_at = CURRENT_TIMESTAMP
+    `;
+  } catch (e) {
+    console.warn("[saveKoreanAnimeTitleMapping warning]:", e);
+  }
 }
 
 export async function getUserCount(): Promise<number> {
@@ -1195,4 +1254,3 @@ export async function setAnissiaStreamCache(data: AnissiaStreamCache): Promise<b
     return false;
   }
 }
-
