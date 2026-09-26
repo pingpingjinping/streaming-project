@@ -1064,7 +1064,7 @@ export default function IframePlayer({
             className="absolute inset-0 h-full w-full border-0 z-0"
             allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
             sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
-            referrerPolicy="no-referrer-when-downgrade"
+            referrerPolicy="no-referrer"
           />
         ) : (
           <div className="absolute inset-0 z-0 flex flex-col items-center justify-center bg-black/90 p-6 text-center">
