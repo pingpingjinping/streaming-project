@@ -998,7 +998,7 @@ export async function fetchCreatorSubtitle(
     const targetSeason = parseSeason(resolvedTitle) || parseSeason(animeTitle);
 
     // 단일 페이지에서 자막 파일(첨부파일/구글드라이브/다운로드링크) 추출 헬퍼 함수
-    const tryExtractFromPage = async (targetUrl: string): Promise<SubtitleResult | null> => {
+    const tryExtractFromPage = async (targetUrl: string, providedHtml?: string): Promise<SubtitleResult | null> => {
       try {
         let postUrl = targetUrl;
         const reqHeaders: Record<string, string> = { ...HEADERS };
@@ -1013,13 +1013,15 @@ export async function fetchCreatorSubtitle(
           reqHeaders["Referer"] = "https://blog.naver.com/";
         }
 
-        const res = await fetch(postUrl, {
-          headers: reqHeaders,
-          signal: AbortSignal.timeout(timeoutMs),
-        });
-        if (!res.ok) return null;
-
-        const html = await res.text();
+        let html = providedHtml;
+        if (!html) {
+          const res = await fetch(postUrl, {
+            headers: reqHeaders,
+            signal: AbortSignal.timeout(timeoutMs),
+          });
+          if (!res.ok) return null;
+          html = await res.text();
+        }
         const $ = cheerio.load(html);
 
         // 1) 티스토리 첨부파일 (tfile, attachment, kakaocdn.net)
@@ -1121,7 +1123,7 @@ export async function fetchCreatorSubtitle(
         gdriveMatches.sort((a, b) => b.score - a.score);
 
         for (const item of gdriveMatches) {
-          const buf = await downloadFileWithTimeout(item.url, postUrl, timeoutMs + 1500);
+          const buf = await downloadFileWithTimeout(item.url, postUrl, Math.max(timeoutMs + 1500, 20000));
           if (buf && buf.length > 50) {
             const extracted = extractSubtitleFromBuffer(buf, episodeNumber, item.url,
               !item.exactEpisode && !postIsCurrentEpisode);
@@ -1192,6 +1194,7 @@ export async function fetchCreatorSubtitle(
 
     let isInitialUrlCurrentEp = false;
     let postSeasonMatch = true;
+    let initialPageHtml = "";
 
     try {
       const initRes = await fetch(website, {
@@ -1200,6 +1203,7 @@ export async function fetchCreatorSubtitle(
       });
       if (initRes.ok) {
         const initHtml = await initRes.text();
+        initialPageHtml = initHtml;
         const $init = cheerio.load(initHtml);
         const pageTitle = $init("title").text().trim() || "";
         const pSeason = parseSeason(`${pageTitle} ${website}`);
@@ -1211,6 +1215,15 @@ export async function fetchCreatorSubtitle(
 
         if (postSeasonMatch && pEps.includes(episodeNumber)) {
           isInitialUrlCurrentEp = true;
+        }
+
+        // A single Blogger post can hold individually labelled Drive links or
+        // a range ZIP, while the post title itself has no episode number.
+        if (domain.includes("blogspot.com") && isSpecificPost && postSeasonMatch && !isInitialUrlCurrentEp) {
+          isInitialUrlCurrentEp = $init("a[href]").toArray().some((a) => {
+            const href = $init(a).attr("href") || "";
+            return Boolean(extractGdriveId(href)) && parseEpisodes($init(a).text()).includes(episodeNumber);
+          });
         }
 
         // Tistory's latest post usually links to the entire subtitle category.
@@ -1251,7 +1264,7 @@ export async function fetchCreatorSubtitle(
     } catch {}
 
     if (isInitialUrlCurrentEp) {
-      const initExtracted = await tryExtractFromPage(website);
+      const initExtracted = await tryExtractFromPage(website, initialPageHtml);
       if (initExtracted) return initExtracted;
     }
 
