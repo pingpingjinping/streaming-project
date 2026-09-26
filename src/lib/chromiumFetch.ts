@@ -55,6 +55,9 @@ export async function fetchHtmlWithChromium(
         "--metrics-recording-only",
         "--no-first-run",
         "--no-default-browser-check",
+        // Capture the DOM while slow third-party resources are still loading.
+        // Without this flag Chromium can hang past the process timeout on Pi.
+        `--timeout=${Math.min(8000, Math.max(1000, timeoutMs - 4000))}`,
         `--user-data-dir=${profileDir}`,
         "--dump-dom",
         url,
