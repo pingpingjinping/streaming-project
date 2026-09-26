@@ -301,7 +301,7 @@ export async function getCachedKoreanAnimeTitle(title: string): Promise<string |
   await initDb();
   try {
     const key = normalizeAnimeTitleKey(title);
-    const rows = await sql`SELECT korean_title FROM anime_title_aliases WHERE normalized_title = ${key} LIMIT 1`;
+    const rows = await sql`SELECT korean_title FROM anime_title_aliases WHERE normalized_title = ${key} AND source NOT IN ('wikidata', 'anissia', 'alias') LIMIT 1`;
     return rows[0]?.korean_title ? String(rows[0].korean_title) : null;
   } catch (e) {
     console.warn("[getCachedKoreanAnimeTitle warning]:", e);
