@@ -231,6 +231,66 @@ export default function ManualSourcePanel({
           {error && <p className="text-xs font-semibold text-rose-400">{error}</p>}
         </form>
       )}
+      <ManualSubtitleLink animeId={animeId} episodeNumber={episodeNumber} />
+    </div>
+  );
+}
+
+function ManualSubtitleLink({ animeId, episodeNumber }: { animeId: string; episodeNumber: number }) {
+  const [savedUrl, setSavedUrl] = useState("");
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    setSavedUrl("");
+    setUrl("");
+    fetch(`/api/anime/manual-subtitle?animeId=${encodeURIComponent(animeId)}&ep=${episodeNumber}`, { cache: "no-store" })
+      .then((response) => response.json())
+      .then((data) => { if (!cancelled && data.url) { setSavedUrl(data.url); setUrl(data.url); } })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [animeId, episodeNumber]);
+
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setMessage("글에서 해당 회차 자막을 확인하는 중...");
+    try {
+      const response = await fetch("/api/anime/manual-subtitle", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ animeId, episodeNumber, url: url.trim() }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || "자막 링크를 저장하지 못했습니다.");
+      setSavedUrl(url.trim());
+      setMessage(`${data.filename} 확인됨. 재생 화면을 새로고침하면 적용됩니다.`);
+      window.location.reload();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "자막 추출에 실패했습니다.");
+    } finally { setBusy(false); }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/anime/manual-subtitle?animeId=${encodeURIComponent(animeId)}&ep=${episodeNumber}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("삭제 실패");
+      window.location.reload();
+    } catch { setMessage("자막 링크를 삭제하지 못했습니다."); setBusy(false); }
+  };
+
+  return (
+    <div className="mt-4 border-t border-white/10 pt-4">
+      <div className="mb-2 text-sm font-bold text-white">직접 자막 링크 <span className="text-xs font-normal text-slate-400">이 회차의 블로그 글 주소</span></div>
+      <form onSubmit={save} className="flex flex-wrap gap-2">
+        <input type="url" value={url} onChange={(event) => setUrl(event.target.value)}
+          placeholder="https://example.tistory.com/123" required maxLength={2048}
+          className="min-w-[180px] flex-1 rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-xs text-white outline-none focus:border-sky-500/60" />
+        <button type="submit" disabled={busy || !url.trim()} className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{busy ? "확인 중..." : "자막 적용"}</button>
+        {savedUrl && <button type="button" onClick={remove} disabled={busy} className="rounded-lg border border-rose-500/30 px-3 py-2 text-xs text-rose-300 disabled:opacity-50">삭제</button>}
+      </form>
+      {message && <p className="mt-2 text-xs text-slate-300">{message}</p>}
     </div>
   );
 }
