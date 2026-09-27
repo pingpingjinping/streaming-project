@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { assertSafeProxyUrl, UnsafeProxyUrlError } from "@/lib/proxyGuard";
 import { deleteManualSubtitleLink, getManualSubtitleLink, saveManualSubtitleLink } from "@/lib/db";
-import { fetchCreatorSubtitle } from "@/lib/subtitles";
 
 function key(animeId: unknown, episodeNumber: unknown) {
   const id = typeof animeId === "string" ? animeId.trim() : "";
@@ -33,11 +32,11 @@ export async function POST(request: NextRequest) {
     if (error instanceof UnsafeProxyUrlError) return NextResponse.json({ message: "허용되지 않는 주소입니다." }, { status: 400 });
     throw error;
   }
-  const title = typeof body?.title === "string" ? body.title.slice(0, 255) : target.id;
-  const subtitle = await fetchCreatorSubtitle("직접 자막", url, title, target.ep, 12000);
-  if (!subtitle?.content) return NextResponse.json({ message: "이 주소에서 해당 회차 자막을 추출하지 못했습니다. 글 주소와 회차를 확인해 주세요." }, { status: 422 });
   await saveManualSubtitleLink(user.username, target.id, target.ep, url);
-  return NextResponse.json({ success: true, filename: subtitle.orig_filename }, { headers: { "Cache-Control": "no-store" } });
+  return NextResponse.json(
+    { success: true, message: "링크를 저장했습니다. 재생할 때 해당 회차 자막 추출을 시도합니다." },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function DELETE(request: NextRequest) {

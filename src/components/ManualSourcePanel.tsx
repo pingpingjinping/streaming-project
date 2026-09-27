@@ -326,7 +326,7 @@ function ManualSubtitleLink({ animeId, episodeNumber }: { animeId: string; episo
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
     setBusy(true);
-    setMessage("글에서 해당 회차 자막을 확인하는 중...");
+    setMessage("자막 페이지 링크를 저장하는 중...");
     try {
       const response = await fetch("/api/anime/manual-subtitle", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -335,10 +335,10 @@ function ManualSubtitleLink({ animeId, episodeNumber }: { animeId: string; episo
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || "자막 링크를 저장하지 못했습니다.");
       setSavedUrl(url.trim());
-      setMessage(`${data.filename} 확인됨. 재생 화면을 새로고침하면 적용됩니다.`);
+      setMessage(data.message || "링크를 저장했습니다. 회차를 다시 열면 자막 추출을 시도합니다.");
       window.location.reload();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "자막 추출에 실패했습니다.");
+      setMessage(error instanceof Error ? error.message : "자막 링크를 저장하지 못했습니다.");
     } finally { setBusy(false); }
   };
 
@@ -358,7 +358,7 @@ function ManualSubtitleLink({ animeId, episodeNumber }: { animeId: string; episo
         <input type="url" value={url} onChange={(event) => setUrl(event.target.value)}
           placeholder="https://example.tistory.com/123" required maxLength={2048}
           className="min-w-[180px] flex-1 rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-xs text-white outline-none focus:border-sky-500/60" />
-        <button type="submit" disabled={busy || !url.trim()} className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{busy ? "확인 중..." : "자막 적용"}</button>
+        <button type="submit" disabled={busy || !url.trim()} className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{busy ? "저장 중..." : "자막 링크 저장"}</button>
         {savedUrl && <button type="button" onClick={remove} disabled={busy} className="rounded-lg border border-rose-500/30 px-3 py-2 text-xs text-rose-300 disabled:opacity-50">삭제</button>}
       </form>
       {message && <p className="mt-2 text-xs text-slate-300">{message}</p>}
