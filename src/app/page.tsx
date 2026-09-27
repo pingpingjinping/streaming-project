@@ -214,7 +214,7 @@ export default async function HomePage({
       has_next = res.has_next;
       total_pages = res.total_pages;
     } else if (tab === "list") {
-      const res = await provider.getAnimeList({ genre: genre || undefined, page });
+      const res = await provider.getAnimeListFiltered({ catalog: true, genre: genre || undefined, page });
       items = res.items;
       has_next = res.has_next;
       total_pages = res.total_pages;
@@ -343,8 +343,10 @@ export default async function HomePage({
       sectionTitle = "⭐ 역대 최고 명작 (Top Rated)";
       sectionSubtitle = "글로벌 평점이 가장 높은 검증된 역대 명작 컬렉션";
     } else if (tab === "list") {
-      sectionTitle = genre ? `🎭 ${genre} 장르 애니메이션` : "🎭 40대 장르별 탐색";
-      sectionSubtitle = "선택하신 장르에 해당하는 작품 목록입니다.";
+      sectionTitle = genre ? `🎭 ${genre} 장르 작품` : "📚 애니시아 전체 작품 카탈로그";
+      sectionSubtitle = genre
+        ? "애니시아 작품 카탈로그에서 선택한 장르를 검색합니다."
+        : "최근 자막 피드와 별도로 애니시아에 등록된 작품을 둘러봅니다. 작품 상세에서 회차별 자막 링크를 확인할 수 있습니다.";
     }
   } else if (activeSource === "reanime") {
     if (tab === "trending") {
@@ -450,7 +452,7 @@ export default async function HomePage({
                   }`}
                 >
                   <Filter className="h-4 w-4 text-pink-400" />
-                  40대 장르 탐색
+                      전체 작품 탐색
                 </Link>
               </>
             ) : activeSource === "reanime" ? (
@@ -684,14 +686,14 @@ export default async function HomePage({
         {tab === "list" && (
           <div className="mt-6 rounded-2xl border border-purple-500/20 bg-slate-900/60 p-5 backdrop-blur-md">
             {activeSource === "anissia" ? (
-              /* =================== 0. Anissia Hub 40대 장르 맞춤 탐색 =================== */
+              /* =================== 0. Anissia Hub 전체 작품 카탈로그 =================== */
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-purple-500/20 pb-3">
                   <div className="flex items-center gap-2">
                     <span className="flex h-6 items-center rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 px-2.5 text-[11px] font-extrabold text-white shadow-sm">
-                      애니시아 40대 장르 카탈로그
+                      애니시아 전체 작품
                     </span>
-                    <span className="text-xs text-slate-400">100% 한글 자막 보장 애니메이션 탐색</span>
+                    <span className="text-xs text-slate-400">등록 작품과 작품별 자막 탐색</span>
                   </div>
                   {genre && (
                     <div className="flex items-center gap-1.5 text-xs text-emerald-300">
