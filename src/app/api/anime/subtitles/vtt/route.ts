@@ -141,7 +141,7 @@ export async function GET(request: NextRequest) {
           let matched = subName
             ? result.subtitles.find((s) => s.name === subName || subName.includes(s.name) || s.name.includes(subName))
             : null;
-          if (!matched) {
+          if (!matched && !subName && !result.needsManualSubtitleChoice) {
             matched = result.subtitles.find((s) => s.is_ass) || result.subtitles[0];
           }
           if (matched && matched.content) {
