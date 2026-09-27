@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ExternalLink, Link2, Loader2, Plus, Trash2, X } from "lucide-react";
+import CaptchaSubtitleBrowser from "@/components/CaptchaSubtitleBrowser";
 
 interface ManualSource {
   id: number;
@@ -362,6 +363,9 @@ function ManualSubtitleLink({ animeId, episodeNumber }: { animeId: string; episo
         {savedUrl && <button type="button" onClick={remove} disabled={busy} className="rounded-lg border border-rose-500/30 px-3 py-2 text-xs text-rose-300 disabled:opacity-50">삭제</button>}
       </form>
       {message && <p className="mt-2 text-xs text-slate-300">{message}</p>}
+      {savedUrl.startsWith("https://erulabo.com/") && (
+        <CaptchaSubtitleBrowser animeId={animeId} episodeNumber={episodeNumber} url={savedUrl} />
+      )}
       <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-white/10 pt-3 text-xs text-slate-300">
         <label className="cursor-pointer rounded-lg border border-sky-500/40 px-3 py-2 text-sky-300 hover:bg-sky-600/20">
           {uploading ? "Pi에 저장 중..." : "받은 자막 파일 Pi에 저장"}
