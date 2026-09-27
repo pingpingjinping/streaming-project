@@ -591,6 +591,7 @@ export default function Player(props: PlayerProps) {
   const localFileInputRef = useRef<HTMLInputElement>(null);
   const uploadFileInputRef = useRef<HTMLInputElement>(null);
   const [uploadingSub, setUploadingSub] = useState(false);
+  const [openingLocalSub, setOpeningLocalSub] = useState(false);
 
   // Skip States & Preferences
   const [skipIntervals, setSkipIntervals] = useState<SkipInterval[]>([]);
@@ -1789,93 +1790,49 @@ export default function Player(props: PlayerProps) {
     refreshSubtitleSettingsRef.current = refreshSubtitleSettings;
   }, [refreshSubtitleSettings]);
 
-  // Local subtitle file opener (.ass, .ssa, .smi, .srt, .vtt)
+  // Open a local subtitle or ZIP, store it on Pi, and apply the current episode's subtitle.
   const handleLocalSubFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
+    const isZip = file.name.toLowerCase().endsWith(".zip");
+    setOpeningLocalSub(true);
     try {
-      const buffer = await file.arrayBuffer();
-      let rawText = "";
-      try {
-        rawText = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
-      } catch {
-        rawText = new TextDecoder("euc-kr").decode(buffer);
+      const form = new FormData();
+      form.set("animeId", animeId);
+      form.set("ep", String(currentEp));
+      form.set("file", file);
+      if (isZip) form.set("mode", "open");
+      const response = await fetch("/api/anime/uploaded-subtitle", { method: "POST", body: form });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || "자막 파일을 Pi에 저장하지 못했습니다.");
+
+      if (data.subtitle) {
+        const localSub: SubtitleItem = data.subtitle;
+        setSubs((prev) => {
+          const nextSubs = [localSub, ...prev.filter((sub) => sub.name !== localSub.name)];
+          setSelectedSubIndex(0);
+          applySubtitle(localSub, currentSyncOffset);
+          setTimeout(() => refreshSubtitleSettings(nextSubs, 0), 100);
+          return nextSubs;
+        });
       }
-
-      const filename = file.name;
-      const lowerName = filename.toLowerCase();
-      const isAss = lowerName.endsWith(".ass") || lowerName.endsWith(".ssa");
-
-      let convertedContent = rawText;
-      const format: "ASS" | "VTT" = isAss ? "ASS" : "VTT";
-
-      if (isAss) {
-        convertedContent = rawText;
-      } else if (lowerName.endsWith(".smi") || rawText.toLowerCase().includes("<sync")) {
-        const matches: Array<{ startMs: number; text: string }> = [];
-        const syncRegex = /<SYNC\s+Start=(\d+)>(?:<P[^>]*>)?([\s\S]*?)(?=<SYNC|\Z)/gi;
-        let m: RegExpExecArray | null;
-
-        while ((m = syncRegex.exec(rawText)) !== null) {
-          const startMs = parseInt(m[1], 10);
-          let clean = m[2].replace(/<br\s*\/?>/gi, "\n");
-          clean = clean.replace(/<(?!(\/)?(?:font|i|b|u)\b)[^>]+>/gi, "").trim();
-          clean = clean.replace(/&nbsp;/gi, " ").trim();
-          if (clean && clean.toLowerCase() !== "&nbsp;") {
-            matches.push({ startMs, text: clean });
-          }
-        }
-
-        if (matches.length > 0) {
-          const msToVtt = (ms: number): string => {
-            const totalSec = Math.floor(ms / 1000);
-            const remMs = ms % 1000;
-            const s = totalSec % 60;
-            const totalMin = Math.floor(totalSec / 60);
-            const min = totalMin % 60;
-            const h = Math.floor(totalMin / 60);
-            return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(remMs).padStart(3, "0")}`;
-          };
-
-          const lines = ["WEBVTT", ""];
-          for (let i = 0; i < matches.length; i++) {
-            const item = matches[i];
-            const endMs = i + 1 < matches.length ? matches[i + 1].startMs : item.startMs + 3000;
-            lines.push(`${msToVtt(item.startMs)} --> ${msToVtt(endMs)}`);
-            lines.push(item.text);
-            lines.push("");
-          }
-          convertedContent = lines.join("\n");
-        }
-      } else if (lowerName.endsWith(".srt") || rawText.includes("-->")) {
-        convertedContent = "WEBVTT\n\n" + rawText.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2");
-      }
-
-      const localSub: SubtitleItem = {
-        name: `로컬: ${filename}`,
-        format,
-        is_ass: isAss,
-        content: convertedContent,
-      };
-
-      setSubs((prev) => {
-        const nextSubs = [localSub, ...prev.filter((s) => s.name !== localSub.name)];
-        setSelectedSubIndex(0);
-        applySubtitle(localSub, currentSyncOffset);
-        setTimeout(() => refreshSubtitleSettings(nextSubs, 0), 100);
-        return nextSubs;
-      });
-
       if (artRef.current) {
-        artRef.current.notice.show = `📂 로컬 자막 로드 완료: ${filename}`;
+        if (isZip) {
+          const saved = Array.isArray(data.saved) ? data.saved : [];
+          artRef.current.notice.show = data.subtitle
+            ? `Pi에 ${saved.length}개 회차 저장 · ${currentEp}화 자막 적용 완료`
+            : `Pi에 ${saved.length}개 회차 저장 · 현재 ${currentEp}화 자막은 ZIP에 없음`;
+        } else {
+          artRef.current.notice.show = `Pi에 저장하고 자막 적용 완료: ${file.name}`;
+        }
       }
     } catch (err) {
       console.error("[Local subtitle load error]:", err);
       if (artRef.current) {
-        artRef.current.notice.show = "로컬 자막을 읽는 데 실패했습니다.";
+        artRef.current.notice.show = err instanceof Error ? err.message : "자막 파일을 읽는 데 실패했습니다.";
       }
     } finally {
+      setOpeningLocalSub(false);
       if (e.target) e.target.value = "";
     }
   };
@@ -4090,18 +4047,20 @@ export default function Player(props: PlayerProps) {
                 <input
                   type="file"
                   ref={localFileInputRef}
-                  accept=".ass,.ssa,.smi,.srt,.vtt"
+                  accept=".ass,.ssa,.smi,.srt,.vtt,.zip"
                   onChange={handleLocalSubFile}
                   className="hidden"
+                  disabled={openingLocalSub}
                 />
                 <button
                   type="button"
+                  disabled={openingLocalSub}
                   onClick={() => localFileInputRef.current?.click()}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-purple-500/40 bg-purple-500/10 px-3 py-1.5 text-xs font-bold text-purple-300 transition hover:bg-purple-600 hover:text-white cursor-pointer"
-                  title="내 PC에서 로컬 자막 파일(.ass, .smi, .srt, .vtt) 직접 열기"
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-purple-500/40 bg-purple-500/10 px-3 py-1.5 text-xs font-bold text-purple-300 transition hover:bg-purple-600 hover:text-white cursor-pointer disabled:opacity-50"
+                  title="자막 파일 또는 ZIP을 Pi에 저장하고 회차별로 열기"
                 >
                   <FolderOpen className="h-3.5 w-3.5" />
-                  <span>자막 파일 열기</span>
+                  <span>{openingLocalSub ? "Pi에 분류·저장 중..." : "자막 파일 열기"}</span>
                 </button>
               </>
             )}
