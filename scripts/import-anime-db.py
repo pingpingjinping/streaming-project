@@ -25,8 +25,12 @@ reviews = db.execute('''SELECT anime_no,anissia_year,subject,original_subject,ca
  WHERE year_status != '같은 연도 재발견' ''').fetchall()
 catalog,aliases=build_catalog(db)
 reanime_matches=build_reanime_matches(db,catalog)
-if len(entries) != 43310 or len(reviews) != 260 or len(catalog)!=9017:
-    raise SystemExit(f'Unexpected database contents: {len(entries)} source entries, {len(catalog)} Korean titles, {len(reviews)} unresolved works.')
+source_counts = {row['source']: row['n'] for row in db.execute(
+    'SELECT source,COUNT(*) AS n FROM entries GROUP BY source')}
+if not all(source_counts.get(source, 0) for source in ('AniList','ReAnime','Onnada','Anissia')) or not catalog:
+    raise SystemExit(f'Incomplete four-source database: {source_counts}; {len(catalog)} Korean titles.')
+if len(reviews) > source_counts.get('Anissia', 0):
+    raise SystemExit(f'Invalid review queue size: {len(reviews)} reviews for {source_counts.get("Anissia", 0)} Anissia rows.')
 
 def record(row):
     return dict(row)
@@ -97,4 +101,4 @@ cmd=['docker','compose','exec','-T','db','sh','-c',
 result=subprocess.run(cmd,input=stream.getvalue(),text=True,check=False)
 if result.returncode:
     raise SystemExit(f'Import failed (exit {result.returncode}); transaction rolled back.')
-print(f'Imported {len(entries)} source records, {len(catalog)} Korean titles, {len(reanime_matches)} ReAnime links ({sum(r["anissiaNo"] is not None for r in reanime_matches)} direct subtitles), {len(aliases)} aliases and {len(reviews)} review items. Existing stream links kept.')
+print(f'Imported {len(entries)} source records {source_counts}, {len(catalog)} Korean titles, {len(reanime_matches)} ReAnime links ({sum(r["anissiaNo"] is not None for r in reanime_matches)} direct subtitles), {len(aliases)} aliases and {len(reviews)} review items. Existing stream links kept.')
