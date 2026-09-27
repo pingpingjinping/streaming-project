@@ -109,6 +109,7 @@ export async function GET(request: NextRequest) {
         count: validSubtitles.length,
         subtitles: validSubtitles,
         creators: result.creators,
+        needs_manual_subtitle_choice: result.needsManualSubtitleChoice,
       },
       {
         status: 200,
