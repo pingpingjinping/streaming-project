@@ -45,7 +45,7 @@ TECH_WORDS = (
     "aac", "flac", "webrip", "web-dl", "web.", "bdrip", "bd ", "bluray",
     "blu-ray", "remux", "10bit", "8bit", "10-bit", "8-bit", "dual-audio",
     "multi-subs", "batch", "at-x", "bs11", "tx ", "cs", "uhd", "hdr",
-    "dts", "mkv", "h264", "h265", "yuv", "raws", "subplease",
+    "dts", "mkv", "h264", "h265", "yuv", "raws", "subplease", "bd-box",
 )
 
 
@@ -118,6 +118,7 @@ def extract_meta(raw: str) -> dict:
     season = None
     season_patterns = (
         r"\bseason\s*0*(\d{1,2})\b",
+        r"\b0*(\d{1,2})(?:st|nd|rd|th)\s+season\b",
         r"\bs\s*-?\s*0*(\d{1,2})\b",
         r"시즌\s*0*(\d{1,2})",
         r"(?<!\d)(\d{1,2})\s*기\b",
@@ -173,6 +174,8 @@ def title_variants(raw: str) -> list[str]:
     # Extracted metadata should not participate in the title string comparison.
     s = re.sub(r"(?<!\d)(?:19|20)\d{2}(?!\d)", " ", s)
     s = re.sub(r"\bseason\s*0*\d{1,2}\b", " ", s, flags=re.I)
+    s = re.sub(r"\b0*\d{1,2}(?:st|nd|rd|th)\s+season\b", " ", s, flags=re.I)
+    s = re.sub(r"\bpart\s*0*\d{1,2}\b", " ", s, flags=re.I)
     s = re.sub(r"\bs\s*-?\s*0*\d{1,2}\b", " ", s, flags=re.I)
     s = re.sub(r"시즌\s*0*\d{1,2}", " ", s)
     s = re.sub(r"(?<!\d)\d{1,2}\s*기\b", " ", s)
@@ -189,7 +192,7 @@ def title_variants(raw: str) -> list[str]:
 
     # Naked encoding/release tail: "1080p x265 FLAC ..." etc.
     s = re.sub(
-        r"\b(?:2160p|1080p|720p|480p|uhd|bdrip|bluray|blu-ray|remux|webrip|web-dl|"
+        r"\b(?:2160p|1080p|720p|480p|uhd|bdrip|bd-box|bluray|blu-ray|remux|webrip|web-dl|"
         r"x264|x265|h264|h265|hevc|avc|flac|aac|hdr10?|10bit|8bit)\b.*$",
         " ",
         s,
