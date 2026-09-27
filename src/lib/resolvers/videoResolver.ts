@@ -72,6 +72,45 @@ function selectBestReanimeItem(items: any[], targetSeason: number | null): any {
 }
 
 /**
+ * Older Anissia entries often have no originalSubject. Look up closely related
+ * Anissia catalog entries (for example an OVA entry) and recover their shared
+ * Japanese franchise title, trimming only known work/format suffixes.
+ */
+async function findRelatedJapaneseTitles(anissiaId: number, koreanTitle: string): Promise<string[]> {
+  if (!koreanTitle) return [];
+
+  try {
+    const res = await fetch(
+      `https://api.anissia.net/anime/list/0?q=${encodeURIComponent(koreanTitle)}`,
+      { headers: HEADERS, signal: AbortSignal.timeout(3000) }
+    );
+    if (!res.ok) return [];
+
+    const json = await res.json();
+    const list = Array.isArray(json?.data?.content) ? json.data.content : [];
+    const normalize = (value: string) => value.toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, "");
+    const target = normalize(koreanTitle);
+    const titles = new Set<string>();
+
+    for (const item of list) {
+      if (Number(item?.animeNo) === anissiaId || !item?.originalSubject || !item?.subject) continue;
+      const related = normalize(String(item.subject));
+      if (!related.includes(target) && !target.includes(related)) continue;
+
+      const original = String(item.originalSubject).trim();
+      const franchiseTitle = original
+        .replace(/[\s\u3000]*(?:完|続|續|OVA|OAD|SP|特別編|番外編)(?:[\s\u3000].*)?$/iu, "")
+        .trim();
+      if (franchiseTitle.length >= 4 && franchiseTitle !== original) titles.add(franchiseTitle);
+    }
+
+    return [...titles];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * 애니시아 작품 번호와 회차를 바탕으로 최적의 스트리밍 소스(1순위 ReAnime, 2순위 Linkkf, 3순위 Ohli24)를 자동 리졸빙
  */
 export async function resolveAnissiaStream(
@@ -115,6 +154,11 @@ export async function resolveAnissiaStream(
       }
     } catch {}
   }
+
+  // 과거 작품은 Anissia 원제가 비어 있는 경우가 많다. 같은 한국어 제목의
+  // OVA/후속 항목에서 공통 일본어 원제를 복구해 ReAnime 매칭에 사용한다.
+  const relatedJapaneseTitles = jpTitle ? [] : await findRelatedJapaneseTitles(anissiaId, korTitle);
+  if (!jpTitle && relatedJapaneseTitles.length > 0) jpTitle = relatedJapaneseTitles[0];
 
   const targetSeason = parseSeason(korTitle) || parseSeason(jpTitle);
 
@@ -162,6 +206,7 @@ export async function resolveAnissiaStream(
         baseJp,
         romajiClean,
         jpTitle,
+        ...relatedJapaneseTitles,
       ].filter((q): q is string => Boolean(q && q.length >= 2));
 
       for (const q of searchQueries) {
