@@ -1,0 +1,92 @@
+name: Aniall Match Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      db_tag:
+        description: "anime-db-download release tag"
+        required: true
+        default: "db-v1"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout streaming-project
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check private DB token
+        shell: bash
+        env:
+          ANIME_DB_TOKEN: ${{ secrets.ANIME_DB_TOKEN }}
+        run: |
+          if [ -z "$ANIME_DB_TOKEN" ]; then
+            echo "::error::Missing repository secret ANIME_DB_TOKEN. Add a fine-grained GitHub token with read-only Contents access to pingpingjinping/anime-db-download."
+            exit 1
+          fi
+
+      - name: Download four-source DB
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.ANIME_DB_TOKEN }}
+          DB_TAG: ${{ inputs.db_tag }}
+        run: |
+          set -euo pipefail
+          gh release download "$DB_TAG" \
+            --repo pingpingjinping/anime-db-download \
+            --pattern "anime_four_sources_multilingual_prepared.zip" \
+            --clobber
+
+          unzip -o anime_four_sources_multilingual_prepared.zip
+          test -f anime_four_sources_multilingual_prepared.db
+
+          echo "Downloaded DB:"
+          ls -lh anime_four_sources_multilingual_prepared.db
+
+      - name: Run aniall match audit
+        shell: bash
+        run: |
+          set -o pipefail
+          python scripts/audit-aniall-subtitles.py \
+            ./anime_four_sources_multilingual_prepared.db \
+            --delay 0.12 | tee aniall-audit.log
+
+      - name: Add audit result to job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Aniall Match Audit"
+            echo
+            echo "DB release: ${{ inputs.db_tag }}"
+            echo
+            echo '```text'
+            if [ -f aniall-audit.log ]; then
+              sed -n '/=== aniall subtitle match audit ===/,$p' aniall-audit.log
+            else
+              echo "Audit log was not created."
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload audit reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aniall-match-audit-${{ inputs.db_tag }}
+          path: |
+            aniall-audit.log
+            tmp/aniall-audit/
+          if-no-files-found: warn
+          retention-days: 14
