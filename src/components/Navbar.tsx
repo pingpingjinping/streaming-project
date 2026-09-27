@@ -147,7 +147,8 @@ export default function Navbar() {
           </div>
         </form>
 
-        <Link href="/unmatched" className="hidden shrink-0 items-center gap-1.5 text-xs font-semibold text-amber-300 hover:text-white lg:inline-flex">
+        <Link href="/catalog" className="hidden shrink-0 text-xs font-semibold text-purple-300 hover:text-white lg:inline-flex">한글 DB</Link>
+        <Link href="/unmatched" className="hidden shrink-0 items-center gap-1.5 text-xs font-semibold text-amber-300 hover:text-white xl:inline-flex">
           <Link2 className="h-4 w-4" /> 미연결 작품
         </Link>
 
@@ -227,6 +228,11 @@ export default function Navbar() {
                       </button>
 
                       <div className="my-1 border-t border-white/10" />
+
+                      <Link href="/catalog" onClick={() => setIsMenuOpen(false)}
+                        className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-medium text-purple-200 hover:bg-purple-600/20">
+                        <Film className="h-3.5 w-3.5" /> 한글 애니 DB
+                      </Link>
 
                       <Link
                         href="/unmatched"

@@ -8,6 +8,7 @@ import {
 import { assertSafeProxyUrl, UnsafeProxyUrlError } from "@/lib/proxyGuard";
 import { getSessionUser } from "@/lib/auth";
 import { getManualSubtitleLink, getUploadedSubtitle } from "@/lib/db";
+import { getReanimeMatch } from "@/lib/reanimeMatches";
 
 export async function GET(request: NextRequest) {
   // 보안: 미인증 사용자가 서버를 오픈 크롤링/퍼치 서비스로 악용하는 것을 방지
@@ -21,13 +22,13 @@ export async function GET(request: NextRequest) {
   const ep = parseInt(searchParams.get("ep") || "1", 10) || 1;
   const animeIdParam = searchParams.get("animeId") || searchParams.get("animeNo") || "";
   let directAnimeNo: number | null = null;
-  if (animeIdParam) {
-    const rawNo = animeIdParam.replace(/^ani_/, "");
-    const parsed = parseInt(rawNo, 10);
-    if (!isNaN(parsed) && parsed > 0) {
-      directAnimeNo = parsed;
-    }
+  if (/^(ani_)?\d+$/.test(animeIdParam)) {
+    const parsed = Number(animeIdParam.replace(/^ani_/, ""));
+    if (Number.isSafeInteger(parsed) && parsed > 0) directAnimeNo = parsed;
   }
+  const reanimeMatch = animeIdParam.startsWith("re_")
+    ? await getReanimeMatch(animeIdParam) : null;
+  if (reanimeMatch?.anissiaNo) directAnimeNo = reanimeMatch.anissiaNo;
 
   const website = searchParams.get("website")?.trim() || searchParams.get("sub_url")?.trim() || "";
   const creatorName = searchParams.get("creatorName")?.trim() || searchParams.get("creator")?.trim() || "";
@@ -53,7 +54,7 @@ export async function GET(request: NextRequest) {
       }
     }
     const resolvedTitle = await resolveKoreanTitle(title);
-    const searchTarget = resolvedTitle || title;
+    const searchTarget = reanimeMatch?.koreanTitle || resolvedTitle || title;
 
     // 0순위: 애니시아에서 이미 파악된 자막 블로그 링크가 직통으로 넘어온 경우 (초고속 직통 모드)
     if (website && website.startsWith("http")) {

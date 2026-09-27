@@ -9,6 +9,7 @@ import {
   ServerSource,
 } from "./types";
 import { REANIME_PREFIX, stripReanimeId, toReanimeId } from "./ids";
+import { findReanimeSearchTitles, getBundledReanimeMatch } from "@/lib/reanimeMatches";
 import { getReanimeBaseUrl, DEFAULT_REANIME_URL } from "@/lib/db";
 
 export const BASE_URL = DEFAULT_REANIME_URL;
@@ -180,7 +181,9 @@ async function fetchHomeData(): Promise<any> {
 
 function mapRawItemToAnimeListItem(item: any): AnimeListItem {
   const animeId = item.anime_id || "";
+  const verified = getBundledReanimeMatch(toReanimeId(animeId));
   const title =
+    verified?.koreanTitle ||
     item.title?.english ||
     item.title?.romaji ||
     item.title?.native ||
@@ -397,6 +400,9 @@ export async function searchAnime(keyword: string, page = 1): Promise<AnimeListR
 
   const searchTerms: string[] = [];
 
+  // Stable IDs from the four-source catalog supply the original ReAnime title.
+  searchTerms.push(...findReanimeSearchTitles(trimmed));
+
   // 한글 검색어인 경우 애니시아(Anissia)를 통해 원제(일본어)를 최우선 검색어로 배치
   if (/[가-힣]/.test(trimmed)) {
     try {
@@ -491,6 +497,7 @@ export async function getAnimeDetail(animeId: string): Promise<AnimeDetail | nul
       const anilistId = Number(rawAnime.anilist_id || 0);
 
       const title =
+        getBundledReanimeMatch(normalizedId)?.koreanTitle ||
         rawAnime.title?.english ||
         rawAnime.title?.romaji ||
         rawAnime.title?.native ||
@@ -565,6 +572,7 @@ export async function getAnimeDetail(animeId: string): Promise<AnimeDetail | nul
     const anilistId = Number(rawAnime.anilist_id || 0);
 
     const title =
+      getBundledReanimeMatch(normalizedId)?.koreanTitle ||
       rawAnime.title?.english ||
       rawAnime.title?.romaji ||
       rawAnime.title?.native ||

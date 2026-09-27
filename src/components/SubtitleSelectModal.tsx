@@ -142,7 +142,7 @@ export default function SubtitleSelectModal({
 
     try {
       const res = await fetch(
-        `/api/anime/subtitles?title=${encodeURIComponent(keyword)}&ep=${searchEp}`
+        `/api/anime/subtitles?title=${encodeURIComponent(keyword)}&ep=${searchEp}&animeId=${encodeURIComponent(animeId)}`
       );
       const data = await res.json();
 
