@@ -29,10 +29,9 @@ ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 ENV CHROMIUM_BIN=/usr/bin/chromium
 
-# Headless Chromium은 일반 provider 요청에 사용하고, Xvfb는 사용자가
-# 브라우저 화면에서 직접 Cloudflare Turnstile을 처리할 때만 실행합니다.
+# Chromium은 provider 페이지 접근에 필요합니다.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends chromium xvfb \
+    && apt-get install -y --no-install-recommends chromium \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder --chown=node:node /app/public ./public
