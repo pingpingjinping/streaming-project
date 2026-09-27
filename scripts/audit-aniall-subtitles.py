@@ -59,7 +59,7 @@ TECH_WORDS = (
     "multi-subs", "batch", "at-x", "bs11", "tx ", "cs", "uhd", "hdr",
     "dts", "mkv", "h264", "h265", "yuv", "raws", "subplease", "bd-box",
     "4k", "ma10p", "dvdrip", "dvd remux", "multi", "dual", "japanese",
-    "remaster", "hd리마스터", "tokuten", "rartv",
+    "remaster", "hdリマスター", "tokuten", "rartv",
     "oad", "rework ver",
 )
 
