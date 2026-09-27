@@ -46,6 +46,50 @@ export async function POST(request: NextRequest) {
       if (form?.get("mode") === "preview") {
         return NextResponse.json({ entries }, { headers: { "Cache-Control": "no-store" } });
       }
+      if (form?.get("mode") === "open") {
+        const counts = new Map<number, number>();
+        for (const entry of entries) {
+          if (entry.episode) counts.set(entry.episode, (counts.get(entry.episode) || 0) + 1);
+        }
+        let assignments: Array<{ index: number; episode: number }> = [];
+        const allNamed = entries.every((entry) => entry.episode && counts.get(entry.episode) === 1);
+        if (allNamed) {
+          assignments = entries.map((entry) => ({ index: entry.index, episode: entry.episode! }));
+        } else if (entries.length === 1) {
+          assignments = [{ index: entries[0].index, episode: key.ep }];
+        } else {
+          const range = file.name.match(/(?:^|[^\d])(\d{1,3})\s*[-~]\s*(\d{1,3})(?!\d)/);
+          const start = range ? Number(range[1]) : 0;
+          const end = range ? Number(range[2]) : 0;
+          if (start > 0 && end >= start && end - start + 1 === entries.length && end <= 200) {
+            assignments = [...entries]
+              .sort((a, b) => a.filename.localeCompare(b.filename, undefined, { numeric: true }))
+              .map((entry, index) => ({ index: entry.index, episode: start + index }));
+          }
+        }
+        if (!assignments.length) {
+          return NextResponse.json({ message: "ZIP 안 자막의 회차를 파일명에서 찾지 못했습니다. 회차별 번호가 포함된 ZIP을 선택해 주세요." }, { status: 422 });
+        }
+        const subtitles = assignments.map(({ index, episode }) => {
+          const entry = zip.getEntries()[index];
+          const filename = entries.find((item) => item.index === index)!.filename;
+          const subtitle = extractSubtitleFromBuffer(entry.getData(), episode, filename);
+          if (!subtitle || Buffer.byteLength(subtitle.content) > 2 * 1024 * 1024) {
+            throw new Error(`${filename}: 자막 내용을 읽지 못했습니다.`);
+          }
+          return { episode, filename: filename.slice(0, 255), content: subtitle.content, format: subtitle.format };
+        });
+        await saveUploadedSubtitles(user.username, key.id, subtitles);
+        const current = subtitles.find((subtitle) => subtitle.episode === key.ep);
+        return NextResponse.json({
+          success: true,
+          saved: subtitles.map((subtitle) => subtitle.episode),
+          subtitle: current ? {
+            name: `Pi 저장: ${current.filename}`, content: current.content,
+            format: current.format, is_ass: current.format === "ASS",
+          } : null,
+        }, { headers: { "Cache-Control": "no-store" } });
+      }
       const rawAssignments = form?.get("assignments");
       if (typeof rawAssignments === "string") {
         const selected = JSON.parse(rawAssignments);
