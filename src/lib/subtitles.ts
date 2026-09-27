@@ -22,6 +22,8 @@ export interface SubtitleResult {
   matchScore?: number;
   matchedTitle?: string;
   verifiedMatch?: boolean;
+  sourceCreatorWebsite?: string;
+  sourceMatchedTitle?: string;
 }
 
 export interface CreatorInfo {
@@ -1555,7 +1557,11 @@ export async function searchAllSubtitlesParallel(
   maxTotalTimeMs = 45000,
   directAnimeNo?: number | null,
   referenceTitle = title
-): Promise<{ subtitles: SubtitleResult[]; creators: CreatorInfo[] }> {
+): Promise<{
+  subtitles: SubtitleResult[];
+  creators: CreatorInfo[];
+  needsManualSubtitleChoice: boolean;
+}> {
   // Create an overall timeout promise that resolves at 13 seconds
   let timeoutHandle: NodeJS.Timeout;
   const timeoutPromise = new Promise<null>((resolve) => {
@@ -1580,7 +1586,10 @@ export async function searchAllSubtitlesParallel(
     // 2. Filter valid creators who have an active blog for this episode
     const candidateCreators = anissiaCreators.filter(
       (c) => c.website && c.website.startsWith("http")
-    );
+    ).sort((a, b) => {
+      if (a.verifiedMatch !== b.verifiedMatch) return a.verifiedMatch ? -1 : 1;
+      return (b.matchScore ?? -Infinity) - (a.matchScore ?? -Infinity);
+    });
 
     // Spread downloads across distinct candidate titles before taking second creators.
     const firstPerTitle = new Set<string>();
@@ -1599,10 +1608,15 @@ export async function searchAllSubtitlesParallel(
     const creatorSubPromises = topCreators.map(async (c) => {
       const subtitle = await fetchCreatorSubtitle(c.name, c.website, targetTitle, episodeNumber, 10000);
       return subtitle ? { ...subtitle, matchScore: c.matchScore,
-        matchedTitle: c.matchedTitle, verifiedMatch: c.verifiedMatch } : null;
+        matchedTitle: c.matchedTitle, verifiedMatch: c.verifiedMatch,
+        sourceCreatorWebsite: c.website, sourceMatchedTitle: c.matchedTitle } : null;
     });
 
     const settled = await Promise.allSettled(creatorSubPromises);
+    const needsManualSubtitleChoice = Boolean(
+      topCreators.length > 0 &&
+      (settled[0]?.status !== "fulfilled" || settled[0].value === null)
+    );
     for (const s of settled) {
       if (s.status === "fulfilled" && s.value) {
         collectedSubs.push(s.value);
@@ -1616,6 +1630,7 @@ export async function searchAllSubtitlesParallel(
     return {
       subtitles: collectedSubs,
       creators: anissiaCreators,
+      needsManualSubtitleChoice,
     };
   })();
 
@@ -1626,9 +1641,9 @@ export async function searchAllSubtitlesParallel(
       return winner;
     }
     // If timed out at 13s, return whatever is empty or basic fallback safely
-    return { subtitles: [], creators: [] };
+    return { subtitles: [], creators: [], needsManualSubtitleChoice: false };
   } catch {
     clearTimeout(timeoutHandle!);
-    return { subtitles: [], creators: [] };
+    return { subtitles: [], creators: [], needsManualSubtitleChoice: false };
   }
 }
