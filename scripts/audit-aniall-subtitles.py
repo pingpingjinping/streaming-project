@@ -494,8 +494,13 @@ def metadata_rank(post_meta: dict, cand: dict) -> tuple[int, bool]:
     bonus = 0
     conflict = False
     if post_meta["year"] and cand["year"]:
-        if post_meta["year"] == cand["year"]:
+        year_delta = abs(post_meta["year"] - cand["year"])
+        if year_delta == 0:
             bonus += 12
+        elif year_delta == 1:
+            # Source databases can disagree by one release year for the same
+            # work. Keep it reviewable, but never treat the year as confirmed.
+            bonus += 6
         else:
             conflict = True
 
@@ -553,6 +558,8 @@ def choose_exact(candidates: list[dict], post_meta: dict):
                 not season_matches(post_season, cand_season)
                 and (post_season is not None or cand_season is not None)
             )
+            or (post_meta["year"] and chosen["year"]
+                and abs(post_meta["year"] - chosen["year"]) == 1)
             or (chosen["format"] and not post_meta["format"])
             or (post_meta["format"] and not chosen["format"])
         )
@@ -607,6 +614,8 @@ def fuzzy_best(query: str, post_meta: dict, exact, keys, trigram):
     # A supplied season that the candidate cannot confirm is never auto-high.
     metadata_incomplete = bool(
         (post_meta["year"] and not best["year"])
+        or (post_meta["year"] and best["year"]
+            and abs(post_meta["year"] - best["year"]) == 1)
         or (
             not season_matches(post_meta["season"], best["season"])
             and post_meta["season"] is not None
