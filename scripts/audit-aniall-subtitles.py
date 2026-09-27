@@ -194,6 +194,9 @@ def title_variants(raw: str) -> list[str]:
     s = re.sub(r"\bs\s*-?\s*0*\d{1,2}\b", " ", s, flags=re.I)
     s = re.sub(r"시즌\s*0*\d{1,2}", " ", s)
     s = re.sub(r"(?<!\d)\d{1,2}\s*기\b", " ", s)
+    if meta["season"] in (2, 3, 4, 5, 6):
+        roman = {2: "II", 3: "III", 4: "IV", 5: "V", 6: "VI"}[meta["season"]]
+        s = re.sub(rf"\b{roman}\b(?=\s*(?:$|[-\[(]|EP\s*\d|\d{{1,3}}\b))", " ", s, flags=re.I)
     s = s.replace("第一季", " ").replace("第二季", " ").replace("第三季", " ")
 
     # Episode ranges belong to subtitle selection, not work-title matching.
