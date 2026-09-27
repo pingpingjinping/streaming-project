@@ -231,6 +231,102 @@ def title_variants(raw: str) -> list[str]:
     return out
 
 
+class LinkParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.links: list[tuple[str, str]] = []
+        self._href: str | None = None
+        self._parts: list[str] = []
+        self.text_parts: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() == "a":
+            d = dict(attrs)
+            self._href = d.get("href")
+            self._parts = []
+
+    def handle_data(self, data):
+        if data:
+            self.text_parts.append(data)
+            if self._href is not None:
+                self._parts.append(data)
+
+    def handle_endtag(self, tag):
+        if tag.lower() == "a" and self._href is not None:
+            text = " ".join(" ".join(self._parts).split())
+            self.links.append((self._href, text))
+            self._href = None
+            self._parts = []
+
+
+def fetch(url: str, retries: int = 3) -> str:
+    err = None
+    for attempt in range(retries):
+        try:
+            req = Request(
+                url,
+                headers={
+                    "User-Agent": UA,
+                    "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.7",
+                },
+            )
+            with urlopen(req, timeout=25) as r:
+                return r.read().decode("utf-8", errors="replace")
+        except (HTTPError, URLError, TimeoutError) as exc:
+            err = exc
+            if attempt + 1 < retries:
+                time.sleep(1.0 + attempt)
+    raise RuntimeError(f"Failed to fetch {url}: {err}")
+
+
+def numeric_post_id(href: str) -> str | None:
+    href = html.unescape(href or "")
+    m = re.match(
+        r"^(?:https?://aniall\.tistory\.com)?/(\d+)(?:[/?#].*)?$",
+        href,
+    )
+    return m.group(1) if m else None
+
+
+def expected_count_and_pages(first_html: str) -> tuple[int | None, int | None]:
+    parser = LinkParser()
+    parser.feed(first_html)
+    text = " ".join(parser.text_parts)
+    m = re.search(r"'?자막자료실'?\s*에\s*해당되는\s*글\s*([\d,]+)건", text)
+    if not m:
+        m = re.search(r"자막자료실[^\d]{0,80}([\d,]+)건", text)
+    if not m:
+        return None, None
+    count = int(m.group(1).replace(",", ""))
+    return count, math.ceil(count / 10)
+
+
+def extract_page_posts(page_html: str, limit: int = 10) -> list[dict]:
+    parser = LinkParser()
+    parser.feed(page_html)
+    found: list[dict] = []
+    seen = set()
+
+    # Category pages expose the current page's posts first. Keep the first
+    # ten unique numeric post links to avoid sidebar/related-post duplicates.
+    for href, text in parser.links:
+        pid = numeric_post_id(href)
+        if not pid or pid in seen:
+            continue
+        title = html.unescape(text).strip()
+        if len(compact_key(title)) < 2 or title.isdigit():
+            continue
+        seen.add(pid)
+        found.append({
+            "post_id": pid,
+            "post_url": f"{BASE}/{pid}",
+            "title": title,
+        })
+        if len(found) >= limit:
+            break
+    return found
+
+
 def _candidate_meta(row: dict, alias: str) -> dict:
     meta = extract_meta(alias)
     # The reviewed catalog year is more reliable than title text when present.
