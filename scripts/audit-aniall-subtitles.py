@@ -49,6 +49,7 @@ KNOWN_TITLE_VARIANTS = {
     "aitenchimuyo": ["사랑 천지무용"],
     "mobilesuitgundamironbloodedorphans": ["기동전사 건담 철혈의 오펀스"],
     "ijiranaidenagatorosan": ["괴롭히지 말아요, 나가토로 양"],
+    "kimetsunoyaibayuukakuhen": ["귀멸의 칼날 : 환락의 거리편", "귀멸의 칼날 유곽 편"],
 }
 
 TECH_WORDS = (
@@ -133,6 +134,10 @@ def extract_meta(raw: str) -> dict:
     year = years[0] if years else None
 
     season = None
+    season_range = None
+    range_match = re.search(r"(?<!\d)(\d{1,2})\s*[-~–]\s*(\d{1,2})\s*기\b", s)
+    if range_match:
+        season_range = [int(range_match.group(1)), int(range_match.group(2))]
     season_patterns = (
         r"\bseason\s*0*(\d{1,2})\b",
         r"\b0*(\d{1,2})(?:st|nd|rd|th)\s+season\b",
@@ -142,12 +147,12 @@ def extract_meta(raw: str) -> dict:
         r"시즌\s*0*(\d{1,2})",
         r"(?<!\d)(\d{1,2})\s*기\b",
     )
-    for pat in season_patterns:
+    for pat in (() if season_range else season_patterns):
         m = re.search(pat, s, flags=re.I)
         if m:
             season = int(m.group(1))
             break
-    if season is None:
+    if season is None and season_range is None:
         if "第一季" in s:
             season = 1
         elif "第二季" in s:
@@ -157,8 +162,10 @@ def extract_meta(raw: str) -> dict:
 
     # Roman numerals are common season markers (e.g. Overlord IV, Date A Live V).
     # Require a separator/end after the numeral so ordinary words are not affected.
-    if season is None:
-        m = re.search(r"(?:^|\s)(II|III|IV|V|VI)\b(?=\s*(?:$|[-\[(]|EP\s*\d|\d{1,3}\b))", s, flags=re.I)
+    if season is None and season_range is None:
+        # A roman numeral followed by a subtitle (e.g. "II - Le Film") can
+        # be part of a movie's actual title, as in Street Fighter II.
+        m = re.search(r"(?:^|\s)(II|III|IV|V|VI)\b(?=\s*(?:$|[\[(]|EP\s*\d|\d{1,3}\b))", s, flags=re.I)
         if m:
             season = {"ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6}[m.group(1).lower()]
 
@@ -173,7 +180,7 @@ def extract_meta(raw: str) -> dict:
     elif re.search(r"\bsp\b", low):
         fmt = "sp"
 
-    return {"year": year, "season": season, "format": fmt}
+    return {"year": year, "season": season, "season_range": season_range, "format": fmt}
 
 
 def title_variants(raw: str) -> list[str]:
@@ -211,7 +218,9 @@ def title_variants(raw: str) -> list[str]:
     s = re.sub(r"\bpart\s*0*\d{1,2}\b", " ", s, flags=re.I)
     s = re.sub(r"\bs\s*-?\s*0*\d{1,2}\b", " ", s, flags=re.I)
     s = re.sub(r"시즌\s*0*\d{1,2}", " ", s)
+    s = re.sub(r"(?<!\d)\d{1,2}\s*[-~–]\s*\d{1,2}\s*기\b", " ", s)
     s = re.sub(r"(?<!\d)\d{1,2}\s*기\b", " ", s)
+    s = re.sub(r"\(\s*\)|\[\s*\]", " ", s)
     if meta["season"] in (2, 3, 4, 5, 6):
         roman = {2: "II", 3: "III", 4: "IV", 5: "V", 6: "VI"}[meta["season"]]
         s = re.sub(rf"\b{roman}\b(?=\s*(?:$|[-\[(]|EP\s*\d|\d{{1,3}}\b))", " ", s, flags=re.I)
@@ -639,6 +648,39 @@ def fuzzy_best(query: str, post_meta: dict, exact, keys, trigram):
     }
 
 
+def fuzzy_review_candidates(variants: list[str], post_meta: dict, exact, keys, trigram, limit=8):
+    """Return ranked alternatives for human review; these are never confirmations."""
+    best_by_title = {}
+    query_numbers = set().union(*(title_number_tokens(v) for v in variants)) if variants else set()
+    for query in variants:
+        q = compact_key(query)
+        if len(q) < 3:
+            continue
+        grams = {q[j:j+3] for j in range(len(q)-2)}
+        counts = defaultdict(int)
+        for gram in grams:
+            for idx in trigram.get(gram, ()):
+                counts[idx] += 1
+        for idx in sorted(counts, key=counts.get, reverse=True)[:160]:
+            key = keys[idx]
+            ratio = SequenceMatcher(None, q, key).ratio()
+            if q in key or key in q:
+                ratio = min(1.0, ratio + 0.04)
+            for cand in exact[key]:
+                _, conflict = metadata_rank(post_meta, cand)
+                if conflict or title_number_tokens(cand["alias"]) - query_numbers:
+                    continue
+                adjusted = ratio + min(0.06, metadata_rank(post_meta, cand)[0] / 200.0)
+                title = cand["korean"]
+                item = {"title": title, "score": round(ratio * 100, 1),
+                        "adjusted_score": round(adjusted * 100, 1),
+                        "year": cand["year"], "season": cand["season"],
+                        "format": cand["format"], "alias": cand["alias"]}
+                if title not in best_by_title or adjusted > best_by_title[title]["adjusted_score"] / 100:
+                    best_by_title[title] = item
+    return sorted(best_by_title.values(), key=lambda x: (-x["adjusted_score"], x["title"]))[:limit]
+
+
 def match_post(title: str, exact, keys, trigram):
     variants = title_variants(title)
     post_meta = extract_meta(title)
@@ -652,6 +694,9 @@ def match_post(title: str, exact, keys, trigram):
         cand, state, top = choose_exact(hits, post_meta)
         had_metadata_conflict = had_metadata_conflict or state == "conflict"
         if cand:
+            if post_meta["season_range"]:
+                exact_review_candidates.append(cand)
+                continue
             return {
                 "match_kind": "exact",
                 "matched_title": cand["korean"],
@@ -662,6 +707,7 @@ def match_post(title: str, exact, keys, trigram):
                 "variant": v,
                 "post_year": post_meta["year"],
                 "post_season": post_meta["season"],
+                "post_season_range": post_meta["season_range"],
                 "post_format": post_meta["format"],
                 "matched_year": cand["year"],
                 "matched_season": cand["season"],
@@ -686,11 +732,13 @@ def match_post(title: str, exact, keys, trigram):
             "variant": variants[0] if variants else title,
             "post_year": post_meta["year"],
             "post_season": post_meta["season"],
+            "post_season_range": post_meta["season_range"],
             "post_format": post_meta["format"],
             "matched_year": None,
             "matched_season": None,
             "matched_format": None,
             "candidate_titles": " | ".join(titles[:12]),
+            "candidate_details": [],
         }
 
     best = None
@@ -707,7 +755,7 @@ def match_post(title: str, exact, keys, trigram):
             and not best["query_extra_numbers"]
             and not best["shorter_containment"]
         )
-        if (
+        if not post_meta["season_range"] and (
             safe_specificity
             and best["margin"] >= 4
             and (
@@ -721,6 +769,7 @@ def match_post(title: str, exact, keys, trigram):
         best["match_kind"] = kind
         best["post_year"] = post_meta["year"]
         best["post_season"] = post_meta["season"]
+        best["post_season_range"] = post_meta["season_range"]
         best["post_format"] = post_meta["format"]
         best.pop("metadata_incomplete", None)
         best.pop("candidate_extra_specific", None)
@@ -728,8 +777,18 @@ def match_post(title: str, exact, keys, trigram):
         best.pop("shorter_containment", None)
         best.pop("explicit_meta_confirmed", None)
         best["candidate_titles"] = ""
-        if kind != "unmatched":
+        if kind != "unmatched" and not post_meta["season_range"]:
             return best
+
+    alternatives = fuzzy_review_candidates(variants, post_meta, exact, keys, trigram)
+    candidate_text = " | ".join(
+        f'{x["title"]} ({x["score"]:.1f}; {x["year"] or "?"}; '
+        f'{("S" + str(x["season"])) if x["season"] else "season?"}; {x["format"] or "format?"})'
+        for x in alternatives
+    )
+    if post_meta["season_range"]:
+        range_text = f'{post_meta["season_range"][0]}-{post_meta["season_range"][1]}기 묶음'
+        candidate_text = (range_text + " → ") + candidate_text
 
     return {
         "match_kind": "metadata_conflict" if had_metadata_conflict else "unmatched",
@@ -745,7 +804,9 @@ def match_post(title: str, exact, keys, trigram):
         "matched_year": best["matched_year"] if best else None,
         "matched_season": best["matched_season"] if best else None,
         "matched_format": best["matched_format"] if best else None,
-        "candidate_titles": "",
+        "candidate_titles": candidate_text,
+        "candidate_details": alternatives,
+        "post_season_range": post_meta["season_range"],
     }
 
 
@@ -827,7 +888,8 @@ def main():
             "post_id", "post_url", "title", "match_kind", "matched_title",
             "matched_alias", "score", "adjusted_score", "margin", "variant",
             "post_year", "post_season", "post_format",
-            "matched_year", "matched_season", "matched_format", "candidate_titles",
+            "matched_year", "matched_season", "matched_format", "post_season_range",
+            "candidate_titles", "candidate_details",
         ]
         w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
         w.writeheader()
