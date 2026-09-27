@@ -37,7 +37,11 @@ export interface SubtitleOption {
   matchScore?: number;
   matchedTitle?: string;
   verifiedMatch?: boolean;
+  sourceCreatorWebsite?: string;
+  sourceMatchedTitle?: string;
 }
+
+const creatorKey = (creator: CreatorInfo) => `${creator.website}\n${creator.matchedTitle || ""}`;
 
 interface SubtitleSelectModalProps {
   isOpen: boolean;
@@ -47,6 +51,8 @@ interface SubtitleSelectModalProps {
   episodeNumber: number;
   creators: CreatorInfo[];
   currentSubName?: string;
+  currentSubSourceCreatorWebsite?: string;
+  currentSubMatchedTitle?: string;
   onSelectSubtitle: (sub: SubtitleOption) => void;
 }
 
@@ -58,6 +64,8 @@ export default function SubtitleSelectModal({
   episodeNumber,
   creators,
   currentSubName,
+  currentSubSourceCreatorWebsite,
+  currentSubMatchedTitle,
   onSelectSubtitle,
 }: SubtitleSelectModalProps) {
   const [mounted, setMounted] = useState(false);
@@ -99,7 +107,8 @@ export default function SubtitleSelectModal({
   // 1. Download and apply creator's subtitle
   const handleSelectCreator = async (creator: CreatorInfo) => {
     if (!creator.website || loadingCreator) return;
-    setLoadingCreator(creator.name);
+    const selectedCreatorKey = creatorKey(creator);
+    setLoadingCreator(selectedCreatorKey);
     setCreatorError(null);
 
     try {
@@ -125,6 +134,8 @@ export default function SubtitleSelectModal({
         is_ass: Boolean(data.subtitle.is_ass),
         content: data.subtitle.content,
         url: data.subtitle.url,
+        sourceCreatorWebsite: creator.website,
+        sourceMatchedTitle: creator.matchedTitle,
       };
 
       onSelectSubtitle(newSub);
@@ -332,8 +343,15 @@ export default function SubtitleSelectModal({
                 <div className="space-y-2.5">
                   <p className="text-[11px] text-slate-400">제목 매칭 점수순 · 점수는 작품 제목과 시즌 비교 기준이며 자막 싱크를 뜻하지 않습니다.</p>
                   {creators.map((c, idx) => {
-                    const isCurrent = currentSubName?.includes(c.name);
-                    const isLoading = loadingCreator === c.name;
+                    // Creator names can repeat for several anime entries. A name
+                    // match alone made every row appear applied; only mark the
+                    // exact blog + matched work selected in this player.
+                    const isCurrent = Boolean(
+                      c.website &&
+                      currentSubSourceCreatorWebsite === c.website &&
+                      currentSubMatchedTitle === c.matchedTitle
+                    );
+                    const isLoading = loadingCreator === creatorKey(c);
                     const isAss =
                       c.name.includes("카이란") ||
                       c.name.includes("슈퍼소닉") ||
