@@ -1,5 +1,23 @@
 # 애니메이션 스트리밍 플레이어 (Anime Streaming Player)
 
+## 네 곳 제목 DB와 미연결 작품
+
+`/unmatched`에서 애니시아 기준 미연결 작품 260개를 제목과 연도별로 확인하고,
+회차별 스트리밍 주소를 등록할 수 있습니다. 주소는 기존 PostgreSQL의
+`manual_stream_sources`에 로그인 계정별로 저장됩니다. 페이지의 후보 점수는
+검토용이며 자동 연결이나 동일 작품 확정을 뜻하지 않습니다.
+
+Pi에 검토된 `anime_four_sources_multilingual_prepared.db` 파일을
+복사한 다음 저장소 루트에서 아래 명령을 실행하면 네 출처 43,310건과
+미연결 검토 목록 260건을 PostgreSQL로 가져옵니다. 기존 사용자 스트림 링크는 유지됩니다.
+
+```bash
+python3 scripts/import-anime-db.py /path/to/anime_four_sources_multilingual_prepared.db
+```
+
+DB를 다시 검토했다면 `python3 scripts/export-unmatched-catalog.py /path/to/db`로
+사이트에 포함된 초기 목록도 다시 만들 수 있습니다. import 전에는 이 초기 목록이 표시됩니다.
+
 Next.js 15 App Router와 Vercel Serverless, Neon Postgres를 기반으로 구축된 고성능 애니메이션 웹 스트리밍 플레이어입니다.
 
 ---
