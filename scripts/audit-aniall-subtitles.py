@@ -41,6 +41,16 @@ CATEGORY_NAME = "자막자료실"
 CATEGORY_URL = BASE + "/category/" + quote(CATEGORY_NAME)
 UA = "Mozilla/5.0 (compatible; streaming-project subtitle audit/1.0)"
 
+# Known cross-language title spellings that are present in aniall but are not
+# reliably linked by the reviewed four-source aliases yet. These only add
+# lookup variants; normal metadata/ambiguity checks still decide the match.
+KNOWN_TITLE_VARIANTS = {
+    "aitenchimuyou": ["사랑 천지무용"],
+    "aitenchimuyo": ["사랑 천지무용"],
+    "mobilesuitgundamironbloodedorphans": ["기동전사 건담 철혈의 오펀스"],
+    "ijiranaidenagatorosan": ["괴롭히지 말아요, 나가토로 양"],
+}
+
 TECH_WORDS = (
     "1080p", "720p", "2160p", "480p", "x264", "x265", "hevc", "avc",
     "aac", "flac", "webrip", "web-dl", "web.", "bdrip", "bd ", "bluray",
@@ -71,9 +81,12 @@ def release_group_chunk(chunk: str) -> bool:
     if any(word in x for word in (
         "raw", "reinforce", "moozzi", "judas", "subsplease", "anime land",
         "uqw", "linrip", "dbd", "nanakoraws", "salender", "sandoe",
+        "fansub", "bitsub", "subteam", "rip",
     )):
         return True
-    return bool(re.fullmatch(r"[a-z0-9][a-z0-9 ._+\-@]{1,38}", x))
+    # Release-group names often contain &, accented Latin letters, etc.
+    # Keep CJK bracketed titles intact, but allow broader non-CJK group names.
+    return bool(re.fullmatch(r"[\w ._+\-@&]{2,40}", x, flags=re.UNICODE))
 
 
 def strip_release_prefix(s: str) -> str:
@@ -123,6 +136,7 @@ def extract_meta(raw: str) -> dict:
     season_patterns = (
         r"\bseason\s*0*(\d{1,2})\b",
         r"\b0*(\d{1,2})(?:st|nd|rd|th)\s+season\b",
+        r"\b0*(\d{1,2})(?:st|nd|rd|th)\b(?=\s*(?:$|[-\[(]|ep\s*\d|\d{1,3}\b))",
         r"\bs\s*-?\s*0*(\d{1,2})\b",
         r"시즌\s*0*(\d{1,2})",
         r"(?<!\d)(\d{1,2})\s*기\b",
@@ -165,6 +179,7 @@ def title_variants(raw: str) -> list[str]:
     """Return title-only variants. Year/season/format are compared separately."""
     meta = extract_meta(raw)
     s = strip_release_prefix(raw)
+    bracket_source = s
     s = re.sub(r"_?자막\s*$", "", s, flags=re.I).strip()
     s = re.sub(r"\s+_?subtitle\s*$", "", s, flags=re.I).strip()
     s = re.sub(r"(?:완결|통합)?\s*자막(?:모음|입니다)?\s*$", "", s, flags=re.I).strip()
@@ -190,6 +205,7 @@ def title_variants(raw: str) -> list[str]:
         s = re.sub(rf"(?<!\d){meta['year']}(?:년)?(?!\d)", " ", s)
     s = re.sub(r"\bseason\s*0*\d{1,2}\b", " ", s, flags=re.I)
     s = re.sub(r"\b0*\d{1,2}(?:st|nd|rd|th)\s+season\b", " ", s, flags=re.I)
+    s = re.sub(r"\b0*\d{1,2}(?:st|nd|rd|th)\b(?=\s*(?:$|[-\[(]|ep\s*\d|\d{1,3}\b))", " ", s, flags=re.I)
     s = re.sub(r"\bpart\s*0*\d{1,2}\b", " ", s, flags=re.I)
     s = re.sub(r"\bs\s*-?\s*0*\d{1,2}\b", " ", s, flags=re.I)
     s = re.sub(r"시즌\s*0*\d{1,2}", " ", s)
@@ -222,6 +238,7 @@ def title_variants(raw: str) -> list[str]:
     )
     s = re.sub(r"\bHD\s*Remaster\b.*$", " ", s, flags=re.I)
     s = re.sub(r"HDリマスター.*$", " ", s, flags=re.I)
+    s = re.sub(r"\b(?:REPACK|PROPER)\b", " ", s, flags=re.I)
     s = re.sub(r"\bv\d+\b(?=\s*(?:$|[-\[(]))", " ", s, flags=re.I)
     s = re.sub(r"\s+-\s*(?:\+\s*)+$", " ", s)
     s = re.sub(r"\s+", " ", s).strip(" -_[]")
@@ -249,9 +266,19 @@ def title_variants(raw: str) -> list[str]:
             add(" ".join(tokens[repeat_at:]))
             break
 
-    # "여기저기 - Acchi Kocchi", "시광대리인 -Link Click-" etc.
-    for part in re.split(r"\s+-\s*|\s*-\s+(?=[A-Za-z])", s):
-        add(part)
+    # Split a Korean/Japanese/Chinese title from an English alternate title,
+    # but keep English titles whose hyphen is part of the real title
+    # (e.g. "Mobile Suit Gundam - Iron-Blooded Orphans").
+    m_alt = re.match(r"^(.+?[가-힣ぁ-んァ-ン一-龯][^-]*?)\s+-\s*(.+)$", s)
+    if m_alt:
+        add(m_alt.group(1))
+        add(m_alt.group(2).strip(" -"))
+
+    # Bracketed multilingual posts often carry Japanese / English / Korean
+    # titles in separate [] chunks. Add each non-technical title chunk.
+    for inner in re.findall(r"\[([^\]]{2,160})\]", bracket_source):
+        if not looks_technical(inner) and not release_group_chunk(inner):
+            add(inner)
 
     # Parenthesized alternate titles; also keep the title before them.
     m = re.search(r"\s*\(([^()]{2,120})\)", s)
@@ -267,6 +294,11 @@ def title_variants(raw: str) -> list[str]:
         left, right = s.split("_", 1)
         if re.search(r"[가-힣]", left) and re.search(r"[가-힣]", right) and not re.match(r"\s*\d", right):
             add(left)
+
+    # Add a few reviewed cross-language spellings without forcing a match.
+    for base in list(out):
+        for known in KNOWN_TITLE_VARIANTS.get(compact_key(base), ()):
+            add(known)
 
     return out
 
@@ -479,6 +511,8 @@ def choose_exact(candidates: list[dict], post_meta: dict):
         underspecified = bool(
             (chosen["season"] and not post_meta["season"])
             or (chosen["format"] and not post_meta["format"])
+            or (post_meta["season"] and not chosen["season"])
+            or (post_meta["format"] and not chosen["format"])
         )
         if underspecified:
             return None, "underspecified", top
@@ -538,6 +572,10 @@ def fuzzy_best(query: str, post_meta: dict, exact, keys, trigram):
         (best["season"] and not post_meta["season"])
         or (best["format"] and not post_meta["format"])
     )
+    best_key = compact_key(best["alias"])
+    shorter_containment = bool(
+        best_key and best_key in q and len(best_key) / max(1, len(q)) < 0.92
+    )
     explicit_meta_confirmed = bool(
         (post_meta["year"] and best["year"] == post_meta["year"])
         or (post_meta["season"] and best["season"] == post_meta["season"])
@@ -554,6 +592,7 @@ def fuzzy_best(query: str, post_meta: dict, exact, keys, trigram):
         "margin": round((best_adjusted - second_adjusted) * 100, 1),
         "metadata_incomplete": metadata_incomplete,
         "candidate_extra_specific": candidate_extra_specific,
+        "shorter_containment": shorter_containment,
         "explicit_meta_confirmed": explicit_meta_confirmed,
     }
 
@@ -620,7 +659,11 @@ def match_post(title: str, exact, keys, trigram):
 
     if best:
         kind = "unmatched"
-        safe_specificity = not best["metadata_incomplete"] and not best["candidate_extra_specific"]
+        safe_specificity = (
+            not best["metadata_incomplete"]
+            and not best["candidate_extra_specific"]
+            and not best["shorter_containment"]
+        )
         if (
             safe_specificity
             and best["margin"] >= 4
@@ -638,6 +681,7 @@ def match_post(title: str, exact, keys, trigram):
         best["post_format"] = post_meta["format"]
         best.pop("metadata_incomplete", None)
         best.pop("candidate_extra_specific", None)
+        best.pop("shorter_containment", None)
         best.pop("explicit_meta_confirmed", None)
         best["candidate_titles"] = ""
         if kind != "unmatched":
