@@ -496,6 +496,9 @@ export default function IframePlayer({
               is_ass: Boolean(s.is_ass),
               content: s.content || "",
               url: s.url || "",
+              matchScore: s.matchScore,
+              matchedTitle: s.matchedTitle,
+              verifiedMatch: s.verifiedMatch,
             }));
             setSubtitles(list);
             setCurrentSubIndex(0);

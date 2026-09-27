@@ -1,5 +1,35 @@
 # 애니메이션 스트리밍 플레이어 (Anime Streaming Player)
 
+## 네 곳 제목 DB와 미연결 작품
+
+`/catalog`에서 온나다 5,478건과 애니시아 3,539건, 총 9,017건의 한글 제목을
+검색할 수 있습니다. 검토된 제목 연결에서 중복되지 않는 영어·일본어 별칭을
+`anime_title_aliases`에 추가해 기존 작품 카드의 한글 제목 표시에도 활용합니다.
+
+핵심 연결은 ReAnime 작품 ID와 애니시아 작품 번호입니다. 온나다와 AniList로
+검증한 연결을 바탕으로 ReAnime 작품 3,953개에 한글 제목을 표시합니다.
+같은 연도에 제목이 일치하고 애니시아 작품 번호가 하나로 특정되는 1,957개는 재생 화면에서 해당 작품의
+자막 제작자 목록을 직접 조회합니다. 한 ReAnime ID에 여러 애니시아 번호가
+연결되는 경우에는 임의로 고르지 않고 기존 제목 검색을 사용합니다.
+
+`/unmatched`에서 애니시아 기준 미연결 작품 260개를 제목과 연도별로 확인하고,
+회차별 스트리밍 주소를 등록할 수 있습니다. 주소는 기존 PostgreSQL의
+`manual_stream_sources`에 로그인 계정별로 저장됩니다. 페이지의 후보 점수는
+검토용이며 자동 연결이나 동일 작품 확정을 뜻하지 않습니다.
+
+Pi에 검토된 `anime_four_sources_multilingual_prepared.db` 파일을
+복사한 다음 저장소 루트에서 아래 명령을 실행하면 네 출처 43,310건,
+한글 작품 9,017건, ReAnime 매핑 3,953건, 검토된 제목 별칭과 미연결 검토 목록 260건을 PostgreSQL로 가져옵니다.
+기존 사용자 스트림 링크는 유지됩니다.
+
+```bash
+python3 scripts/import-anime-db.py /path/to/anime_four_sources_multilingual_prepared.db
+```
+
+DB를 다시 검토했다면 `scripts/export-korean-catalog.py`,
+`scripts/export-reanime-matches.py`, `scripts/export-unmatched-catalog.py`에
+각각 DB 경로를 전달해 사이트에 포함된 목록을 다시 만들 수 있습니다.
+
 Next.js 15 App Router와 Vercel Serverless, Neon Postgres를 기반으로 구축된 고성능 애니메이션 웹 스트리밍 플레이어입니다.
 
 ---

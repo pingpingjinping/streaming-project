@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Film, Search, LogIn, LogOut, User, Globe, Settings, Users, ChevronDown, RefreshCw } from "lucide-react";
+import { Film, Search, LogIn, LogOut, User, Globe, Settings, Users, ChevronDown, RefreshCw, Link2 } from "lucide-react";
 import BaseUrlSettingsModal from "./BaseUrlSettingsModal";
 import SourceSelectModal, { StreamingSource } from "./SourceSelectModal";
 
@@ -147,6 +147,11 @@ export default function Navbar() {
           </div>
         </form>
 
+        <Link href="/catalog" className="hidden shrink-0 text-xs font-semibold text-purple-300 hover:text-white lg:inline-flex">한글 DB</Link>
+        <Link href="/unmatched" className="hidden shrink-0 items-center gap-1.5 text-xs font-semibold text-amber-300 hover:text-white xl:inline-flex">
+          <Link2 className="h-4 w-4" /> 미연결 작품
+        </Link>
+
         {/* Right Auth & Settings Controls (Integrated Menu) */}
         <div className="relative flex items-center gap-2 shrink-0" ref={menuRef}>
           {/* 스트리밍 사이트 스위처 버튼 */}
@@ -223,6 +228,19 @@ export default function Navbar() {
                       </button>
 
                       <div className="my-1 border-t border-white/10" />
+
+                      <Link href="/catalog" onClick={() => setIsMenuOpen(false)}
+                        className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-medium text-purple-200 hover:bg-purple-600/20">
+                        <Film className="h-3.5 w-3.5" /> 한글 애니 DB
+                      </Link>
+
+                      <Link
+                        href="/unmatched"
+                        onClick={() => setIsMenuOpen(false)}
+                        className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-medium text-amber-200 hover:bg-amber-500/10 hover:text-white"
+                      >
+                        <Link2 className="h-3.5 w-3.5" /> 미연결 작품 · 링크 저장
+                      </Link>
 
                       {/* 2. 도메인 설정 */}
                       <button
