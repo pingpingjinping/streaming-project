@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 19170)
-Total output lines: 2000
-
 "use client";
 import LocalizedAnimeTitle from "@/components/LocalizedAnimeTitle";
 
@@ -756,7 +753,572 @@ export default function Player(props: PlayerProps) {
     savePlayerSettings(nextSettings);
     setAutoNextEnabled(nextVal);
     if (artRef.current) {
-      artRef.current.notice.show = …5170 tokens truncated…Picture;
+      artRef.current.notice.show = `다음 화 자동재생: ${nextVal ? "활성화(ON)" : "비활성화(OFF)"}`;
+    }
+  };
+
+  // Script Loader Helper
+  const loadScript = (src: string): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      if (document.querySelector(`script[src="${src}"]`)) {
+        resolve();
+        return;
+      }
+      const s = document.createElement("script");
+      s.src = src;
+      s.async = true;
+      s.onload = () => resolve();
+      s.onerror = () => reject(new Error(`Failed to load ${src}`));
+      document.head.appendChild(s);
+    });
+  };
+
+  // ==========================================
+  // 🌟 하이브리드 PIP (Document PiP + 브라우저 네이티브 TextTrack 연동)
+  // ==========================================
+
+  // 절대 URL 변환 헬퍼 (iOS 네이티브 및 ArtPlayer 공용)
+  const toAbsoluteUrl = useCallback((url: string) => {
+    if (!url) return "";
+    if (
+      url.startsWith("http://") ||
+      url.startsWith("https://") ||
+      url.startsWith("blob:") ||
+      url.startsWith("data:")
+    ) {
+      return url;
+    }
+    if (typeof window !== "undefined") {
+      return window.location.origin + (url.startsWith("/") ? "" : "/") + url;
+    }
+    return url;
+  }, []);
+
+  // 1. ASS 자막 Dialogue 라인 파싱
+  const parseAssDialogues = useCallback((assText: string) => {
+    if (!assText) return [];
+    const cues: Array<{ start: number; end: number; text: string }> = [];
+    const pattern =
+      /^Dialogue:\s*[^,]+,(\d+:\d{2}:\d{2}(?:\.\d+)?),(\d+:\d{2}:\d{2}(?:\.\d+)?),([^,]*),([^,]*),(?:[^,]*,){4}(.*)$/gim;
+
+    const toSeconds = (tStr: string) => {
+      const p = tStr.trim().split(":");
+      if (p.length === 3) {
+        return parseFloat(p[0]) * 3600 + parseFloat(p[1]) * 60 + parseFloat(p[2]);
+      } else if (p.length === 2) {
+        return parseFloat(p[0]) * 60 + parseFloat(p[1]);
+      }
+      return parseFloat(tStr) || 0;
+    };
+
+    let match;
+    while ((match = pattern.exec(assText)) !== null) {
+      const startSec = toSeconds(match[1]);
+      const endSec = toSeconds(match[2]);
+      const rawText = match[5];
+      const cleanText = rawText
+        .replace(/\{[^}]*\}/g, "")
+        .replace(/\\N/gi, "\n")
+        .replace(/\\n/gi, "\n")
+        .trim();
+      if (cleanText && endSec > startSec) {
+        cues.push({ start: startSec, end: endSec, text: cleanText });
+      }
+    }
+    return cues;
+  }, []);
+
+  // 2. WebVTT 텍스트 파싱 (라인 기반 신뢰성 100% 파서)
+  const parseVttToCues = useCallback((vttText: string) => {
+    if (!vttText) return [];
+    const cues: Array<{ start: number; end: number; text: string }> = [];
+    const lines = vttText.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+    let currentStart: number | null = null;
+    let currentEnd: number | null = null;
+    let currentTexts: string[] = [];
+
+    const toSeconds = (tStr: string) => {
+      if (!tStr) return 0;
+      const cleanStr = tStr.replace(",", ".").trim();
+      const p = cleanStr.split(":");
+      if (p.length === 3) {
+        return parseFloat(p[0]) * 3600 + parseFloat(p[1]) * 60 + parseFloat(p[2]);
+      } else if (p.length === 2) {
+        return parseFloat(p[0]) * 60 + parseFloat(p[1]);
+      }
+      return parseFloat(cleanStr) || 0;
+    };
+
+    const timeArrowPattern = /((?:\d{1,2}:)?\d{2}:\d{2}[\.,]\d{1,3})\s*-->\s*((?:\d{1,2}:)?\d{2}:\d{2}[\.,]\d{1,3})/;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      const timeMatch = timeArrowPattern.exec(line);
+      if (timeMatch) {
+        if (currentStart !== null && currentEnd !== null && currentTexts.length > 0) {
+          const text = currentTexts.join("\n").trim();
+          if (text && currentEnd > currentStart) {
+            cues.push({ start: currentStart, end: currentEnd, text });
+          }
+        }
+        currentStart = toSeconds(timeMatch[1]);
+        currentEnd = toSeconds(timeMatch[2]);
+        currentTexts = [];
+      } else if (currentStart !== null && currentEnd !== null) {
+        if (line === "") {
+          if (currentTexts.length > 0) {
+            const text = currentTexts.join("\n").trim();
+            if (text && currentEnd > currentStart) {
+              cues.push({ start: currentStart, end: currentEnd, text });
+            }
+            currentStart = null;
+            currentEnd = null;
+            currentTexts = [];
+          }
+        } else if (/^\d+$/.test(line) && currentTexts.length === 0) {
+          continue;
+        } else {
+          const clean = line
+            .replace(/\{[^}]*\}/g, "")
+            .replace(/<(?!\/?(font|b|i|u|span)\b)[^>]*>/gi, "")
+            .trim();
+          if (clean) currentTexts.push(clean);
+        }
+      }
+    }
+    if (currentStart !== null && currentEnd !== null && currentTexts.length > 0) {
+      const text = currentTexts.join("\n").trim();
+      if (text && currentEnd > currentStart) {
+        cues.push({ start: currentStart, end: currentEnd, text });
+      }
+    }
+    return cues;
+  }, []);
+
+  // 3. WebVTT 포맷 문자열 빌더
+  const buildVttFromCues = useCallback((cues: Array<{ start: number; end: number; text: string }>, offset = 0) => {
+    let vtt = "WEBVTT\n\n";
+    const formatVttTime = (sec: number) => {
+      const s = Math.max(0, sec);
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const rem = s % 60;
+      let wholeSec = Math.floor(rem);
+      let ms = Math.floor(Math.round((rem - wholeSec) * 1000));
+      if (ms >= 1000) {
+        wholeSec += 1;
+        ms -= 1000;
+      }
+      const safeMs = Math.min(ms, 999);
+      return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(wholeSec).padStart(2, "0")}.${String(safeMs).padStart(3, "0")}`;
+    };
+
+    cues.forEach((c, idx) => {
+      const start = c.start + offset;
+      const end = c.end + offset;
+      if (end > start && start >= 0) {
+        vtt += `${idx + 1}\n${formatVttTime(start)} --> ${formatVttTime(end)}\n${c.text}\n\n`;
+      }
+    });
+    return vtt;
+  }, []);
+
+  // 4. 네이티브 PiP 활성 여부 확인
+  const isNativePipActive = useCallback(() => {
+    const art = artRef.current;
+    return Boolean(
+      (document.pictureInPictureElement && document.pictureInPictureElement === art?.video) ||
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (art?.video && (art.video as any).webkitPresentationMode === "picture-in-picture")
+    );
+  }, []);
+
+  // 5. 자막 객체로부터 실제 서버 HTTP WebVTT URL 생성 (Safari AVPlayer 연동용)
+  const getHttpVttUrlForSubtitle = useCallback(
+    (subData: SubtitleItem | null, offset = 0) => {
+      if (!subData || (!subData.url && !subData.content) || subData.name === "자막 끄기") {
+        return "";
+      }
+      const offsetVal = parseFloat(String(offset)) || 0;
+      const rawUrl = subData.url;
+
+      if (rawUrl && !rawUrl.startsWith("blob:") && !rawUrl.startsWith("data:")) {
+        if (rawUrl.startsWith("/api/anime/stream/vtt")) {
+          const sep = rawUrl.includes("?") ? "&" : "?";
+          return `${rawUrl}${sep}offset=${offsetVal}&_t=${Date.now()}`;
+        }
+        if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) {
+          return `/api/anime/stream/vtt?url=${encodeURIComponent(rawUrl)}&offset=${offsetVal}&_t=${Date.now()}`;
+        }
+        const sep = rawUrl.includes("?") ? "&" : "?";
+        return `${rawUrl}${sep}offset=${offsetVal}&_t=${Date.now()}`;
+      }
+
+      // ASS 또는 인메모리 자막인 경우: 실시간 WebVTT 변환 엔드포인트 HTTP URL 반환
+      // currentEpRef.current를 사용하여 useCallback deps에서 currentEp를 제거
+      // → syncCuesToPipTrack → applySubtitle → ArtPlayer init effect 연쇄 재생성 방지 (전체화면 유지)
+      const ep = currentEpRef.current;
+      if (animeTitle && ep) {
+        return `/api/anime/subtitles/vtt?title=${encodeURIComponent(animeTitle)}&ep=${ep}&name=${encodeURIComponent(subData.name)}&offset=${offsetVal}&_t=${Date.now()}`;
+      }
+
+      return "";
+    },
+    [animeTitle]
+  );
+
+  // 6. 브라우저/비디오에 자동 등록된 네이티브 자막 트랙 전체 숨김
+  const hideAllNativeVideoTracks = useCallback(() => {
+    const art = artRef.current;
+    if (!art || !art.video) return;
+    const tracks = art.video.textTracks;
+    if (!tracks) return;
+    for (let i = 0; i < tracks.length; i++) {
+      try {
+        const t = tracks[i];
+        // 🌟 Artplayer 자체 트랙(label === "Artplayer")은 절대 끄지 않음!
+        if (t.label === "Artplayer") continue;
+        if (t.mode === "showing") {
+          t.mode = "hidden";
+        }
+      } catch {}
+    }
+  }, []);
+
+  // 7. iOS Safari 및 표준 비디오 DOM <track> 엘리먼트 업데이트
+  const updateNativeTrackElement = useCallback(
+    (vttUrl: string, targetMode: TextTrackMode = "hidden") => {
+      const art = artRef.current;
+      if (!art || !art.video) return;
+
+      let trackEl = art.video.querySelector("track.pip-subtitles-track") as HTMLTrackElement | null;
+
+      if (!vttUrl) {
+        if (trackEl) {
+          try {
+            if (trackEl.track) trackEl.track.mode = "hidden";
+            trackEl.remove();
+          } catch {}
+        }
+        pipTrackElementRef.current = null;
+        if (currentBlobUrlRef.current) {
+          try {
+            URL.revokeObjectURL(currentBlobUrlRef.current);
+          } catch {}
+          currentBlobUrlRef.current = null;
+        }
+        return;
+      }
+
+      if (currentBlobUrlRef.current && currentBlobUrlRef.current !== vttUrl) {
+        try {
+          URL.revokeObjectURL(currentBlobUrlRef.current);
+        } catch {}
+        currentBlobUrlRef.current = null;
+      }
+
+      if (vttUrl.startsWith("blob:")) {
+        currentBlobUrlRef.current = vttUrl;
+      }
+
+      const absUrl = toAbsoluteUrl(vttUrl);
+
+      // 2) 트랙 엘리먼트가 없으면 생성, 이미 있으면 재사용
+      if (!trackEl) {
+        trackEl = document.createElement("track");
+        trackEl.className = "pip-subtitles-track";
+        trackEl.kind = "subtitles";
+        trackEl.label = "한국어";
+        trackEl.srclang = "ko";
+        trackEl.setAttribute("default", "");
+        trackEl.default = true;
+        trackEl.src = absUrl;
+
+        trackEl.addEventListener("load", function () {
+          try {
+            if (trackEl && trackEl.track) {
+              trackEl.track.mode = targetMode;
+            }
+          } catch {}
+        });
+
+        trackEl.addEventListener("error", function (e) {
+          console.warn("⚠️ [NativeTrack] WebVTT 로드 에러:", e, vttUrl);
+        });
+
+        art.video.appendChild(trackEl);
+        pipTrackElementRef.current = trackEl;
+      } else {
+        if (trackEl.src !== absUrl) {
+          trackEl.src = absUrl;
+        }
+        try {
+          if (trackEl.track) {
+            trackEl.track.mode = targetMode;
+          }
+        } catch {}
+      }
+
+      try {
+        if (trackEl.track) {
+          trackEl.track.mode = targetMode;
+        }
+      } catch {}
+    },
+    [toAbsoluteUrl]
+  );
+
+  // 8. 네이티브 Video PiP용 TextTrack 획득/생성 (비-애플 기기 인메모리 백업)
+  const getOrCreatePipTextTrack = useCallback(() => {
+    const art = artRef.current;
+    if (!art || !art.video) return null;
+    if (!nativePipTextTrackRef.current) {
+      for (let i = 0; i < art.video.textTracks.length; i++) {
+        const t = art.video.textTracks[i];
+        if (t.label === "pip-subtitles") {
+          nativePipTextTrackRef.current = t;
+          break;
+        }
+      }
+      if (!nativePipTextTrackRef.current) {
+        try {
+          nativePipTextTrackRef.current = art.video.addTextTrack("subtitles", "pip-subtitles", "ko");
+        } catch (e) {
+          console.warn("addTextTrack failed:", e);
+        }
+      }
+    }
+    return nativePipTextTrackRef.current;
+  }, []);
+
+  // 9. 네이티브 TextTrack 및 DOM <track>에 현재 자막 동기화
+  const syncCuesToPipTrack = useCallback(
+    async (force = false) => {
+      const sub = currentSubRef.current;
+      if (!sub || sub.name === "자막 끄기" || (!sub.url && !sub.content)) {
+        if (nativePipTextTrackRef.current) nativePipTextTrackRef.current.mode = "hidden";
+        updateNativeTrackElement("");
+        hideAllNativeVideoTracks();
+        return;
+      }
+
+      const isPipActive = force || isNativePipActive();
+      if (!isPipActive) {
+        // 🌟 평상시(일반 재생 중): DOM 내 <track> 완전 제거 및 모든 네이티브 트랙 숨김 유지
+        // iOS Safari가 자체 시스템 검은 박스 캡션을 띄우는 중복 문제를 원천 차단
+        updateNativeTrackElement("");
+        hideAllNativeVideoTracks();
+        if (nativePipTextTrackRef.current) nativePipTextTrackRef.current.mode = "hidden";
+        return;
+      }
+
+      const offset = currentSyncOffsetRef.current || 0;
+      const isAppleDevice =
+        typeof navigator !== "undefined" &&
+        (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent) ||
+          (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
+
+      const httpVttUrl = getHttpVttUrlForSubtitle(sub, offset);
+
+      // 자막 큐 파싱 (ASS 또는 VTT)
+      let parsedCues: Array<{ start: number; end: number; text: string }> = [];
+      if (sub.is_ass) {
+        let assText = currentAssContentRef.current || sub.content;
+        if (!assText && sub.url) {
+          try {
+            const res = await fetch(toAbsoluteUrl(sub.url));
+            if (res.ok) {
+              assText = await res.text();
+              currentAssContentRef.current = assText;
+            }
+          } catch (e) {
+            console.warn("ASS fetch failed for PIP:", e);
+          }
+        }
+        if (assText) {
+          parsedCues = parseAssDialogues(assText);
+        }
+      } else {
+        const art = artRef.current;
+        if (art && art.subtitle && art.subtitle.cues && art.subtitle.cues.length > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          parsedCues = art.subtitle.cues.map((c: any) => ({
+            start: c.startTime,
+            end: c.endTime,
+            text: c.text,
+          }));
+        } else if (sub.content) {
+          parsedCues = parseVttToCues(sub.content);
+        } else if (sub.url) {
+          try {
+            const res = await fetch(toAbsoluteUrl(sub.url));
+            if (res.ok) {
+              const vttText = await res.text();
+              parsedCues = parseVttToCues(vttText);
+            }
+          } catch (e) {
+            console.warn("VTT fetch failed for PIP:", e);
+          }
+        }
+      }
+
+      if (isAppleDevice) {
+        // 🌟 1) iOS/macOS Safari: AVPlayer 시스템 파이프라인 연동용 HTTP WebVTT 또는 Blob <track> 바인딩
+        if (nativePipTextTrackRef.current) {
+          nativePipTextTrackRef.current.mode = "hidden";
+        }
+
+        let targetTrackUrl = httpVttUrl;
+        if (!targetTrackUrl && parsedCues.length > 0) {
+          const vttText = buildVttFromCues(parsedCues, offset);
+          const blob = new Blob([vttText], { type: "text/vtt;charset=utf-8" });
+          targetTrackUrl = URL.createObjectURL(blob);
+        }
+
+        if (targetTrackUrl) {
+          updateNativeTrackElement(targetTrackUrl, "showing");
+        } else {
+          updateNativeTrackElement("");
+        }
+      } else {
+        // 🌟 2) 비-애플 기기 (Windows/Android/Linux 등):
+        updateNativeTrackElement("");
+
+        const track = getOrCreatePipTextTrack();
+        if (track) {
+          if (track.cues) {
+            const existingCues = Array.from(track.cues);
+            existingCues.forEach((c) => {
+              try {
+                track.removeCue(c);
+              } catch {}
+            });
+          }
+
+          if (parsedCues.length > 0 && typeof window.VTTCue !== "undefined") {
+            parsedCues.forEach((c) => {
+              const start = Math.max(0, c.start + offset);
+              const end = Math.max(start + 0.1, c.end + offset);
+              try {
+                const cue = new VTTCue(start, end, c.text);
+                cue.line = -2;
+                cue.align = "center";
+                track.addCue(cue);
+              } catch {}
+            });
+            track.mode = "showing";
+          } else {
+            track.mode = "showing";
+          }
+        }
+      }
+    },
+    [
+      isNativePipActive,
+      updateNativeTrackElement,
+      hideAllNativeVideoTracks,
+      getHttpVttUrlForSubtitle,
+      toAbsoluteUrl,
+      parseAssDialogues,
+      parseVttToCues,
+      buildVttFromCues,
+      getOrCreatePipTextTrack,
+    ]
+  );
+
+  // 10. Document PiP 활성 여부
+  const isDocumentPipActive = useCallback(() => {
+    return Boolean(docPipWindowRef.current && !docPipWindowRef.current.closed);
+  }, []);
+
+  // 11. Document PiP 복원
+  const restoreFromDocumentPip = useCallback(() => {
+    if (!docPipWindowRef.current) return;
+    const art = artRef.current;
+    const playerEl = art?.template?.$player as HTMLElement | undefined;
+    const placeholder = docPipPlaceholderRef.current;
+    if (playerEl && placeholder && placeholder.parentNode) {
+      placeholder.parentNode.replaceChild(playerEl, placeholder);
+    }
+    docPipPlaceholderRef.current = null;
+    docPipWindowRef.current = null;
+
+    setTimeout(() => {
+      if (artRef.current) {
+        try {
+          artRef.current.resize();
+        } catch {}
+      }
+      const canvas = playerEl?.querySelector("canvas.libassjs-canvas") as HTMLElement | null;
+      if (canvas) canvas.style.display = "block";
+      const parent = playerEl?.querySelector(".libassjs-canvas-parent") as HTMLElement | null;
+      if (parent) parent.style.display = "block";
+      if (octopusRef.current && typeof octopusRef.current.resize === "function") {
+        try {
+          octopusRef.current.resize();
+        } catch {}
+      }
+    }, 50);
+  }, []);
+
+  // 12. Document PiP 수동 종료
+  const exitDocumentPip = useCallback(() => {
+    if (docPipWindowRef.current && !docPipWindowRef.current.closed) {
+      docPipWindowRef.current.close();
+    }
+    restoreFromDocumentPip();
+  }, [restoreFromDocumentPip]);
+
+  // 12.5. Document PiP 문서로 사용자 설정 CSS 동기화
+  // PIP 윈도우는 별도의 문서이므로 진입 시 1회 클론된 스타일이 그대로 고정된다.
+  // 자막 크기/플레이어 설정 변경 시 메인 문서의 현재 CSS 상태를 PIP 문서로 전달해 일관성을 유지한다.
+  const syncPipStyles = useCallback(() => {
+    const pipWin = docPipWindowRef.current;
+    if (!pipWin || pipWin.closed) return;
+    try {
+      const pipDoc = pipWin.document;
+      // 1) 루트 CSS 변수 (자막 크기)
+      const rootStyle = getComputedStyle(document.documentElement);
+      const userSubSize = rootStyle.getPropertyValue("--user-sub-size");
+      const userSubScale = rootStyle.getPropertyValue("--user-sub-scale");
+      if (userSubSize) pipDoc.documentElement.style.setProperty("--user-sub-size", userSubSize);
+      if (userSubScale) pipDoc.documentElement.style.setProperty("--user-sub-scale", userSubScale);
+      // 2) 동적 스타일 엘리먼트 (자막 크기 규칙, 플레이어 버튼 표시/숨김 설정)
+      const DYNAMIC_STYLE_IDS = ["dynamic-sub-style", "player-custom-settings-style"];
+      for (const id of DYNAMIC_STYLE_IDS) {
+        const src = document.getElementById(id);
+        if (!src) continue;
+        let dst = pipDoc.getElementById(id);
+        if (!dst) {
+          dst = pipDoc.createElement("style");
+          dst.id = id;
+          pipDoc.head.appendChild(dst);
+        }
+        dst.textContent = src.textContent;
+      }
+    } catch {}
+  }, []);
+
+  // 플레이어 설정 스타일 변경 알림 수신 (PlayerSettingsModal의 applyPlayerSettingsStyles가 발신)
+  useEffect(() => {
+    const onStylesUpdated = () => syncPipStyles();
+    window.addEventListener("anime-player-styles-updated", onStylesUpdated);
+    return () => window.removeEventListener("anime-player-styles-updated", onStylesUpdated);
+  }, [syncPipStyles]);
+
+  // 13. Document PiP 진입
+  const enterDocumentPip = useCallback(async () => {
+    if (isDocumentPipActive()) return;
+    const art = artRef.current;
+    const playerEl = art?.template?.$player as HTMLElement | undefined;
+    if (!playerEl) return;
+
+    const rect = playerEl.getBoundingClientRect();
+    const width = Math.min(Math.max(Math.round(rect.width || 854), 480), 1280);
+    const height = Math.round(width * (9 / 16));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const docPip = (window as any).documentPictureInPicture;
     if (!docPip) return;
 
     const pipWindow = await docPip.requestWindow({
@@ -1436,9 +1998,6 @@ export default function Player(props: PlayerProps) {
 
           if (artRef.current) {
             artRef.current.notice.show = `✅ ${creator.name} ASS 자막 등록 및 적용 완료!`;
-Warning: truncated output (original token count: 26759)
-Total output lines: 2386
-
           }
         } else {
           // 🌟 ASS가 아닌 일반 자막인 경우:
@@ -2036,7 +2595,1245 @@ Total output lines: 2386
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         if ((window as any).Artplayer) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (window as any).Artp…12759 tokens truncated…     }
+          (window as any).Artplayer.DBCLICK_FULLSCREEN = false;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (window as any).Artplayer.MOBILE_DBCLICK_PLAY = false;
+        }
+
+        // ==========================================
+        // 🌟 더블탭 리플 및 공통 누적 탐색 로직 (모바일 화면 & 중앙 컨트롤 공용)
+        // ==========================================
+        let lastSeekTime = 0;
+        let lastSeekSide: "left" | "right" | null = null;
+        let cumulativeSec = 0;
+        let resetSeekTimer: ReturnType<typeof setTimeout> | null = null;
+        let rippleHideTimer: ReturnType<typeof setTimeout> | null = null;
+        let wasPlayingBeforeTap = false;
+        let lastTouchTimestamp = 0;
+
+        const showDoubleTapFeedback = (side: "left" | "right", seconds: number) => {
+          // Document PiP 활성 시 리플/레이블은 PIP 문서에 있으므로 ownerDocument 기준 조회
+          const doc = (artRef.current?.template?.$player as HTMLElement | undefined)?.ownerDocument || document;
+          const leftRipple = doc.getElementById("dt-ripple-left");
+          const rightRipple = doc.getElementById("dt-ripple-right");
+          const leftLabel = doc.getElementById("dt-label-left");
+          const rightLabel = doc.getElementById("dt-label-right");
+
+          if (side === "left" && leftRipple && leftLabel) {
+            leftLabel.textContent = `-${seconds}초`;
+            leftRipple.classList.remove("active");
+            void leftRipple.offsetWidth;
+            leftRipple.classList.add("active");
+          } else if (side === "right" && rightRipple && rightLabel) {
+            rightLabel.textContent = `+${seconds}초`;
+            rightRipple.classList.remove("active");
+            void rightRipple.offsetWidth;
+            rightRipple.classList.add("active");
+          }
+
+          if (artRef.current) {
+            artRef.current.notice.show = side === "left" ? `⏪ ${seconds}초 뒤로` : `⏩ ${seconds}초 앞으로`;
+          }
+
+          if (rippleHideTimer) clearTimeout(rippleHideTimer);
+          rippleHideTimer = setTimeout(() => {
+            if (leftRipple) leftRipple.classList.remove("active");
+            if (rightRipple) rightRipple.classList.remove("active");
+          }, 600);
+        };
+
+        // 🌟 통합 누적 탐색 함수 (모바일 화면 더블터치 & 상태바 중앙 앞뒤 탐색 버튼에서 함께 사용)
+        const executeSeekWithAccumulation = (side: "left" | "right") => {
+          if (!playerSettingsRef.current.doubleTouchSeek) return;
+          const step = playerSettingsRef.current.doubleTouchDuration || 10;
+          const now = Date.now();
+
+          if (side === lastSeekSide && now - lastSeekTime < 650) {
+            cumulativeSec += step;
+          } else {
+            cumulativeSec = step;
+            lastSeekSide = side;
+          }
+          lastSeekTime = now;
+
+          if (side === "left") {
+            art.seek = Math.max(0, art.currentTime - step);
+          } else {
+            art.seek = Math.min(art.duration || 99999, art.currentTime + step);
+          }
+
+          // 첫 번째 탭/클릭으로 일시정지되었던 경우 재생 상태 복원
+          if (wasPlayingBeforeTap && art.video && art.video.paused) {
+            art.play().catch(() => {});
+          }
+
+          showDoubleTapFeedback(side, cumulativeSec);
+
+          // 중앙 버튼 누를 때 컨트롤바 자동 숨김 타이머 연장(연타 중 컨트롤바가 꺼지지 않도록)
+          if (art && art.controls) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (art.controls as any).timer = Date.now();
+          }
+
+          if (resetSeekTimer) clearTimeout(resetSeekTimer);
+          resetSeekTimer = setTimeout(() => {
+            cumulativeSec = 0;
+            lastSeekSide = null;
+          }, 750);
+        };
+
+        // ==========================================
+        // 🌟 모바일 (터치 디바이스) 전용 제스처 핸들러
+        // 1. 더블터치 시 누적 탐색
+        // 2. 더블터치 시 상태바가 나오지 않게 제어
+        // 3. 상태바 켜져 있을 때 빈칸 탭 시 즉시 닫기 (유튜브 모바일 UX)
+        // ==========================================
+        let lastTouchTime = 0;
+        let lastTouchSide: "left" | "right" | null = null;
+        let touchTapTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const handlePointerUp = (e: PointerEvent) => {
+          const target = e.target as HTMLElement | null;
+          if (!target) return;
+
+          // 컨트롤 UI, 버튼, 모달 등 영역 터치는 화면 빈칸 제스처에서 제외
+          if (
+            target.closest(
+              ".art-bottom, .art-controls, .art-settings, .art-contextmenus, .art-notice, .art-loading, .art-mobile-center-controls, button, a, input, .player-settings-modal-root"
+            )
+          ) {
+            return;
+          }
+
+          const isTouch = e.pointerType === "touch" || ("ontouchstart" in window && e.pointerType !== "mouse");
+
+          // 데스크톱 (마우스) 환경은 데스크톱 전용 핸들러에서 처리
+          if (!isTouch) return;
+
+          // 터치 타임스탬프 기록 (합성 dblclick 차단용)
+          lastTouchTimestamp = Date.now();
+
+          const playerEl = art.template.$player as HTMLElement;
+          if (playerEl && !playerEl.classList.contains("is-touch-device")) {
+            playerEl.classList.add("is-touch-device");
+          }
+
+          if (!playerSettingsRef.current.doubleTouchSeek) {
+            // 더블터치 비활성화 시 일반 컨트롤 토글
+            if (art && art.controls) {
+              art.controls.show = !art.controls.show;
+            }
+            return;
+          }
+
+          if (!playerEl) return;
+          const rect = playerEl.getBoundingClientRect();
+          // 하단 65px 컨트롤바 영역 터치는 제스처에서 제외
+          if (e.clientY > rect.bottom - 65) return;
+
+          const x = e.clientX - rect.left;
+          const width = rect.width;
+          const side: "left" | "right" = x < width * 0.5 ? "left" : "right";
+          const now = Date.now();
+          const diff = now - lastTouchTime;
+
+          // 현재 상태바(컨트롤바)가 화면에 표시 중인지 판별
+          const isControlsShowing = !!(
+            art.controls?.show ||
+            playerEl.classList.contains("art-hover") ||
+            playerEl.classList.contains("art-control-show")
+          );
+
+          // 🌟 [케이스 1] 상태바가 이미 켜져 있는 상태에서 빈칸을 탭한 경우:
+          // 유튜브 모바일 정석 UX: 지연 없이 즉시 상태바 닫기!
+          if (isControlsShowing && diff >= 350) {
+            if (touchTapTimer) {
+              clearTimeout(touchTapTimer);
+              touchTapTimer = null;
+            }
+            if (art && art.controls) {
+              art.controls.show = false;
+            }
+            lastTouchTime = now;
+            lastTouchSide = side;
+            return;
+          }
+
+          // 🌟 [케이스 2] 더블 터치 감지 (동일 영역 & 380ms 이내)
+          if (side === lastTouchSide && diff < 380) {
+            // 1. 싱글 탭 대기 타이머 즉시 취소 ➔ 상태바가 나타나는 것을 원천 차단!
+            if (touchTapTimer) {
+              clearTimeout(touchTapTimer);
+              touchTapTimer = null;
+            }
+
+            // 2. 만약 상태바가 열려있다면 즉시 숨김
+            if (art && art.controls && art.controls.show) {
+              art.controls.show = false;
+            }
+
+            // 3. 누적 탐색 실행
+            executeSeekWithAccumulation(side);
+            lastTouchTime = now;
+          } else {
+            // 🌟 [케이스 3] 상태바가 꺼져 있을 때 첫 번째 터치
+            wasPlayingBeforeTap = art.video ? !art.video.paused : false;
+            lastTouchTime = now;
+            lastTouchSide = side;
+
+            if (touchTapTimer) clearTimeout(touchTapTimer);
+            // 260ms 후 싱글 탭 확정 (더블터치 확인 시 취소됨)
+            touchTapTimer = setTimeout(() => {
+              touchTapTimer = null;
+              lastTouchSide = null;
+              // 싱글 탭 확정: 상태바(컨트롤바) 켜기!
+              if (art && art.controls) {
+                art.controls.show = true;
+              }
+            }, 260);
+          }
+        };
+
+        // 모바일 터치 후 브라우저가 생성하는 합성 click 이벤트가 Artplayer 내부로 전파되는 것을 캡처 단계에서 차단
+        const handlePlayerClickCapture = (e: MouseEvent) => {
+          if (Date.now() - lastTouchTimestamp < 600) {
+            const target = e.target as HTMLElement | null;
+            // 버튼, 하단/상단 컨트롤바, 모달 등의 직접 클릭은 통과시킴
+            if (
+              target &&
+              target.closest(
+                ".art-mobile-center-btn, .art-bottom, .art-top, .art-settings, .art-contextmenus, button, input, a"
+              )
+            ) {
+              return;
+            }
+            // 비디오 화면 빈칸에 떨어지는 합성 클릭은 차단(Artplayer의 click 토글 방지)
+            e.stopPropagation();
+            e.preventDefault();
+          }
+        };
+
+        // ==========================================
+        // 🌟 데스크톱 (PC / 마우스) 환경 전용 핸들러
+        // 1. 더블클릭 시 무조건 전체화면 토글만 동작 (탐색 제외)
+        // 2. 모바일 터치로 인한 가짜 dblclick은 100% 원천 차단
+        // ==========================================
+        let desktopWasPlaying = false;
+
+        const handlePlayerDblClick = (e: MouseEvent) => {
+          // 🌟 모바일 터치 후 1000ms 이내에 발생하는 합성 dblclick은 무조건 차단! (모바일 더블터치 전체화면 방지)
+          if (Date.now() - lastTouchTimestamp < 1000) {
+            e.stopPropagation();
+            e.preventDefault();
+            return;
+          }
+
+          const target = e.target as HTMLElement | null;
+          if (!target) return;
+          if (
+            target.closest(
+              ".art-bottom, .art-controls, .art-settings, .art-contextmenus, .art-notice, .art-loading, .art-mobile-center-controls, button, a, input, .player-settings-modal-root"
+            )
+          ) {
+            return;
+          }
+
+          // 🌟 데스크톱 더블클릭: 무조건 전체화면 토글! (탐색은 절대로 발생하지 않음)
+          art.fullscreen = !art.fullscreen;
+
+          // 1번째 클릭으로 인해 비디오 재생/정지 상태가 바뀐 경우 원래 상태로 복원
+          setTimeout(() => {
+            if (art && art.video) {
+              if (desktopWasPlaying && art.video.paused) {
+                art.play().catch(() => {});
+              } else if (!desktopWasPlaying && !art.video.paused) {
+                art.pause();
+              }
+            }
+          }, 15);
+        };
+
+        const handlePlayerMouseDown = (e: MouseEvent) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          if (e.button === 0 && (e as any).pointerType !== "touch" && Date.now() - lastTouchTimestamp > 1000) {
+            desktopWasPlaying = art.video ? !art.video.paused : false;
+          }
+        };
+
+        // ==========================================
+        // 🌟 모바일 상태바 중앙 컨트롤 이벤트 바인딩
+        // (뒤로 탐색, 재생/일시정지, 앞으로 탐색)
+        // ==========================================
+        let cleanupCenterControls: (() => void) | null = null;
+        const bindMobileCenterControls = () => {
+          const doc = (art.template.$player as HTMLElement)?.ownerDocument || document;
+          const btnSeekBack = doc.getElementById("mobile-seek-backward");
+          const btnSeekFwd = doc.getElementById("mobile-seek-forward");
+          const btnPlay = doc.getElementById("mobile-center-play");
+          const iconPlay = doc.getElementById("mobile-icon-play");
+          const iconPause = doc.getElementById("mobile-icon-pause");
+
+          const updatePlayStateIcons = () => {
+            if (!iconPlay || !iconPause || !art.video) return;
+            if (art.video.paused) {
+              iconPlay.style.display = "block";
+              iconPause.style.display = "none";
+            } else {
+              iconPlay.style.display = "none";
+              iconPause.style.display = "block";
+            }
+          };
+
+          const onSeekBack = (e: Event) => {
+            e.stopPropagation();
+            e.preventDefault();
+            executeSeekWithAccumulation("left");
+          };
+
+          const onSeekFwd = (e: Event) => {
+            e.stopPropagation();
+            e.preventDefault();
+            executeSeekWithAccumulation("right");
+          };
+
+          const onTogglePlay = (e: Event) => {
+            e.stopPropagation();
+            e.preventDefault();
+            art.toggle();
+            if (art.controls) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (art.controls as any).timer = Date.now();
+            }
+          };
+
+          if (btnSeekBack) btnSeekBack.addEventListener("click", onSeekBack);
+          if (btnSeekFwd) btnSeekFwd.addEventListener("click", onSeekFwd);
+          if (btnPlay) btnPlay.addEventListener("click", onTogglePlay);
+
+          art.on("play", updatePlayStateIcons);
+          art.on("pause", updatePlayStateIcons);
+          updatePlayStateIcons();
+
+          cleanupCenterControls = () => {
+            if (btnSeekBack) btnSeekBack.removeEventListener("click", onSeekBack);
+            if (btnSeekFwd) btnSeekFwd.removeEventListener("click", onSeekFwd);
+            if (btnPlay) btnPlay.removeEventListener("click", onTogglePlay);
+            art.off("play", updatePlayStateIcons);
+            art.off("pause", updatePlayStateIcons);
+          };
+        };
+
+        bindMobileCenterControls();
+
+        const playerEl = art.template.$player as HTMLElement;
+        if (playerEl) {
+          playerEl.addEventListener("pointerup", handlePointerUp);
+          playerEl.addEventListener("click", handlePlayerClickCapture, { capture: true });
+          playerEl.addEventListener("dblclick", handlePlayerDblClick, { capture: true });
+          playerEl.addEventListener("mousedown", handlePlayerMouseDown);
+        }
+
+        cleanupDoubleTap = () => {
+          if (playerEl) {
+            playerEl.removeEventListener("pointerup", handlePointerUp);
+            playerEl.removeEventListener("click", handlePlayerClickCapture, { capture: true });
+            playerEl.removeEventListener("dblclick", handlePlayerDblClick, { capture: true });
+            playerEl.removeEventListener("mousedown", handlePlayerMouseDown);
+          }
+          if (touchTapTimer) clearTimeout(touchTapTimer);
+          if (resetSeekTimer) clearTimeout(resetSeekTimer);
+          if (rippleHideTimer) clearTimeout(rippleHideTimer);
+          if (cleanupCenterControls) cleanupCenterControls();
+        };
+
+        // Playback rate event and ready handler
+        art.on("playbackRate", (rate: number) => {
+          updateSpeed2xButton(rate, (art?.template?.$player as HTMLElement | undefined)?.ownerDocument);
+        });
+
+        // 🌟 하이브리드 PIP - 네이티브 Video PiP 진입/해제 이벤트 연동
+        const handleNativePipEnter = () => {
+          if (art && art.template && art.template.$player) {
+            art.template.$player.classList.add("in-native-pip");
+          }
+          syncCuesToPipTrack(true).catch(() => {});
+          if (art && art.notice) {
+            art.notice.show = "화면 속 화면 (PIP) 모드 실행됨";
+          }
+        };
+        const handleNativePipLeave = () => {
+          hideAllNativeVideoTracks();
+          if (nativePipTextTrackRef.current) {
+            nativePipTextTrackRef.current.mode = "hidden";
+          }
+          if (pipTrackElementRef.current && pipTrackElementRef.current.track) {
+            pipTrackElementRef.current.track.mode = "hidden";
+          }
+          if (art && art.template && art.template.$player) {
+            art.template.$player.classList.remove("in-native-pip");
+          }
+          if (octopusRef.current && typeof octopusRef.current.resize === "function") {
+            try {
+              octopusRef.current.resize();
+            } catch {}
+          }
+        };
+
+        art.on("video:enterpictureinpicture", handleNativePipEnter);
+        art.on("video:leavepictureinpicture", handleNativePipLeave);
+        if (art.video) {
+          art.video.addEventListener("enterpictureinpicture", handleNativePipEnter);
+          art.video.addEventListener("leavepictureinpicture", handleNativePipLeave);
+          // 🌟 iOS Safari WebKit 전용 PiP 이벤트 연동
+          art.video.addEventListener("webkitpresentationmodechanged", () => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if ((art.video as any).webkitPresentationMode === "picture-in-picture") {
+              handleNativePipEnter();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            } else if ((art.video as any).webkitPresentationMode === "inline") {
+              handleNativePipLeave();
+            }
+          });
+        }
+
+        art.once("ready", () => {
+          setSubtitleFontSize(currentSubSize);
+          applyPlayerSettingsStyles(playerSettings);
+          const savedRate = parseFloat(localStorage.getItem("anime_playback_rate") || "1.0");
+          if (savedRate && Math.abs(savedRate - 1.0) >= 0.05) {
+            art.playbackRate = savedRate;
+            updateSpeed2xButton(savedRate, (art?.template?.$player as HTMLElement | undefined)?.ownerDocument);
+          }
+
+          // 🌟 플레이어 준비 완료 시 대기 중인 자막이 있으면 즉시 적용, 없으면 기본 내장 자막 즉시 적용
+          if (pendingSubtitleRef.current && applySubtitleRef.current) {
+            applySubtitleRef.current(pendingSubtitleRef.current, currentSyncOffsetRef.current);
+          } else if (defaultVttUrl && applySubtitleRef.current) {
+            applySubtitleRef.current(
+              {
+                name: "기본 내장",
+                format: "VTT",
+                is_ass: false,
+                url: defaultVttUrl,
+              },
+              currentSyncOffsetRef.current
+            );
+          }
+        });
+
+        // Auto re-apply highlights on metadata or duration changes
+        art.on("video:loadedmetadata", () => {
+          if (!isNativePipActive()) {
+            hideAllNativeVideoTracks();
+          }
+          if (skipIntervalsRef.current.length > 0) {
+            applyTimelineHighlight(skipIntervalsRef.current);
+          }
+        });
+        art.on("video:play", () => {
+          if (!isNativePipActive()) {
+            hideAllNativeVideoTracks();
+          }
+        });
+        art.on("video:durationchange", () => {
+          if (skipIntervalsRef.current.length > 0) {
+            applyTimelineHighlight(skipIntervalsRef.current);
+          }
+        });
+        if (skipIntervalsRef.current.length > 0) {
+          applyTimelineHighlight(skipIntervalsRef.current);
+        }
+
+        // Helper: 영상이 거의 끝까지(95% 이상 or 15초 미만 남음) 시청 완료되었는지 검사
+        const isPlaybackCompleted = (sec: number, dur: number) => {
+          if (!dur || dur <= 0) return false;
+          return sec >= dur - 15 || (dur > 60 && sec / dur >= 0.95);
+        };
+
+        // Restore playback time from localStorage or Cloud DB
+        const getSaveKey = (ep = currentEpRef.current) => `anime_progress_${animeId}_ep${ep}`;
+        const initialEp = currentEpRef.current;
+        const initialSaveKey = getSaveKey(initialEp);
+        const savedSec = parseFloat(localStorage.getItem(initialSaveKey) || "0");
+
+        const tryRestorePlaybackTime = (targetSec: number, isFromCloud = false) => {
+          if (targetSec <= 10) return;
+          const dur = art.duration || art.template?.$video?.duration || 0;
+          if (dur > 0 && isPlaybackCompleted(targetSec, dur)) {
+            // 이미 100% (완료) 시청된 경우 처음부터 재생
+            console.log(`[Playback] Episode ${initialEp} was already completed (${targetSec.toFixed(1)}/${dur.toFixed(1)}s). Resetting to 0s.`);
+            localStorage.removeItem(initialSaveKey);
+            return;
+          }
+
+          art.currentTime = targetSec;
+          art.notice.show = `${isFromCloud ? "클라우드 " : ""}이어보기: ${Math.floor(targetSec / 60)}분 ${Math.floor(targetSec % 60)}초부터 재생`;
+        };
+
+        if (savedSec > 10) {
+          const onRestore = () => {
+            tryRestorePlaybackTime(savedSec, false);
+          };
+          art.once("ready", onRestore);
+          art.once("video:loadedmetadata", onRestore);
+        } else {
+          fetch(`/api/anime/history?anime_id=${animeId}`)
+            .then((r) => r.json())
+            .then((d) => {
+              if (d.success && Array.isArray(d.items)) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const epHistory = d.items.find((h: any) => h.episode_number === initialEp);
+                const cloudSec = epHistory ? parseFloat(epHistory.current_time || epHistory.watch_time || "0") : 0;
+                if (cloudSec > 10 && !epHistory.is_completed && artRef.current) {
+                  const onRestoreCloud = () => {
+                    tryRestorePlaybackTime(cloudSec, true);
+                  };
+                  art.once("ready", onRestoreCloud);
+                  art.once("video:loadedmetadata", onRestoreCloud);
+                }
+              }
+            })
+            .catch(() => {});
+        }
+
+        // Periodic cloud & local progress saving
+        const syncHistory = (isCompleted = false) => {
+          if (!art) return;
+          const cur = art.currentTime;
+          if (cur <= 2 && !isCompleted) return;
+
+          const ep = currentEpRef.current;
+          const watchUrl = currentM3u8UrlRef.current || m3u8Url;
+
+          fetch("/api/anime/history", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              animeId,
+              animeTitle,
+              animePoster: animePoster || "",
+              episodeNumber: ep,
+              // 실제 회차 제목 우선 (사이트에서 스크래핑된 제목 유지, 없으면 "N화" 폴백)
+              episodeTitle:
+                currentEpisodes.find((e) => e.number === ep)?.title ||
+                `${ep}화`,
+              watchUrl,
+              currentTime: cur,
+              duration: art.duration || 0,
+              isCompleted,
+            }),
+            keepalive: true,
+          }).catch(() => {});
+
+          setEpHistoryMap((prev) => ({
+            ...prev,
+            [ep]: {
+              watch_time: cur,
+              duration: art.duration || 0,
+              is_completed: isCompleted,
+            },
+          }));
+        };
+        syncHistoryRef.current = syncHistory;
+
+        art.on("video:timeupdate", () => {
+          const cur = art.currentTime;
+          const dur = art.duration || art.template?.$video?.duration || 0;
+          const curSaveKey = getSaveKey(currentEpRef.current);
+
+          if (cur > 2 && !art.ended) {
+            const completed = isPlaybackCompleted(cur, dur);
+            if (completed) {
+              // 95% 이상 시청 시 완료 처리 및 로컬 저장 삭제 (다시 틀었을 때 0초부터 시작하도록)
+              localStorage.removeItem(curSaveKey);
+              if (Date.now() - lastSyncTimeRef.current > 5000) {
+                lastSyncTimeRef.current = Date.now();
+                syncHistory(true);
+              }
+            } else {
+              localStorage.setItem(curSaveKey, String(cur));
+              // Sync to Cloud DB every 35 seconds (서버리스 함수 및 DB 쓰기 70% 이상 절감)
+              if (Date.now() - lastSyncTimeRef.current > 35000) {
+                lastSyncTimeRef.current = Date.now();
+                syncHistory(false);
+              }
+            }
+          }
+
+          // Self-healing: 스킵 구간 데이터가 있는데 하이라이트 DOM이 비워져 있다면 자동 복구
+          if (
+            skipIntervalsRef.current.length > 0 &&
+            typeof art.__renderHighlights === "function" &&
+            dur > 0
+          ) {
+            const container = art.template?.$progress?.querySelector(".art-progress-highlight");
+            if (container && container.children.length === 0) {
+              art.__renderHighlights();
+            }
+          }
+        });
+
+        art.on("video:pause", () => {
+          if (Date.now() - lastSyncTimeRef.current > 3000) {
+            lastSyncTimeRef.current = Date.now();
+            syncHistory(false);
+          }
+        });
+
+        let debouncedSeekTimer: ReturnType<typeof setTimeout> | null = null;
+        art.on("video:seeked", () => {
+          if (debouncedSeekTimer) clearTimeout(debouncedSeekTimer);
+          debouncedSeekTimer = setTimeout(() => {
+            lastSyncTimeRef.current = Date.now();
+            syncHistory(false);
+          }, 1200);
+        });
+
+        // Auto next episode on video end
+        art.on("video:ended", () => {
+          const curSaveKey = getSaveKey(currentEpRef.current);
+          localStorage.removeItem(curSaveKey);
+          syncHistory(true);
+
+          const nextEp = currentNextEpRef.current;
+          if (autoNextRef.current && nextEp) {
+            art.notice.show = "다음 화로 자동 연결합니다...";
+            setTimeout(() => {
+              if (switchEpisodeRef.current) {
+                switchEpisodeRef.current(nextEp);
+              }
+            }, 1000);
+          }
+        });
+
+        const handleUnload = () => {
+          syncHistory(false);
+          stopPlayerImmediately();
+        };
+        const handlePopState = () => {
+          const match = window.location.pathname.match(/\/watch\/[^/]+\/(\d+)/);
+          if (match && match[1]) {
+            const targetEp = parseInt(match[1], 10);
+            if (targetEp !== currentEpRef.current && switchEpisodeRef.current) {
+              switchEpisodeRef.current(targetEp);
+            }
+            return;
+          }
+          stopPlayerImmediately();
+        };
+        const handleLinkClick = (e: MouseEvent) => {
+          const target = (e.target as HTMLElement)?.closest("a");
+          if (!target || !target.href) return;
+          if (target.hasAttribute("download")) return;
+          if (target.target && target.target !== "_self") return;
+          if (target.getAttribute("href")?.startsWith("#")) return;
+          if (containerRef.current && containerRef.current.contains(target)) return;
+          // 무중단 회차 전환 링크(/watch/...)는 비디오를 파괴하지 않음
+          if (target.getAttribute("href")?.includes(`/watch/${animeId}/`)) return;
+          stopPlayerImmediately();
+        };
+
+        window.addEventListener("beforeunload", handleUnload);
+        window.addEventListener("pagehide", handleUnload);
+        window.addEventListener("popstate", handlePopState);
+        document.addEventListener("click", handleLinkClick, { capture: true });
+
+        cleanupUnload = () => {
+          if (debouncedSeekTimer) clearTimeout(debouncedSeekTimer);
+          window.removeEventListener("beforeunload", handleUnload);
+          window.removeEventListener("pagehide", handleUnload);
+          window.removeEventListener("popstate", handlePopState);
+          document.removeEventListener("click", handleLinkClick, { capture: true });
+        };
+
+        // Resize & Fullscreen sync for SubtitlesOctopus libass canvas
+        art.on("resize", () => {
+          if (octopusRef.current && typeof octopusRef.current.resize === "function") {
+            try {
+              octopusRef.current.resize();
+            } catch {}
+          }
+        });
+        art.on("fullscreen", () => {
+          setTimeout(() => {
+            if (octopusRef.current && typeof octopusRef.current.resize === "function") {
+              try {
+                octopusRef.current.resize();
+              } catch {}
+            }
+          }, 150);
+        });
+        art.on("fullscreenWeb", () => {
+          setTimeout(() => {
+            if (octopusRef.current && typeof octopusRef.current.resize === "function") {
+              try {
+                octopusRef.current.resize();
+              } catch {}
+            }
+          }, 150);
+        });
+
+        // Initial default subtitle
+        const initialSubs: SubtitleItem[] = [];
+        if (defaultVttUrl) {
+          initialSubs.push({
+            name: "기본 내장 자막",
+            format: "VTT",
+            is_ass: false,
+            url: defaultVttUrl,
+          });
+        }
+        setSubs(initialSubs);
+        if (initialSubs.length > 0) {
+          applySubtitle(initialSubs[0], 0.0);
+        }
+      } catch (err) {
+        console.error("[Player initialization error]:", err);
+      }
+    }
+
+    init();
+
+    return () => {
+      isMounted = false;
+      stopPlayerImmediately();
+      if (cleanupDoubleTap) {
+        try {
+          cleanupDoubleTap();
+        } catch {}
+      }
+      if (cleanupUnload) {
+        try {
+          cleanupUnload();
+        } catch {}
+      }
+      if (docPipWindowRef.current && !docPipWindowRef.current.closed) {
+        try {
+          docPipWindowRef.current.close();
+        } catch {}
+      }
+      if (octopusRef.current) {
+        try {
+          octopusRef.current.dispose();
+        } catch {}
+        octopusRef.current = null;
+      }
+      updateNativeTrackElement("");
+      hideAllNativeVideoTracks();
+      if (currentBlobUrlRef.current) {
+        try {
+          URL.revokeObjectURL(currentBlobUrlRef.current);
+        } catch {}
+        currentBlobUrlRef.current = null;
+      }
+      if (artRef.current) {
+        try {
+          artRef.current.destroy(true);
+        } catch {}
+        artRef.current = null;
+      }
+    };
+  }, [
+    animeId,
+    isDub,
+    applySubtitle,
+    toggleHybridPip,
+    syncCuesToPipTrack,
+    isNativePipActive,
+    updateNativeTrackElement,
+    hideAllNativeVideoTracks,
+    stopPlayerImmediately,
+  ]);
+
+  // Asynchronous Subtitles Loading
+  useEffect(() => {
+    let isCancelled = false;
+    setIsLoadingSubs(true);
+    setNeedsManualSubtitleChoice(false);
+
+    fetch(`/api/anime/subtitles?title=${encodeURIComponent(animeTitle)}&ep=${currentEp}&animeId=${encodeURIComponent(animeId)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (isCancelled || !data.success) return;
+        const needsChoice = Boolean(data.needs_manual_subtitle_choice);
+        setNeedsManualSubtitleChoice(needsChoice);
+
+        if (Array.isArray(data.creators)) {
+          setCreators(data.creators);
+        }
+
+        const newSubs: SubtitleItem[] = [];
+        if (currentVttUrl) {
+          newSubs.push({
+            name: "기본 내장",
+            format: "VTT",
+            is_ass: false,
+            url: currentVttUrl,
+          });
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const fetchedList: SubtitleItem[] = (data.subtitles || []).map((s: any) => ({
+          name: `${s.name} (${s.format})`,
+          format: s.format,
+          is_ass: s.is_ass,
+          content: s.content,
+          sourceCreatorWebsite: s.sourceCreatorWebsite,
+          sourceMatchedTitle: s.sourceMatchedTitle,
+        }));
+
+        const combined = [...newSubs, ...fetchedList];
+        setSubs(combined);
+
+        if (needsChoice) {
+          // The best title match failed to load. Keep lower-ranked results
+          // available for an explicit choice; never silently apply one.
+          setSelectedSubIndex(-1);
+          applySubtitleRef.current?.(null, currentSyncOffsetRef.current);
+          setTimeout(() => refreshSubtitleSettingsRef.current?.(combined, -1), 150);
+        } else {
+          const assIdx = combined.findIndex((s) => s.is_ass);
+          const targetIdx = assIdx >= 0 ? assIdx : 0;
+          if (combined.length > 0) {
+            setSelectedSubIndex(targetIdx);
+            if (applySubtitleRef.current) {
+              applySubtitleRef.current(combined[targetIdx], currentSyncOffsetRef.current);
+            }
+            setTimeout(() => {
+              if (refreshSubtitleSettingsRef.current) {
+                refreshSubtitleSettingsRef.current(combined, targetIdx);
+              }
+            }, 150);
+          }
+        }
+      })
+      .catch((e) => {
+        console.error("[Fetch Subtitles error]:", e);
+        if (!isCancelled && currentVttUrl) {
+          const fallbackSubs: SubtitleItem[] = [
+            {
+              name: "기본 내장",
+              format: "VTT",
+              is_ass: false,
+              url: currentVttUrl,
+            },
+          ];
+          setSubs(fallbackSubs);
+          setSelectedSubIndex(0);
+          if (applySubtitleRef.current) {
+            applySubtitleRef.current(fallbackSubs[0], currentSyncOffsetRef.current);
+          }
+        }
+      })
+      .finally(() => {
+        if (!isCancelled) setIsLoadingSubs(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [animeTitle, currentEp, currentVttUrl]);
+
+  // 4-Stage Audio Skip Trigger
+  const triggerManualAudioSkip = async (isAuto = false) => {
+    if (audioAnalysisStatus === "running") return;
+
+    // 수동 클릭 시 설정에서 꺼져 있다면 브라우저 데이터 사용 동의 확인
+    if (!isAuto && !playerSettings.autoAudioAnalysis) {
+      const agreed = window.confirm(
+        "오디오 AI 분석을 실행하시겠습니까?\n\n" +
+        "• 앞 4분(OP)과 뒤 2.5분(ED) 음원 데이터(약 5~10MB) 및 기기 연산이 소모됩니다.\n" +
+        "• 분석된 스킵 구간은 데이터베이스에 저장되어 다음 시청자에게 공유됩니다.\n\n" +
+        "분석을 시작할까요?"
+      );
+      if (!agreed) return;
+    }
+
+    setAudioAnalysisStatus("running");
+    setAudioAnalysisText("오디오 분석 준비 중...");
+    if (artRef.current) {
+      artRef.current.notice.show = "오디오 AI 분석을 시작합니다...";
+    }
+
+    try {
+      const { runAudioSkipPipeline } = await import("@/lib/audioSkipEngine");
+      const results = await runAudioSkipPipeline({
+        animeId,
+        episodeNumber: currentEpRef.current,
+        currentM3u8Url: currentM3u8UrlRef.current || m3u8Url,
+        compareEpisodeNumber: currentNextEpRef.current || (currentPreEpRef.current ? currentPreEpRef.current : undefined),
+        onProgress: (p) => {
+          setAudioAnalysisText(p.step);
+          if (artRef.current && (p.progress === 45 || p.progress === 75 || p.progress === 100)) {
+            artRef.current.notice.show = p.step;
+          }
+        },
+      });
+
+      if (results && results.length > 0) {
+        const formatted: SkipInterval[] = results.map((r) => ({
+          type: r.type,
+          label: (r.label === "엔딩" ? "엔딩" : "오프닝") as "오프닝" | "엔딩",
+          start: r.start,
+          end: r.end,
+        }));
+        setSkipIntervals(formatted);
+        applyTimelineHighlight(formatted);
+        setAudioAnalysisStatus("success");
+        const desc = getSkipLabelDesc(formatted);
+        setAudioAnalysisText(desc ? `AI 분석 완료 (${desc})` : "AI 분석 완료");
+        setSkipSource("audio_ai");
+        if (artRef.current) {
+          artRef.current.notice.show = `🎯 오디오 AI 분석 성공! (${desc || `${formatted.length}개 구간`})`;
+        }
+      } else {
+        setAudioAnalysisStatus("none");
+        setAudioAnalysisText("일치 구간 없음");
+        if (artRef.current) {
+          artRef.current.notice.show = "오디오 일치 구간(OP/ED)을 찾을 수 없습니다.";
+        }
+        setTimeout(() => {
+          setAudioAnalysisStatus(skipIntervalsRef.current.length > 0 ? "success" : "idle");
+          if (skipIntervalsRef.current.length === 0) {
+            setAudioAnalysisText("오디오 AI 분석");
+          }
+        }, 3500);
+      }
+    } catch (err) {
+      console.error("[Audio analysis error]:", err);
+      setAudioAnalysisStatus("none");
+      setAudioAnalysisText("분석 실패");
+      if (artRef.current) {
+        artRef.current.notice.show = "오디오 분석 중 오류가 발생했습니다.";
+      }
+      setTimeout(() => {
+        setAudioAnalysisStatus(skipIntervalsRef.current.length > 0 ? "success" : "idle");
+        if (skipIntervalsRef.current.length === 0) {
+          setAudioAnalysisText("오디오 AI 분석");
+        }
+      }, 3500);
+    }
+  };
+
+  // Fetch Skip intervals with 4-stage pipeline (DB -> Chroma Template -> AniSkip)
+  useEffect(() => {
+    let isCancelled = false;
+
+    // Reset previous episode skip data immediately
+    setSkipIntervals([]);
+    applyTimelineHighlight([]);
+    setSkipSource("");
+
+    const query = new URLSearchParams({
+      title: animeTitle,
+      ep: String(currentEp),
+    });
+    if (animePoster) query.set("poster", animePoster);
+
+    fetch(`/api/anime/skip?${query.toString()}`)
+      .then((r) => r.json())
+      .then(async (data) => {
+        if (isCancelled || !data.success) return;
+
+        console.log("[SkipAPI] Response:", data);
+
+        // 1. 이미 DB나 AniSkip에 스킵 구간이 있는 경우
+        if (data.found && Array.isArray(data.intervals) && data.intervals.length > 0) {
+          console.log("[SkipAPI] Applying intervals:", data.intervals);
+          setSkipIntervals(data.intervals);
+          applyTimelineHighlight(data.intervals);
+          setSkipSource(data.source || "db");
+          setAudioAnalysisStatus("success");
+          const opCount = data.intervals.filter((i: any) => i.type === "op" || i.label === "오프닝").length;
+          const edCount = data.intervals.filter((i: any) => i.type === "ed" || i.label === "엔딩").length;
+          const desc = [opCount > 0 ? "OP" : "", edCount > 0 ? "ED" : ""].filter(Boolean).join("/");
+          setAudioAnalysisText(desc ? `스킵 감지 (${desc})` : "스킵 감지 완료");
+          if (artRef.current) {
+            artRef.current.notice.show = `🎯 스킵 구간 로드 (${desc || `${data.intervals.length}개 구간`})`;
+          }
+          return;
+        }
+
+        // 2. 스킵은 없지만 등록된 크로마 지문(anime_themes)이 있는 경우: 설정에서 켜진 경우에만 1:1 템플릿 매칭 시도
+        if (playerSettings.autoAudioAnalysis && data.hasThemes && Array.isArray(data.themes) && data.themes.length > 0) {
+          try {
+            setAudioAnalysisText("크로마 지문 매칭 중...");
+            const { runAudioSkipPipeline } = await import("@/lib/audioSkipEngine");
+            if (isCancelled) return;
+            const matched = await runAudioSkipPipeline({
+              animeId,
+              episodeNumber: currentEp,
+              currentM3u8Url,
+            });
+            if (isCancelled) return;
+            if (matched && matched.length > 0) {
+              const formatted: SkipInterval[] = matched.map((r) => ({
+                type: r.type,
+                label: (r.label === "엔딩" ? "엔딩" : "오프닝") as "오프닝" | "엔딩",
+                start: r.start,
+                end: r.end,
+              }));
+              setSkipIntervals(formatted);
+              applyTimelineHighlight(formatted);
+              setSkipSource("chroma");
+              setAudioAnalysisStatus("success");
+              const desc = getSkipLabelDesc(formatted);
+              setAudioAnalysisText(desc ? `AI 분석 완료 (${desc})` : "AI 분석 완료");
+              return;
+            }
+          } catch (e) {
+            console.warn("[Background chroma match error]:", e);
+          }
+        }
+
+        // 3. 스킵 데이터가 없는 경우
+        if (!isCancelled) {
+          setAudioAnalysisStatus("idle");
+          setAudioAnalysisText("오디오 AI 분석");
+          if (playerSettings.autoAudioAnalysis) {
+            setTimeout(() => {
+              if (!isCancelled) triggerManualAudioSkip(true);
+            }, 1000);
+          }
+        }
+      })
+      .catch((e) => console.error("[Fetch Skip error]:", e));
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [animeTitle, animeId, currentEp, animePoster, currentM3u8Url, applyTimelineHighlight, playerSettings.autoAudioAnalysis]);
+
+  // Video timeupdate watcher for Auto-Skip & Floating Button
+  useEffect(() => {
+    if (!artRef.current) return;
+    const art = artRef.current;
+
+    let lastAutoSkipped = 0;
+
+    const onTimeUpdate = () => {
+      const cur = art.currentTime;
+
+      // Skip interval check
+      let matched: SkipInterval | null = null;
+      for (const interval of skipIntervals) {
+        if (cur >= interval.start && cur < interval.end - 0.5) {
+          matched = interval;
+          break;
+        }
+      }
+
+      if (matched) {
+        if (autoSkipEnabled) {
+          if (Math.abs(lastAutoSkipped - matched.end) > 2) {
+            lastAutoSkipped = matched.end;
+            art.seek = matched.end + 0.1;
+            art.notice.show = `⚡ ${matched.label} 자동 스킵 완료!`;
+            setFloatingSkip({ show: false, label: "", targetTime: 0 });
+          }
+        } else {
+          setFloatingSkip({
+            show: true,
+            label: `${matched.label} 스킵`,
+            targetTime: matched.end + 0.1,
+            isManual: false,
+          });
+        }
+        return;
+      }
+
+      // 스킵 구간이 아니면 플로팅 버튼 숨김
+      setFloatingSkip((prev) => (prev.show ? { ...prev, show: false } : prev));
+    };
+
+    art.on("video:timeupdate", onTimeUpdate);
+
+    return () => {
+      try {
+        art.off("video:timeupdate", onTimeUpdate);
+      } catch {}
+    };
+  }, [skipIntervals, autoSkipEnabled]);
+
+  return (
+    <div className="w-full max-w-5xl mx-auto">
+      {/* Breadcrumb Header (실시간 회차 번호 동기화) */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm">
+          <Link
+            href={`/anime/${animeId}`}
+            onClick={() => setNavigatingTarget("anime")}
+            className={`flex items-center gap-1.5 font-bold transition ${
+              navigatingTarget === "anime"
+                ? "text-purple-400 pointer-events-none cursor-wait"
+                : "text-slate-300 hover:text-purple-400"
+            }`}
+          >
+            {navigatingTarget === "anime" ? (
+              <Loader2 className="h-4 w-4 animate-spin text-purple-400" />
+            ) : (
+              <ArrowLeft className="h-4 w-4" />
+            )}
+            <LocalizedAnimeTitle title={animeTitle} />
+          </Link>
+          <span className="text-slate-600">/</span>
+          <span className="font-extrabold text-purple-300">
+            {currentEpTitle} {isDub && "(더빙)"}
+          </span>
+        </div>
+      </div>
+
+      {/* Player Wrapper */}
+      <div className="artplayer-wrapper rounded-2xl relative">
+        <div ref={containerRef} className="w-full h-full" />
+
+        {/* Floating AniSkip / Manual Skip Button */}
+        {floatingSkip.show && playerSettings.floatingSkipBtn && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (artRef.current) {
+                artRef.current.seek = Math.min(
+                  artRef.current.duration || 99999,
+                  floatingSkip.targetTime
+                );
+                artRef.current.notice.show = `⏩ ${floatingSkip.label} 완료!`;
+              }
+              setFloatingSkip({ show: false, label: "", targetTime: 0 });
+            }}
+            className="absolute bottom-16 right-5 z-30 flex items-center gap-2 rounded-full bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 px-4 py-2.5 text-xs sm:text-sm font-extrabold text-white shadow-2xl shadow-purple-900/60 border border-purple-300/40 backdrop-blur-md animate-pulse transition hover:scale-105 active:scale-95 cursor-pointer"
+          >
+            <Sparkles className="h-4 w-4 fill-white" />
+            <span>{floatingSkip.label}</span>
+          </button>
+        )}
+      </div>
+
+      {/* Episode Navigation & Controls */}
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-purple-500/20 bg-slate-900/80 p-4 backdrop-blur-md">
+        {/* Navigation Buttons */}
+        <div className="flex items-center gap-2">
+          {currentPreEp ? (
+            <button
+              type="button"
+              disabled={Boolean(isSwitchingEp)}
+              onClick={() => switchEpisode(currentPreEp)}
+              className={`flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-semibold transition ${
+                isSwitchingEp === currentPreEp
+                  ? "bg-purple-900/50 text-purple-200 border border-purple-500/50 pointer-events-none cursor-wait"
+                  : "bg-slate-800 text-slate-200 hover:bg-purple-600 hover:text-white cursor-pointer"
+              } ${isSwitchingEp && isSwitchingEp !== currentPreEp ? "opacity-60 pointer-events-none" : ""}`}
+            >
+              {isSwitchingEp === currentPreEp ? (
+                <Loader2 className="h-4 w-4 animate-spin text-purple-300" />
+              ) : (
+                <ChevronLeft className="h-4 w-4" />
+              )}
+              {isSwitchingEp === currentPreEp ? `로딩 중... (${currentPreEp}화)` : `이전 화 (${currentPreEp}화)`}
+            </button>
+          ) : (
+            <span className="rounded-xl bg-slate-950 px-3 py-2 text-xs text-slate-600 cursor-not-allowed">
+              첫 번째 화
+            </span>
+          )}
+
+          <Link
+            href={`/anime/${animeId}`}
+            onClick={() => setNavigatingTarget("list")}
+            className={`flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-semibold transition ${
+              navigatingTarget === "list"
+                ? "bg-purple-900/50 text-purple-200 border border-purple-500/50 pointer-events-none cursor-wait"
+                : "bg-slate-800 text-slate-200 hover:bg-slate-700"
+            }`}
+          >
+            {navigatingTarget === "list" ? (
+              <Loader2 className="h-4 w-4 animate-spin text-purple-300" />
+            ) : (
+              <List className="h-4 w-4" />
+            )}
+            {navigatingTarget === "list" ? "이동 중..." : "회차 목록"}
+          </Link>
+
+          {currentNextEp ? (
+            <button
+              type="button"
+              disabled={Boolean(isSwitchingEp)}
+              onClick={() => switchEpisode(currentNextEp)}
+              className={`flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-bold text-white shadow-lg transition ${
+                isSwitchingEp === currentNextEp
+                  ? "bg-purple-800 pointer-events-none cursor-wait shadow-purple-950/60"
+                  : "bg-purple-600 shadow-purple-600/30 hover:bg-purple-500 cursor-pointer"
+              } ${isSwitchingEp && isSwitchingEp !== currentNextEp ? "opacity-60 pointer-events-none" : ""}`}
+            >
+              {isSwitchingEp === currentNextEp ? (
+                <Loader2 className="h-4 w-4 animate-spin text-white" />
+              ) : null}
+              <span>{isSwitchingEp === currentNextEp ? `로딩 중... (${currentNextEp}화)` : `다음 화 (${currentNextEp}화)`}</span>
+              {isSwitchingEp !== currentNextEp && <ChevronRight className="h-4 w-4" />}
+            </button>
+          ) : (
+            <span className="rounded-xl bg-slate-950 px-3 py-2 text-xs text-slate-600 cursor-not-allowed">
+              마지막 화
+            </span>
+          )}
+        </div>
+
+        {/* 3 Controls matching Flask: 1) OP/ED 자동 스킵, 2) 오디오 분석, 3) 다음 화 자동재생 */}
+        <div className="flex flex-wrap items-center gap-2.5 text-xs">
+          {/* 1) OP/ED 자동 스킵 토글 */}
+          <label
+            htmlFor="autoSkipToggle"
+            className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 font-semibold transition border cursor-pointer select-none ${
+              autoSkipEnabled
+                ? "bg-purple-600/20 text-purple-200 border-purple-500/50 shadow-sm"
+                : "bg-slate-800/80 text-slate-400 border-slate-700"
+            }`}
+          >
+            <input
+              type="checkbox"
+              id="autoSkipToggle"
+              checked={autoSkipEnabled}
+              onChange={toggleAutoSkip}
+              className="h-3.5 w-3.5 rounded border-slate-600 bg-slate-900 text-purple-600 accent-purple-600 cursor-pointer"
+            />
+            <span>OP/ED 자동 스킵</span>
+          </label>
+
+          {/* 2) 스킵 분석 상태 보고 뱃지 및 수동 분석/재분석 버튼 */}
+          {audioAnalysisStatus === "running" ? (
+            /* 2-1) 분석 진행 중: 실시간 단계 안내 뱃지 */
+            <div
+              className="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 font-bold border border-purple-500/50 bg-purple-900/30 text-purple-300 animate-pulse cursor-wait select-none"
+              title="오디오 AI 분석이 진행 중입니다"
+            >
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-purple-400" />
+              <span>{audioAnalysisText}</span>
+            </div>
+          ) : audioAnalysisStatus === "success" ? (
+            /* 2-2) 스킵 감지 완료: 선택/클릭되지 않는 상태 보고용 뱃지 */
+            <div className="inline-flex items-center gap-1.5">
+              <div
+                className="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 font-bold border border-purple-500/40 bg-purple-600/20 text-purple-200 select-none cursor-default"
+                title={
+                  skipIntervals.length > 0
+                    ? skipIntervals
+                        .map((i) => `${i.label}: ${formatTimeStr(i.start)} ~ ${formatTimeStr(i.end)}`)
+                        .join(" | ")
+                    : "스킵 구간이 감지되어 적용되었습니다"
+                }
+              >
+                <CheckCircle2 className="h-3.5 w-3.5 text-purple-400" />
+                <span>
+                  {(() => {
+                    const desc = getSkipLabelDesc(skipIntervals);
+                    const descSuffix = desc ? ` (${desc})` : "";
+                    if (skipSource === "audio_ai" || skipSource === "chroma") {
+                      return `AI 분석 완료${descSuffix}`;
+                    }
+                    if (skipSource === "aniskip") {
+                      return `스킵 감지${descSuffix} · AniSkip`;
+                    }
                     if (skipSource === "db") {
                       return `스킵 감지${descSuffix} · DB`;
                     }
