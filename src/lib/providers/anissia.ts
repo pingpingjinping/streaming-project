@@ -212,6 +212,11 @@ class AnissiaProvider implements AnimeProvider {
 
     const page = typeof params.page === "number" && params.page > 0 ? params.page : 1;
 
+    // Anissia 전체 작품 카탈로그 (최근 자막 피드와 별도)
+    if (params.catalog) {
+      return genre ? await this.searchByGenre(genre, page) : await this.getAnimeCatalog(page);
+    }
+
     // 1. ⚡ 최근 등록 자막 피드 (기본 첫 화면)
     if (category === "recent_caption") {
       return await this.getRecentCaptions(page);
@@ -240,7 +245,7 @@ class AnissiaProvider implements AnimeProvider {
 
     // 6. 🎭 장르별 탐색
     if (genre) {
-      return await this.searchByGenre(genre, params.page || 0);
+      return await this.searchByGenre(genre, params.page || 1);
     }
 
     return await this.getRecentCaptions();
@@ -609,17 +614,64 @@ class AnissiaProvider implements AnimeProvider {
   /**
    * 6. 🎭 장르별 검색 (/anime/list/0?q={genre})
    */
-  private async searchByGenre(genre: string, page = 0): Promise<AnimeListResponse> {
+  private async searchByGenre(genre: string, page = 1): Promise<AnimeListResponse> {
     return await this.searchAnime(genre, page);
+  }
+
+  /** 전체 작품 카탈로그 (/anime/list/{page}) */
+  private async getAnimeCatalog(page = 1): Promise<AnimeListResponse> {
+    try {
+      const anissiaPage = Math.max(0, page - 1);
+      const res = await fetch(`${ANISSIA_BASE_URL}/anime/list/${anissiaPage}`, {
+        headers: HEADERS,
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) throw new Error(`Anissia Catalog Error: ${res.status}`);
+      const json = await res.json();
+      const data = json?.data;
+      const list = Array.isArray(data?.content) ? data.content : Array.isArray(data) ? data : [];
+      const targets = list.map((item: any) => ({
+        titleToSearch: item.originalSubject || item.subject || "",
+      }));
+      const metaMap = await enrichWithAniList(targets);
+      const items: AnimeListItem[] = list.map((item: any) => {
+        const searchKey = item.originalSubject || item.subject || "";
+        const meta = metaMap.get(searchKey);
+        const captionCount = Number(item.captionCount || 0);
+        return {
+          id: toAnissiaId(item.animeNo),
+          title: item.subject || searchKey,
+          poster: meta?.poster || DEFAULT_POSTER,
+          detail_url: `/anime/${toAnissiaId(item.animeNo)}`,
+          remarks: `${captionCount ? `자막 ${captionCount}명 · ` : "자막 정보 없음 · "}${item.status === "ON" ? "방영중" : "완결"}`,
+          rating: meta?.rating ?? null,
+          caption_count: captionCount,
+          genres: item.genres ? item.genres.split(",").map((g: string) => g.trim()) : [],
+          status: item.status,
+        };
+      });
+      const totalPages = Math.max(1, Number(data?.totalPages) || 1);
+      return {
+        items,
+        page,
+        has_next: data?.last === undefined ? page < totalPages : !Boolean(data.last),
+        total_pages: totalPages,
+      };
+    } catch (err) {
+      console.error("[AnissiaProvider] getAnimeCatalog error:", err);
+      return { items: [], page, has_next: false, total_pages: 0 };
+    }
   }
 
   /**
    * 검색 (/anime/list/{page}?q={keyword})
    */
-  async searchAnime(keyword: string, page = 0): Promise<AnimeListResponse> {
+  async searchAnime(keyword: string, page = 1): Promise<AnimeListResponse> {
     try {
+      // App pagination is 1-based; Anissia API pagination is 0-based.
+      const anissiaPage = Math.max(0, page - 1);
       const res = await fetch(
-        `${ANISSIA_BASE_URL}/anime/list/${page}?q=${encodeURIComponent(keyword)}`,
+        `${ANISSIA_BASE_URL}/anime/list/${anissiaPage}?q=${encodeURIComponent(keyword)}`,
         { headers: HEADERS, signal: AbortSignal.timeout(4000) }
       );
       if (!res.ok) throw new Error(`Anissia Search Error: ${res.status}`);
@@ -650,9 +702,9 @@ class AnissiaProvider implements AnimeProvider {
 
       return {
         items,
-        page: page + 1,
-        has_next: items.length >= 30,
-        total_pages: json?.data?.totalPages || 1,
+        page,
+        has_next: json?.data?.last === undefined ? items.length >= 30 : !Boolean(json.data.last),
+        total_pages: Math.max(1, Number(json?.data?.totalPages) || 1),
       };
     } catch (err) {
       console.error("[AnissiaProvider] searchAnime error:", err);
