@@ -463,8 +463,20 @@ def build_reference_index(db: sqlite3.Connection):
     return catalog, exact, keys, trigram
 
 
+def season_matches(post_season, cand_season) -> bool:
+    """Season 1 and an omitted season label represent the same base TV work."""
+    if post_season == cand_season:
+        return True
+    return {post_season, cand_season} == {1, None}
+
+
 def metadata_rank(post_meta: dict, cand: dict) -> tuple[int, bool]:
-    """Return (bonus, conflict). Missing metadata is neutral."""
+    """Return (bonus, conflict). Missing metadata is neutral.
+
+    For TV titles, an omitted season is treated as season 1. This lets
+    "S01", "Season 1", "1기", and an unsuffixed base title resolve together,
+    while season 2+ still requires an explicit matching candidate.
+    """
     bonus = 0
     conflict = False
     if post_meta["year"] and cand["year"]:
@@ -472,11 +484,23 @@ def metadata_rank(post_meta: dict, cand: dict) -> tuple[int, bool]:
             bonus += 12
         else:
             conflict = True
-    if post_meta["season"] and cand["season"]:
-        if post_meta["season"] == cand["season"]:
+
+    post_season = post_meta["season"]
+    cand_season = cand["season"]
+    if post_season is not None and cand_season is not None:
+        if post_season == cand_season:
             bonus += 10
         else:
             conflict = True
+    elif season_matches(post_season, cand_season):
+        # Explicit S01/1기 vs an unsuffixed base title.
+        if post_season == 1 or cand_season == 1:
+            bonus += 10
+        # When neither side says a season, prefer the base/season-1 candidate
+        # over season 2+ candidates that normalize to the same title key.
+        else:
+            bonus += 3
+
     if post_meta["format"] and cand["format"]:
         if post_meta["format"] == cand["format"]:
             bonus += 6
@@ -508,10 +532,14 @@ def choose_exact(candidates: list[dict], post_meta: dict):
     }
     if len(works) == 1:
         chosen = top[0]
+        post_season = post_meta["season"]
+        cand_season = chosen["season"]
         underspecified = bool(
-            (chosen["season"] and not post_meta["season"])
+            (
+                not season_matches(post_season, cand_season)
+                and (post_season is not None or cand_season is not None)
+            )
             or (chosen["format"] and not post_meta["format"])
-            or (post_meta["season"] and not chosen["season"])
             or (post_meta["format"] and not chosen["format"])
         )
         if underspecified:
@@ -565,11 +593,17 @@ def fuzzy_best(query: str, post_meta: dict, exact, keys, trigram):
     # A supplied season that the candidate cannot confirm is never auto-high.
     metadata_incomplete = bool(
         (post_meta["year"] and not best["year"])
-        or (post_meta["season"] and not best["season"])
+        or (
+            not season_matches(post_meta["season"], best["season"])
+            and post_meta["season"] is not None
+        )
         or (post_meta["format"] and not best["format"])
     )
     candidate_extra_specific = bool(
-        (best["season"] and not post_meta["season"])
+        (
+            not season_matches(post_meta["season"], best["season"])
+            and best["season"] is not None
+        )
         or (best["format"] and not post_meta["format"])
     )
     best_key = compact_key(best["alias"])
@@ -578,7 +612,10 @@ def fuzzy_best(query: str, post_meta: dict, exact, keys, trigram):
     )
     explicit_meta_confirmed = bool(
         (post_meta["year"] and best["year"] == post_meta["year"])
-        or (post_meta["season"] and best["season"] == post_meta["season"])
+        or (
+            post_meta["season"] is not None
+            and season_matches(post_meta["season"], best["season"])
+        )
         or (post_meta["format"] and best["format"] == post_meta["format"])
     )
     return {
