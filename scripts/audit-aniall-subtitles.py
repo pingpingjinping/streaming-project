@@ -167,7 +167,10 @@ def title_variants(raw: str) -> list[str]:
     # Remove clearly technical bracket/paren chunks while keeping alternate titles.
     s = re.sub(
         r"([\[(])([^\])]{1,160})([\])])",
-        lambda m: " " if looks_technical(m.group(2)) else m.group(0),
+        lambda m: " " if (
+            looks_technical(m.group(2))
+            or (m.group(1) == "[" and release_group_chunk(m.group(2)))
+        ) else m.group(0),
         s,
     )
 
@@ -198,12 +201,12 @@ def title_variants(raw: str) -> list[str]:
         s,
         flags=re.I,
     )
-    s = re.sub(r"\s+", " ", s).strip(" -_[]()")
+    s = re.sub(r"\s+", " ", s).strip(" -_[]")
 
     out: list[str] = []
 
     def add(x: str):
-        x = re.sub(r"\s+", " ", x).strip(" -_[]()")
+        x = re.sub(r"\s+", " ", x).strip(" -_[]")
         if len(compact_key(x)) >= 2 and x not in out:
             out.append(x)
 
@@ -321,7 +324,13 @@ def choose_exact(candidates: list[dict], post_meta: dict):
     best_bonus = ranked[0][0]
     top = [cand for bonus, cand in ranked if bonus == best_bonus]
     # Duplicate source records for the same work are not ambiguity.
-    works = {(x["korean"], x["year"], x["season"], x["format"]) for x in top}
+    works = {
+        (
+            compact_key(title_variants(x["korean"])[0] if title_variants(x["korean"]) else x["korean"]),
+            x["year"], x["season"], x["format"],
+        )
+        for x in top
+    }
     if len(works) == 1:
         return top[0], False
     return None, False
