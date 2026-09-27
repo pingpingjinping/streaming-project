@@ -165,7 +165,7 @@ def extract_meta(raw: str) -> dict:
     if season is None and season_range is None:
         # A roman numeral followed by a subtitle (e.g. "II - Le Film") can
         # be part of a movie's actual title, as in Street Fighter II.
-        m = re.search(r"(?:^|\s)(II|III|IV|V|VI)\b(?=\s*(?:$|[\[(]|EP\s*\d|\d{1,3}\b))", s, flags=re.I)
+        m = re.search(r"(?:^|\s)(II|III|IV|V|VI)\b(?=\s*(?:$|[\[(]|EP\s*\d|\d{1,3}\b|-\s*(?:EP\s*)?\d))", s, flags=re.I)
         if m:
             season = {"ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6}[m.group(1).lower()]
 
