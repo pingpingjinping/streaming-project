@@ -26,6 +26,7 @@ import sys
 import time
 import unicodedata
 from collections import defaultdict
+from datetime import datetime
 from difflib import SequenceMatcher
 from html.parser import HTMLParser
 from pathlib import Path
@@ -46,6 +47,8 @@ TECH_WORDS = (
     "blu-ray", "remux", "10bit", "8bit", "10-bit", "8-bit", "dual-audio",
     "multi-subs", "batch", "at-x", "bs11", "tx ", "cs", "uhd", "hdr",
     "dts", "mkv", "h264", "h265", "yuv", "raws", "subplease", "bd-box",
+    "4k", "ma10p", "dvdrip", "dvd remux", "multi", "dual", "japanese",
+    "remaster", "hdリマスター", "tokuten", "rartv",
 )
 
 
@@ -111,7 +114,8 @@ def extract_meta(raw: str) -> dict:
         y = int(m.group(1))
         # 1920x1080 is a resolution, not a release year.
         tail = s[m.end():m.end()+6].lower()
-        if y >= 1960 and not re.match(r"\s*x\s*\d{3,4}", tail):
+        max_year = datetime.now().year + 1
+        if 1960 <= y <= max_year and not re.match(r"\s*x\s*\d{3,4}", tail):
             years.append(y)
     year = years[0] if years else None
 
@@ -136,11 +140,12 @@ def extract_meta(raw: str) -> dict:
         elif "第三季" in s:
             season = 3
 
-    # Roman numerals are only treated as seasons when they appear as a title suffix.
+    # Roman numerals are common season markers (e.g. Overlord IV, Date A Live V).
+    # Require a separator/end after the numeral so ordinary words are not affected.
     if season is None:
-        m = re.search(r"(?:^|\s)(II|III|IV|V)\s*(?:$|[\[(])", s, flags=re.I)
+        m = re.search(r"(?:^|\s)(II|III|IV|V|VI)\b(?=\s*(?:$|[-\[(]|EP\s*\d|\d{1,3}\b))", s, flags=re.I)
         if m:
-            season = {"ii": 2, "iii": 3, "iv": 4, "v": 5}[m.group(1).lower()]
+            season = {"ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6}[m.group(1).lower()]
 
     low = norm_space(s)
     fmt = None
@@ -158,9 +163,12 @@ def extract_meta(raw: str) -> dict:
 
 def title_variants(raw: str) -> list[str]:
     """Return title-only variants. Year/season/format are compared separately."""
+    meta = extract_meta(raw)
     s = strip_release_prefix(raw)
     s = re.sub(r"_?자막\s*$", "", s, flags=re.I).strip()
     s = re.sub(r"\s+_?subtitle\s*$", "", s, flags=re.I).strip()
+    s = re.sub(r"(?:완결|통합)?\s*자막(?:모음|입니다)?\s*$", "", s, flags=re.I).strip()
+    s = re.sub(r"구글번역기영문자막과한글자막입니다\s*$", "", s, flags=re.I).strip()
     if not s:
         return []
 
@@ -175,7 +183,11 @@ def title_variants(raw: str) -> list[str]:
     )
 
     # Extracted metadata should not participate in the title string comparison.
-    s = re.sub(r"(?<!\d)(?:19|20)\d{2}(?!\d)", " ", s)
+    # Only remove a plausible release year. Numbers such as SAC_2045 / 마왕 2099
+    # are part of the title and must survive normalization.
+    s = re.sub(r"\(?\b(?:19|20)\d{2}[./-]\d{1,2}[./-]\d{1,2}\)?", " ", s)
+    if meta["year"]:
+        s = re.sub(rf"(?<!\d){meta['year']}(?:년)?(?!\d)", " ", s)
     s = re.sub(r"\bseason\s*0*\d{1,2}\b", " ", s, flags=re.I)
     s = re.sub(r"\b0*\d{1,2}(?:st|nd|rd|th)\s+season\b", " ", s, flags=re.I)
     s = re.sub(r"\bpart\s*0*\d{1,2}\b", " ", s, flags=re.I)
@@ -185,8 +197,11 @@ def title_variants(raw: str) -> list[str]:
     s = s.replace("第一季", " ").replace("第二季", " ").replace("第三季", " ")
 
     # Episode ranges belong to subtitle selection, not work-title matching.
-    s = re.sub(r"\(?\b(?:e|ep)?\s*\d{1,3}\s*[-~]\s*\d{1,3}\b\)?", " ", s, flags=re.I)
+    s = re.sub(r"\(?\b(?:e|ep)?\s*\d{1,3}\s*[-~]\s*(?:e|ep)?\s*\d{1,3}\b\)?", " ", s, flags=re.I)
+    s = re.sub(r"\bEP\s*\d{1,3}\s*[-~]\s*EP\s*\d{1,3}\b", " ", s, flags=re.I)
     s = re.sub(r"\[\s*\d{1,3}\s*[-~]\s*\d{1,3}\s*(?:tv)?(?:全集)?[^\]]*\]", " ", s, flags=re.I)
+    s = re.sub(r"\s+-\s*\d{1,3}(?:\s*(?:END|Fin))?\s*$", " ", s, flags=re.I)
+    s = re.sub(r"^\s*\d{1,2}[._]\s*", "", s)
 
     # Normalize away format words after preserving them in extract_meta().
     s = re.sub(r"\bmovie(?:\s*0*\d+)?\b", " ", s, flags=re.I)
@@ -196,11 +211,16 @@ def title_variants(raw: str) -> list[str]:
     # Naked encoding/release tail: "1080p x265 FLAC ..." etc.
     s = re.sub(
         r"\b(?:2160p|1080p|720p|480p|uhd|bdrip|bd-box|bluray|blu-ray|remux|webrip|web-dl|"
-        r"x264|x265|h264|h265|hevc|avc|flac|aac|hdr10?|10bit|8bit)\b.*$",
+        r"dvdrip|dvd|x264|x265|h264|h265|hevc|avc|flac|aac|hdr10?|10bit|8bit|4k|"
+        r"ma10p|multi|dual|japanese|tokuten|rartv|cr|nf)\b.*$",
         " ",
         s,
         flags=re.I,
     )
+    s = re.sub(r"\bHD\s*Remaster\b.*$", " ", s, flags=re.I)
+    s = re.sub(r"HDリマスター.*$", " ", s, flags=re.I)
+    s = re.sub(r"\bv\d+\b(?=\s*(?:$|[-\[(]))", " ", s, flags=re.I)
+    s = re.sub(r"\s+-\s*(?:\+\s*)+$", " ", s)
     s = re.sub(r"\s+", " ", s).strip(" -_[]")
 
     out: list[str] = []
@@ -211,6 +231,20 @@ def title_variants(raw: str) -> list[str]:
             out.append(x)
 
     add(s)
+
+    # Some posts repeat a shared prefix with Korean + English title forms:
+    # "기동전사 건담 SEED 프리덤 기동전사 건담 SEED Freedom".
+    tokens = s.split()
+    for width in range(min(8, len(tokens) // 2), 1, -1):
+        prefix = tokens[:width]
+        repeat_at = next(
+            (i for i in range(width, len(tokens) - width + 1) if tokens[i:i+width] == prefix),
+            None,
+        )
+        if repeat_at is not None:
+            add(" ".join(tokens[:repeat_at]))
+            add(" ".join(tokens[repeat_at:]))
+            break
 
     # "여기저기 - Acchi Kocchi", "시광대리인 -Link Click-" etc.
     for part in re.split(r"\s+-\s*|\s*-\s+(?=[A-Za-z])", s):
@@ -224,11 +258,21 @@ def title_variants(raw: str) -> list[str]:
         if not looks_technical(inner):
             add(inner)
 
-    # Subtitle-site descriptive suffixes commonly use "_" as a separator.
+    # Subtitle-site descriptive suffixes sometimes use "_" as a separator.
+    # Do not split identifiers such as SAC_2045.
     if "_" in s:
-        add(s.split("_", 1)[0])
+        left, right = s.split("_", 1)
+        if re.search(r"[가-힣]", left) and re.search(r"[가-힣]", right) and not re.match(r"\s*\d", right):
+            add(left)
 
     return out
+
+
+def title_number_tokens(text: str) -> set[str]:
+    variants = title_variants(text)
+    if not variants:
+        return set()
+    return set(re.findall(r"(?<![A-Za-z0-9])\d+(?:\.\d+)?(?![A-Za-z0-9])", variants[0]))
 
 
 class LinkParser(HTMLParser):
@@ -414,7 +458,7 @@ def choose_exact(candidates: list[dict], post_meta: dict):
             continue
         ranked.append((bonus, cand))
     if not ranked:
-        return None, True
+        return None, "conflict", []
 
     ranked.sort(key=lambda x: x[0], reverse=True)
     best_bonus = ranked[0][0]
@@ -428,14 +472,22 @@ def choose_exact(candidates: list[dict], post_meta: dict):
         for x in top
     }
     if len(works) == 1:
-        return top[0], False
-    return None, False
+        chosen = top[0]
+        underspecified = bool(
+            (chosen["season"] and not post_meta["season"])
+            or (chosen["format"] and not post_meta["format"])
+        )
+        if underspecified:
+            return None, "underspecified", top
+        return chosen, "exact", top
+    return None, "ambiguous", top
 
 
 def fuzzy_best(query: str, post_meta: dict, exact, keys, trigram):
     q = compact_key(query)
     if len(q) < 3:
         return None
+    query_numbers = title_number_tokens(query)
     grams = {q[j:j+3] for j in range(len(q)-2)} if len(q) >= 3 else {q}
     counts = defaultdict(int)
     for g in grams:
@@ -454,6 +506,11 @@ def fuzzy_best(query: str, post_meta: dict, exact, keys, trigram):
             bonus, conflict = metadata_rank(post_meta, cand)
             if conflict:
                 continue
+            # A sequel/version number that exists only on the DB candidate is
+            # a strong warning (e.g. "패트레이버" vs "패트레이버 2").
+            candidate_numbers = title_number_tokens(cand["alias"])
+            if candidate_numbers - query_numbers:
+                continue
             # metadata is a tie-breaker, not a way to rescue a weak title.
             adjusted = ratio + min(0.06, bonus / 200.0)
             ranked.append((adjusted, ratio, cand))
@@ -470,8 +527,18 @@ def fuzzy_best(query: str, post_meta: dict, exact, keys, trigram):
 
     # A supplied season that the candidate cannot confirm is never auto-high.
     metadata_incomplete = bool(
-        (post_meta["season"] and not best["season"])
+        (post_meta["year"] and not best["year"])
+        or (post_meta["season"] and not best["season"])
         or (post_meta["format"] and not best["format"])
+    )
+    candidate_extra_specific = bool(
+        (best["season"] and not post_meta["season"])
+        or (best["format"] and not post_meta["format"])
+    )
+    explicit_meta_confirmed = bool(
+        (post_meta["year"] and best["year"] == post_meta["year"])
+        or (post_meta["season"] and best["season"] == post_meta["season"])
+        or (post_meta["format"] and best["format"] == post_meta["format"])
     )
     return {
         "score": round(best_ratio * 100, 1),
@@ -483,21 +550,23 @@ def fuzzy_best(query: str, post_meta: dict, exact, keys, trigram):
         "matched_format": best["format"],
         "margin": round((best_adjusted - second_adjusted) * 100, 1),
         "metadata_incomplete": metadata_incomplete,
+        "candidate_extra_specific": candidate_extra_specific,
+        "explicit_meta_confirmed": explicit_meta_confirmed,
     }
 
 
 def match_post(title: str, exact, keys, trigram):
     variants = title_variants(title)
     post_meta = extract_meta(title)
-    ambiguous = False
+    exact_review_candidates = []
     had_metadata_conflict = False
 
     for v in variants:
         hits = exact.get(compact_key(v))
         if not hits:
             continue
-        cand, conflict = choose_exact(hits, post_meta)
-        had_metadata_conflict = had_metadata_conflict or conflict
+        cand, state, top = choose_exact(hits, post_meta)
+        had_metadata_conflict = had_metadata_conflict or state == "conflict"
         if cand:
             return {
                 "match_kind": "exact",
@@ -513,32 +582,18 @@ def match_post(title: str, exact, keys, trigram):
                 "matched_year": cand["year"],
                 "matched_season": cand["season"],
                 "matched_format": cand["format"],
+                "candidate_titles": "",
             }
-        ambiguous = True
+        if state in ("ambiguous", "underspecified"):
+            exact_review_candidates.extend(top)
 
-    best = None
-    for v in variants:
-        f = fuzzy_best(v, post_meta, exact, keys, trigram)
-        if f and (best is None or f["adjusted_score"] > best["adjusted_score"]):
-            best = dict(f, variant=v)
-
-    if best:
-        kind = "unmatched"
-        if best["score"] >= 90 and best["margin"] >= 4 and not best["metadata_incomplete"]:
-            kind = "fuzzy_high"
-        elif best["score"] >= 82:
-            kind = "fuzzy_review"
-        best["match_kind"] = kind
-        best["post_year"] = post_meta["year"]
-        best["post_season"] = post_meta["season"]
-        best["post_format"] = post_meta["format"]
-        best.pop("metadata_incomplete", None)
-        if kind != "unmatched":
-            return best
-
-    if ambiguous:
+    if exact_review_candidates:
+        titles = []
+        for cand in exact_review_candidates:
+            if cand["korean"] not in titles:
+                titles.append(cand["korean"])
         return {
-            "match_kind": "ambiguous_exact",
+            "match_kind": "title_exact_review",
             "matched_title": "",
             "matched_alias": "",
             "score": 100.0,
@@ -551,7 +606,39 @@ def match_post(title: str, exact, keys, trigram):
             "matched_year": None,
             "matched_season": None,
             "matched_format": None,
+            "candidate_titles": " | ".join(titles[:12]),
         }
+
+    best = None
+    for v in variants:
+        f = fuzzy_best(v, post_meta, exact, keys, trigram)
+        if f and (best is None or f["adjusted_score"] > best["adjusted_score"]):
+            best = dict(f, variant=v)
+
+    if best:
+        kind = "unmatched"
+        safe_specificity = not best["metadata_incomplete"] and not best["candidate_extra_specific"]
+        if (
+            safe_specificity
+            and best["margin"] >= 4
+            and (
+                best["score"] >= 94
+                or (best["score"] >= 90 and best["explicit_meta_confirmed"])
+            )
+        ):
+            kind = "fuzzy_high"
+        elif best["score"] >= 78:
+            kind = "fuzzy_review"
+        best["match_kind"] = kind
+        best["post_year"] = post_meta["year"]
+        best["post_season"] = post_meta["season"]
+        best["post_format"] = post_meta["format"]
+        best.pop("metadata_incomplete", None)
+        best.pop("candidate_extra_specific", None)
+        best.pop("explicit_meta_confirmed", None)
+        best["candidate_titles"] = ""
+        if kind != "unmatched":
+            return best
 
     return {
         "match_kind": "metadata_conflict" if had_metadata_conflict else "unmatched",
@@ -567,6 +654,7 @@ def match_post(title: str, exact, keys, trigram):
         "matched_year": best["matched_year"] if best else None,
         "matched_season": best["matched_season"] if best else None,
         "matched_format": best["matched_format"] if best else None,
+        "candidate_titles": "",
     }
 
 
@@ -646,7 +734,7 @@ def main():
             "post_id", "post_url", "title", "match_kind", "matched_title",
             "matched_alias", "score", "adjusted_score", "margin", "variant",
             "post_year", "post_season", "post_format",
-            "matched_year", "matched_season", "matched_format",
+            "matched_year", "matched_season", "matched_format", "candidate_titles",
         ]
         w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
         w.writeheader()
@@ -654,16 +742,20 @@ def main():
 
     total = len(report)
     strong = counts["exact"] + counts["fuzzy_high"]
+    title_exact = counts["exact"] + counts["title_exact_review"]
+    review_total = counts["title_exact_review"] + counts["fuzzy_review"]
     print()
     print("=== aniall subtitle match audit ===")
     print(f"crawled posts : {total:,}" + (f" / expected {expected:,}" if expected else ""))
-    print(f"exact         : {counts['exact']:,} ({counts['exact']/total*100:.1f}%)" if total else "exact         : 0")
-    print(f"fuzzy high    : {counts['fuzzy_high']:,} ({counts['fuzzy_high']/total*100:.1f}%)" if total else "fuzzy high    : 0")
-    print(f"fuzzy review  : {counts['fuzzy_review']:,} ({counts['fuzzy_review']/total*100:.1f}%)" if total else "fuzzy review  : 0")
-    print(f"ambiguous     : {counts['ambiguous_exact']:,} ({counts['ambiguous_exact']/total*100:.1f}%)" if total else "ambiguous     : 0")
-    print(f"meta conflict : {counts['metadata_conflict']:,} ({counts['metadata_conflict']/total*100:.1f}%)" if total else "meta conflict : 0")
-    print(f"unmatched     : {counts['unmatched']:,} ({counts['unmatched']/total*100:.1f}%)" if total else "unmatched     : 0")
-    print(f"strong total  : {strong:,} ({strong/total*100:.1f}%)" if total else "strong total  : 0")
+    print(f"exact              : {counts['exact']:,} ({counts['exact']/total*100:.1f}%)" if total else "exact              : 0")
+    print(f"title exact review : {counts['title_exact_review']:,} ({counts['title_exact_review']/total*100:.1f}%)" if total else "title exact review : 0")
+    print(f"fuzzy high         : {counts['fuzzy_high']:,} ({counts['fuzzy_high']/total*100:.1f}%)" if total else "fuzzy high         : 0")
+    print(f"fuzzy review       : {counts['fuzzy_review']:,} ({counts['fuzzy_review']/total*100:.1f}%)" if total else "fuzzy review       : 0")
+    print(f"meta conflict      : {counts['metadata_conflict']:,} ({counts['metadata_conflict']/total*100:.1f}%)" if total else "meta conflict      : 0")
+    print(f"unmatched          : {counts['unmatched']:,} ({counts['unmatched']/total*100:.1f}%)" if total else "unmatched          : 0")
+    print(f"title exact total  : {title_exact:,} ({title_exact/total*100:.1f}%)" if total else "title exact total  : 0")
+    print(f"strong mapped      : {strong:,} ({strong/total*100:.1f}%)" if total else "strong mapped      : 0")
+    print(f"review candidates  : {review_total:,} ({review_total/total*100:.1f}%)" if total else "review candidates  : 0")
     print(f"unique mapped : {len(unique_matched):,} Korean titles")
     if expected and total != expected:
         print(f"WARNING: crawl count differs from site's reported count by {total-expected:+,}.")
