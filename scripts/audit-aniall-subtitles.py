@@ -695,7 +695,13 @@ def match_post(title: str, exact, keys, trigram):
         had_metadata_conflict = had_metadata_conflict or state == "conflict"
         if cand:
             if post_meta["season_range"]:
-                exact_review_candidates.append(cand)
+                # Keep every compatible season row for a multi-season batch;
+                # collapsing this to season 1 would silently lose coverage.
+                exact_review_candidates.extend(
+                    item for item in hits
+                    if not (post_meta["year"] and item["year"] and post_meta["year"] != item["year"])
+                    and not (post_meta["format"] and item["format"] and post_meta["format"] != item["format"])
+                )
                 continue
             return {
                 "match_kind": "exact",
@@ -737,8 +743,17 @@ def match_post(title: str, exact, keys, trigram):
             "matched_year": None,
             "matched_season": None,
             "matched_format": None,
-            "candidate_titles": " | ".join(titles[:12]),
-            "candidate_details": [],
+            "candidate_titles": " | ".join(
+                f'{item["korean"]} ({item["year"] or "?"}; '
+                f'{("S" + str(item["season"])) if item["season"] else "season?"}; '
+                f'{item["format"] or "format?"})'
+                for item in exact_review_candidates[:12]
+            ),
+            "candidate_details": [
+                {"title": item["korean"], "score": 100.0, "year": item["year"],
+                 "season": item["season"], "format": item["format"], "alias": item["alias"]}
+                for item in exact_review_candidates[:12]
+            ],
         }
 
     best = None
