@@ -483,13 +483,14 @@ export default function IframePlayer({
         if (isCancelled) return;
 
         if (data.success) {
+          const needsManualChoice = Boolean(data.needs_manual_subtitle_choice);
           if (data.resolved_title) {
             setResolvedTitle(data.resolved_title);
           }
           if (Array.isArray(data.creators)) {
             setCreators(data.creators);
           }
-          if (Array.isArray(data.subtitles) && data.subtitles.length > 0) {
+          if (Array.isArray(data.subtitles)) {
             const list: SubtitleOption[] = data.subtitles.map((s: any) => ({
               name: s.name,
               format: s.is_ass ? "ASS" : "VTT",
@@ -499,10 +500,13 @@ export default function IframePlayer({
               matchScore: s.matchScore,
               matchedTitle: s.matchedTitle,
               verifiedMatch: s.verifiedMatch,
+              sourceCreatorWebsite: s.sourceCreatorWebsite,
+              sourceMatchedTitle: s.sourceMatchedTitle,
             }));
             setSubtitles(list);
-            setCurrentSubIndex(0);
+            setCurrentSubIndex(needsManualChoice ? -1 : 0);
           }
+          if (needsManualChoice) setIsModalOpen(true);
         }
       } catch (err) {
         console.error("Error fetching subtitles:", err);
@@ -1319,6 +1323,8 @@ export default function IframePlayer({
         episodeNumber={episodeNumber}
         creators={creators}
         currentSubName={subtitles[currentSubIndex]?.name}
+        currentSubSourceCreatorWebsite={subtitles[currentSubIndex]?.sourceCreatorWebsite}
+        currentSubMatchedTitle={subtitles[currentSubIndex]?.sourceMatchedTitle}
         onSelectSubtitle={handleSelectSubtitle}
       />
     </div>
