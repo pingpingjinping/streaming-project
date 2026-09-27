@@ -19,6 +19,9 @@ export interface SubtitleResult {
   is_ass: boolean;
   content: string; // VTT text or raw ASS string
   url?: string;
+  matchScore?: number;
+  matchedTitle?: string;
+  verifiedMatch?: boolean;
 }
 
 export interface CreatorInfo {
@@ -27,6 +30,9 @@ export interface CreatorInfo {
   update_date: string;
   website: string;
   is_current_ep: boolean;
+  matchScore?: number;
+  matchedTitle?: string;
+  verifiedMatch?: boolean;
 }
 
 // Common Korean anime abbreviation mapping
@@ -1466,17 +1472,16 @@ export async function getAnissiaCreators(
   title: string,
   episodeNumber: number,
   timeoutMs = 3500,
-  directAnimeNo?: number | null
+  directAnimeNo?: number | null,
+  referenceTitle = title
 ): Promise<CreatorInfo[]> {
   const results: CreatorInfo[] = [];
   try {
-    let bestAnime: { animeNo: number; subject: string } | null = null;
-    let bestScore = 0;
+    const candidates = new Map<number, { animeNo: number; subject: string; searchScore: number; matchScore?: number; verifiedMatch?: boolean }>();
 
     // 만약 애니시아 animeNo가 직접 전달된 경우 (애니시아 허브 모드) 0.05초 직통 조회
     if (directAnimeNo && directAnimeNo > 0) {
-      bestAnime = { animeNo: directAnimeNo, subject: title };
-      bestScore = 150;
+      candidates.set(directAnimeNo, { animeNo: directAnimeNo, subject: title, searchScore: 150, verifiedMatch: true });
     } else {
       const resolvedTitle = await resolveKoreanTitle(title);
       const targetSeason = parseSeason(resolvedTitle) || parseSeason(title);
@@ -1487,7 +1492,7 @@ export async function getAnissiaCreators(
         }
       }
 
-      // 최대 4개의 스마트 쿼리를 순차/조기종료 방식으로 검색
+      // 여러 애니시아 작품을 모아 점수순으로 비교할 수 있도록 최대 4개 쿼리를 검색
       for (const q of queries.slice(0, 4)) {
         try {
           const url = `https://api.anissia.net/anime/list/0?q=${encodeURIComponent(q)}`;
@@ -1503,52 +1508,40 @@ export async function getAnissiaCreators(
 
           for (const item of content) {
             const sc = scoreAnimeMatch(title, targetSeason, item, resolvedTitle);
-            if (sc > bestScore) {
-              bestScore = sc;
-              bestAnime = item;
+            if (sc >= 50 && !candidates.has(item.animeNo)) {
+              candidates.set(item.animeNo, { ...item, searchScore: sc,
+                matchScore: scoreAnimeMatch(referenceTitle, parseSeason(referenceTitle), item, title) });
             }
-          }
-
-          // 높은 신뢰도(120점 이상)인 경우 추가 쿼리 검색 생략
-          if (bestScore >= 120) {
-            break;
           }
         } catch {}
       }
-
-      // 신뢰도 점수가 50점 미만이면 오매칭(다른 작품 자막) 방지를 위해 제외
-      if (!bestAnime || bestScore < 50) {
-        return results;
-      }
     }
 
-    const capUrl = `https://api.anissia.net/anime/caption/animeNo/${bestAnime.animeNo}`;
-    const capRes = await fetch(capUrl, {
-      headers: HEADERS,
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-
-    if (capRes.ok) {
-      const capJson = await capRes.json();
-      const captions = capJson?.data || [];
-      const seenNames = new Set<string>();
-
-      for (const c of captions) {
-        const name = (c.name || "제작자").trim();
-        if (seenNames.has(name)) continue;
-        seenNames.add(name);
-
-        const epStr = String(c.episode || "");
-        const isCurrent = epStr.includes(String(episodeNumber));
-        results.push({
-          name,
-          episode: epStr,
-          update_date: (c.updDt || "").replace("T", " ").slice(0, 16),
-          website: (c.website || "").trim(),
-          is_current_ep: isCurrent,
+    const ranked = [...candidates.values()].sort((a, b) =>
+      (b.matchScore ?? b.searchScore) - (a.matchScore ?? a.searchScore));
+    const captionLists = await Promise.all(ranked.slice(0, 4).map(async (anime) => {
+      try {
+        const capRes = await fetch(`https://api.anissia.net/anime/caption/animeNo/${anime.animeNo}`, {
+          headers: HEADERS, signal: AbortSignal.timeout(timeoutMs),
         });
-      }
-    }
+        if (!capRes.ok) return [];
+        const capJson = await capRes.json();
+        const seenNames = new Set<string>();
+        return (Array.isArray(capJson?.data) ? capJson.data : []).flatMap((c: any) => {
+          const name = String(c.name || "제작자").trim();
+          if (seenNames.has(name)) return [];
+          seenNames.add(name);
+          const epStr = String(c.episode || "");
+          return [{ name, episode: epStr,
+            update_date: String(c.updDt || "").replace("T", " ").slice(0, 16),
+            website: String(c.website || "").trim(),
+            is_current_ep: epStr.includes(String(episodeNumber)),
+            matchedTitle: anime.subject, matchScore: anime.matchScore,
+            verifiedMatch: anime.verifiedMatch }];
+        });
+      } catch { return []; }
+    }));
+    results.push(...captionLists.flat());
   } catch (e) {
     console.error("[getAnissiaCreators error]:", e);
   }
@@ -1560,7 +1553,8 @@ export async function searchAllSubtitlesParallel(
   title: string,
   episodeNumber: number,
   maxTotalTimeMs = 45000,
-  directAnimeNo?: number | null
+  directAnimeNo?: number | null,
+  referenceTitle = title
 ): Promise<{ subtitles: SubtitleResult[]; creators: CreatorInfo[] }> {
   // Create an overall timeout promise that resolves at 13 seconds
   let timeoutHandle: NodeJS.Timeout;
@@ -1574,7 +1568,7 @@ export async function searchAllSubtitlesParallel(
 
     // 1. Fetch Anissia creators and Kairan search concurrently
     const [anissiaCreators, kairanSub] = await Promise.all([
-      getAnissiaCreators(targetTitle, episodeNumber, 3500, directAnimeNo),
+      getAnissiaCreators(targetTitle, episodeNumber, 3500, directAnimeNo, referenceTitle),
       findKairanSubtitle(targetTitle, episodeNumber, 3500),
     ]);
 
@@ -1588,13 +1582,25 @@ export async function searchAllSubtitlesParallel(
       (c) => c.website && c.website.startsWith("http")
     );
 
-    // Limit to top 4 creators to avoid excessive concurrency
-    const topCreators = candidateCreators.slice(0, 4);
+    // Spread downloads across distinct candidate titles before taking second creators.
+    const firstPerTitle = new Set<string>();
+    const topCreators = [
+      ...candidateCreators.filter((c) => {
+        const key = c.matchedTitle || c.name;
+        if (firstPerTitle.has(key)) return false;
+        firstPerTitle.add(key);
+        return true;
+      }),
+      ...candidateCreators.filter((c) => c.matchedTitle &&
+        candidateCreators.find((first) => first.matchedTitle === c.matchedTitle) !== c),
+    ].slice(0, 4);
 
     // 3. Parallel fetch creator subtitles with individual 3.5s timeouts
-    const creatorSubPromises = topCreators.map((c) =>
-      fetchCreatorSubtitle(c.name, c.website, targetTitle, episodeNumber, 10000)
-    );
+    const creatorSubPromises = topCreators.map(async (c) => {
+      const subtitle = await fetchCreatorSubtitle(c.name, c.website, targetTitle, episodeNumber, 10000);
+      return subtitle ? { ...subtitle, matchScore: c.matchScore,
+        matchedTitle: c.matchedTitle, verifiedMatch: c.verifiedMatch } : null;
+    });
 
     const settled = await Promise.allSettled(creatorSubPromises);
     for (const s of settled) {
@@ -1602,6 +1608,10 @@ export async function searchAllSubtitlesParallel(
         collectedSubs.push(s.value);
       }
     }
+    collectedSubs.sort((a, b) => {
+      if (a.verifiedMatch !== b.verifiedMatch) return a.verifiedMatch ? -1 : 1;
+      return (b.matchScore ?? -Infinity) - (a.matchScore ?? -Infinity) || 0;
+    });
 
     return {
       subtitles: collectedSubs,

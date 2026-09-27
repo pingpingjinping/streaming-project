@@ -23,6 +23,9 @@ export interface CreatorInfo {
   update_date: string;
   website: string;
   is_current_ep: boolean;
+  matchScore?: number;
+  matchedTitle?: string;
+  verifiedMatch?: boolean;
 }
 
 export interface SubtitleOption {
@@ -31,6 +34,9 @@ export interface SubtitleOption {
   is_ass: boolean;
   content: string;
   url?: string;
+  matchScore?: number;
+  matchedTitle?: string;
+  verifiedMatch?: boolean;
 }
 
 interface SubtitleSelectModalProps {
@@ -142,7 +148,7 @@ export default function SubtitleSelectModal({
 
     try {
       const res = await fetch(
-        `/api/anime/subtitles?title=${encodeURIComponent(keyword)}&ep=${searchEp}&animeId=${encodeURIComponent(animeId)}`
+        `/api/anime/subtitles?title=${encodeURIComponent(keyword)}&ep=${searchEp}&animeId=${encodeURIComponent(animeId)}&referenceTitle=${encodeURIComponent(animeTitle)}`
       );
       const data = await res.json();
 
@@ -156,9 +162,15 @@ export default function SubtitleSelectModal({
         is_ass: Boolean(s.is_ass),
         content: s.content || "",
         url: s.url || "",
+        matchScore: s.matchScore,
+        matchedTitle: s.matchedTitle,
+        verifiedMatch: s.verifiedMatch,
       }));
 
-      setSearchResults(subs);
+      setSearchResults(subs.sort((a, b) => {
+        if (a.verifiedMatch !== b.verifiedMatch) return a.verifiedMatch ? -1 : 1;
+        return (b.matchScore ?? -Infinity) - (a.matchScore ?? -Infinity) || 0;
+      }));
       if (subs.length === 0) {
         setSearchError("검색된 자막이 없습니다. 다른 제목(예: 한국어 정식 방영명)으로 검색해 보세요.");
       }
@@ -318,6 +330,7 @@ export default function SubtitleSelectModal({
                 </div>
               ) : (
                 <div className="space-y-2.5">
+                  <p className="text-[11px] text-slate-400">제목 매칭 점수순 · 점수는 작품 제목과 시즌 비교 기준이며 자막 싱크를 뜻하지 않습니다.</p>
                   {creators.map((c, idx) => {
                     const isCurrent = currentSubName?.includes(c.name);
                     const isLoading = loadingCreator === c.name;
@@ -336,8 +349,14 @@ export default function SubtitleSelectModal({
                         }`}
                       >
                         <div className="flex flex-col gap-1">
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <span className="font-bold text-white text-sm">{c.name}</span>
+                            {c.matchedTitle && <span className="text-xs font-semibold text-slate-300">· {c.matchedTitle}</span>}
+                            {c.verifiedMatch ? (
+                              <span className="rounded-md bg-emerald-500/20 px-2 py-0.5 text-[11px] font-bold text-emerald-300">DB 연결 확인</span>
+                            ) : typeof c.matchScore === "number" ? (
+                              <span className="rounded-md bg-sky-500/20 px-2 py-0.5 text-[11px] font-bold text-sky-300">제목 매칭 {c.matchScore}점</span>
+                            ) : null}
                             {isAss && (
                               <span className="flex items-center gap-1 rounded-md bg-purple-500/20 border border-purple-500/40 px-2 py-0.5 text-[11px] font-bold text-purple-300">
                                 <Wand2 className="h-3 w-3" />
@@ -439,6 +458,11 @@ export default function SubtitleSelectModal({
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-2">
                         <span className="font-bold text-white text-xs">{sub.name}</span>
+                        {sub.verifiedMatch ? (
+                          <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">DB 연결 확인</span>
+                        ) : typeof sub.matchScore === "number" ? (
+                          <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">제목 매칭 {sub.matchScore}점</span>
+                        ) : null}
                         <span
                           className={`rounded px-1.5 py-0.5 text-[10px] font-extrabold ${
                             sub.is_ass
@@ -450,7 +474,7 @@ export default function SubtitleSelectModal({
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-400 line-clamp-1">
-                        자막 내용 {sub.content?.length || 0}자 포함
+                        {sub.matchedTitle ? `애니시아: ${sub.matchedTitle} · ` : ""}자막 내용 {sub.content?.length || 0}자 포함
                       </p>
                     </div>
 

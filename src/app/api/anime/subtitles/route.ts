@@ -19,6 +19,7 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = new URL(request.url);
   const title = searchParams.get("title")?.trim();
+  const referenceTitle = searchParams.get("referenceTitle")?.trim();
   const ep = parseInt(searchParams.get("ep") || "1", 10) || 1;
   const animeIdParam = searchParams.get("animeId") || searchParams.get("animeNo") || "";
   let directAnimeNo: number | null = null;
@@ -55,6 +56,8 @@ export async function GET(request: NextRequest) {
     }
     const resolvedTitle = await resolveKoreanTitle(title);
     const searchTarget = reanimeMatch?.koreanTitle || resolvedTitle || title;
+    const comparisonTitle = reanimeMatch?.koreanTitle ||
+      (referenceTitle ? await resolveKoreanTitle(referenceTitle) || referenceTitle : searchTarget);
 
     // 0순위: 애니시아에서 이미 파악된 자막 블로그 링크가 직통으로 넘어온 경우 (초고속 직통 모드)
     if (website && website.startsWith("http")) {
@@ -85,7 +88,7 @@ export async function GET(request: NextRequest) {
     }
 
     // 13초 타임아웃 방어 가드 적용 (directAnimeNo 지원)
-    const result = await searchAllSubtitlesParallel(searchTarget, ep, 45000, directAnimeNo);
+    const result = await searchAllSubtitlesParallel(searchTarget, ep, 45000, directAnimeNo, comparisonTitle);
 
     // HTML 등 비정상 자막 필터링
     const validSubtitles = (result.subtitles || []).filter((s) => {
