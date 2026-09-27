@@ -59,7 +59,8 @@ TECH_WORDS = (
     "multi-subs", "batch", "at-x", "bs11", "tx ", "cs", "uhd", "hdr",
     "dts", "mkv", "h264", "h265", "yuv", "raws", "subplease", "bd-box",
     "4k", "ma10p", "dvdrip", "dvd remux", "multi", "dual", "japanese",
-    "remaster", "hdリマスター", "tokuten", "rartv",
+    "remaster", "hd리마스터", "tokuten", "rartv",
+    "oad", "rework ver",
 )
 
 
@@ -109,7 +110,7 @@ def looks_technical(chunk: str) -> bool:
     low = norm_space(chunk)
     if any(x in low for x in TECH_WORDS):
         return True
-    if re.search(r"\b(?:tv|ova|ona|sp|movie)\s*(?:\+|$)", low):
+    if re.search(r"\b(?:tv|ova|ona|sp|oad|movie)\s*(?:\+|$)", low):
         return True
     if re.search(r"\b(?:s\s*-?\s*\d{1,2}|season\s*\d+)\b", low):
         return True
@@ -236,7 +237,7 @@ def title_variants(raw: str) -> list[str]:
     # Normalize away format words after preserving them in extract_meta().
     s = re.sub(r"\bmovie(?:\s*0*\d+)?\b", " ", s, flags=re.I)
     s = re.sub(r"극장판", " ", s)
-    s = re.sub(r"\b(?:tv|ova|ona|sp)\b", " ", s, flags=re.I)
+    s = re.sub(r"\b(?:tv|ova|ona|sp|oad)\b", " ", s, flags=re.I)
 
     # Naked encoding/release tail: "1080p x265 FLAC ..." etc.
     s = re.sub(
@@ -283,7 +284,9 @@ def title_variants(raw: str) -> list[str]:
     m_alt = re.match(r"^(.+?[가-힣ぁ-んァ-ン一-龯][^-]*?)\s+-\s*(.+)$", s)
     if m_alt:
         add(m_alt.group(1))
-        add(m_alt.group(2).strip(" -"))
+        alternate = m_alt.group(2).strip(" -")
+        if not looks_technical(alternate):
+            add(alternate)
 
     # Bracketed multilingual posts often carry Japanese / English / Korean
     # titles in separate [] chunks. Add each non-technical title chunk.
