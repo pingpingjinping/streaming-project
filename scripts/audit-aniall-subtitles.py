@@ -136,6 +136,7 @@ def extract_meta(raw: str) -> dict:
     season_patterns = (
         r"\bseason\s*0*(\d{1,2})\b",
         r"\b0*(\d{1,2})(?:st|nd|rd|th)\s+season\b",
+        r"\b0*(\d{1,2})(?:st|nd|rd|th)\s+(?:attack|cour|stage)\b",
         r"\b0*(\d{1,2})(?:st|nd|rd|th)\b(?=\s*(?:$|[-\[(]|ep\s*\d|\d{1,3}\b))",
         r"\bs\s*-?\s*0*(\d{1,2})\b",
         r"시즌\s*0*(\d{1,2})",
@@ -205,6 +206,7 @@ def title_variants(raw: str) -> list[str]:
         s = re.sub(rf"(?<!\d){meta['year']}(?:년)?(?!\d)", " ", s)
     s = re.sub(r"\bseason\s*0*\d{1,2}\b", " ", s, flags=re.I)
     s = re.sub(r"\b0*\d{1,2}(?:st|nd|rd|th)\s+season\b", " ", s, flags=re.I)
+    s = re.sub(r"\b0*\d{1,2}(?:st|nd|rd|th)\s+(?:attack|cour|stage)\b", " ", s, flags=re.I)
     s = re.sub(r"\b0*\d{1,2}(?:st|nd|rd|th)\b(?=\s*(?:$|[-\[(]|ep\s*\d|\d{1,3}\b))", " ", s, flags=re.I)
     s = re.sub(r"\bpart\s*0*\d{1,2}\b", " ", s, flags=re.I)
     s = re.sub(r"\bs\s*-?\s*0*\d{1,2}\b", " ", s, flags=re.I)
@@ -606,6 +608,8 @@ def fuzzy_best(query: str, post_meta: dict, exact, keys, trigram):
         )
         or (best["format"] and not post_meta["format"])
     )
+    candidate_numbers = title_number_tokens(best["alias"])
+    query_extra_numbers = bool(query_numbers - candidate_numbers)
     best_key = compact_key(best["alias"])
     shorter_containment = bool(
         best_key and best_key in q and len(best_key) / max(1, len(q)) < 0.92
@@ -629,6 +633,7 @@ def fuzzy_best(query: str, post_meta: dict, exact, keys, trigram):
         "margin": round((best_adjusted - second_adjusted) * 100, 1),
         "metadata_incomplete": metadata_incomplete,
         "candidate_extra_specific": candidate_extra_specific,
+        "query_extra_numbers": query_extra_numbers,
         "shorter_containment": shorter_containment,
         "explicit_meta_confirmed": explicit_meta_confirmed,
     }
@@ -699,6 +704,7 @@ def match_post(title: str, exact, keys, trigram):
         safe_specificity = (
             not best["metadata_incomplete"]
             and not best["candidate_extra_specific"]
+            and not best["query_extra_numbers"]
             and not best["shorter_containment"]
         )
         if (
@@ -718,6 +724,7 @@ def match_post(title: str, exact, keys, trigram):
         best["post_format"] = post_meta["format"]
         best.pop("metadata_incomplete", None)
         best.pop("candidate_extra_specific", None)
+        best.pop("query_extra_numbers", None)
         best.pop("shorter_containment", None)
         best.pop("explicit_meta_confirmed", None)
         best["candidate_titles"] = ""
@@ -759,6 +766,8 @@ def main():
     raw_path = out_dir / "aniall_posts.json"
     json_path = out_dir / "aniall_match_report.json"
     csv_path = out_dir / "aniall_match_report.csv"
+    unmatched_json_path = out_dir / "aniall_unmatched.json"
+    unmatched_csv_path = out_dir / "aniall_unmatched.csv"
 
     print("[1/3] Reading reviewed four-source DB...")
     db = sqlite3.connect(str(db_path))
@@ -824,6 +833,19 @@ def main():
         w.writeheader()
         w.writerows(report)
 
+    unmatched_rows = sorted(
+        (row for row in report if row["match_kind"] == "unmatched"),
+        key=lambda row: (-(row.get("score") or 0), -(row.get("adjusted_score") or 0), row["title"]),
+    )
+    unmatched_json_path.write_text(
+        json.dumps(unmatched_rows, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    with unmatched_csv_path.open("w", encoding="utf-8-sig", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(unmatched_rows)
+
     total = len(report)
     strong = counts["exact"] + counts["fuzzy_high"]
     title_exact = counts["exact"] + counts["title_exact_review"]
@@ -847,6 +869,8 @@ def main():
     print(f"raw index     : {raw_path}")
     print(f"JSON report   : {json_path}")
     print(f"CSV report    : {csv_path}")
+    print(f"unmatched JSON: {unmatched_json_path}")
+    print(f"unmatched CSV : {unmatched_csv_path}")
 
 
 if __name__ == "__main__":
