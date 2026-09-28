@@ -59,10 +59,15 @@ stream.write("""WITH resolved AS (
      NULLIF(s.candidate_title,'')
    ) AS canonical_title
  FROM aniall_match_stage s
+), deduplicated AS (
+ SELECT DISTINCT ON (post_id, canonical_title, COALESCE(source,''), COALESCE(source_id,'')) *
+ FROM resolved
+ WHERE canonical_title IS NOT NULL AND canonical_title <> ''
+ ORDER BY post_id, canonical_title, COALESCE(source,''), COALESCE(source_id,''), confidence DESC, candidate_title
 )
 INSERT INTO anime_aniall_matches (post_id,canonical_title,blog_title,post_url,confidence,review_status,evidence,ref_source,ref_source_id)
 SELECT post_id,canonical_title,blog_title,post_url,confidence,review_status,evidence,COALESCE(source,''),COALESCE(source_id,'')
-FROM resolved WHERE canonical_title IS NOT NULL AND canonical_title <> ''
+FROM deduplicated
 ON CONFLICT (post_id,canonical_title,ref_source,ref_source_id) DO UPDATE SET
  blog_title=EXCLUDED.blog_title, post_url=EXCLUDED.post_url, confidence=EXCLUDED.confidence,
  review_status=EXCLUDED.review_status, evidence=EXCLUDED.evidence;

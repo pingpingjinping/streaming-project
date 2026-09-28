@@ -31,6 +31,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# Persistent subtitle files and the AniAll attachment archive corpus
+/subtitle-data/*
+!/subtitle-data/.gitkeep
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

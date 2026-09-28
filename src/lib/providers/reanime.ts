@@ -9,7 +9,11 @@ import {
   ServerSource,
 } from "./types";
 import { REANIME_PREFIX, stripReanimeId, toReanimeId } from "./ids";
-import { findReanimeSearchTitles, getBundledReanimeMatch } from "@/lib/reanimeMatches";
+import {
+  findReanimeSearchTitles,
+  findReanimeSearchTitlesFromDb,
+  getBundledReanimeMatch,
+} from "@/lib/reanimeMatches";
 import { getReanimeBaseUrl, DEFAULT_REANIME_URL } from "@/lib/db";
 
 export const BASE_URL = DEFAULT_REANIME_URL;
@@ -399,9 +403,13 @@ export async function searchAnime(keyword: string, page = 1): Promise<AnimeListR
   const offset = Math.max(0, (page - 1) * limit);
 
   const searchTerms: string[] = [];
+  const catalogSearchTerms = [...new Set([
+    ...findReanimeSearchTitles(trimmed),
+    ...await findReanimeSearchTitlesFromDb(trimmed),
+  ])];
 
   // Stable IDs from the four-source catalog supply the original ReAnime title.
-  searchTerms.push(...findReanimeSearchTitles(trimmed));
+  searchTerms.push(...catalogSearchTerms);
 
   // 한글 검색어인 경우 애니시아(Anissia)를 통해 원제(일본어)를 최우선 검색어로 배치
   if (/[가-힣]/.test(trimmed)) {
@@ -438,6 +446,46 @@ export async function searchAnime(keyword: string, page = 1): Promise<AnimeListR
 
   const baseUrl = await getBaseUrl();
   const headers = { ...REANIME_HEADERS, Referer: `${baseUrl}/` };
+
+  // Partial Korean terms can map to several reviewed catalog rows. Search their
+  // original ReAnime titles and merge the hits instead of stopping at the first,
+  // often unrelated, result for a broad word such as "슬라임".
+  if (catalogSearchTerms.length > 0) {
+    const mappedResponses = await Promise.all(catalogSearchTerms.slice(0, 6).map(async (term) => {
+      try {
+        const json = await fetchReanimeJson<any>(
+          `${baseUrl}/api/v1/search?q=${encodeURIComponent(term)}&offset=${offset}&limit=${limit}`,
+          headers
+        );
+        return json && Array.isArray(json.results) ? json : null;
+      } catch {
+        return null;
+      }
+    }));
+    const seenIds = new Set<string>();
+    const mergedResults: any[] = [];
+    let total = 0;
+    for (const response of mappedResponses) {
+      if (!response) continue;
+      total = Math.max(total, Number(response.total || 0));
+      for (const result of response.results) {
+        const id = String(result.anime_id || "");
+        if (!id || seenIds.has(id)) continue;
+        seenIds.add(id);
+        mergedResults.push(result);
+      }
+    }
+    if (mergedResults.length > 0) {
+      return {
+        items: mergedResults.slice(0, limit).map(mapRawItemToAnimeListItem),
+        page,
+        has_next: mergedResults.length > limit || mappedResponses.some((response) =>
+          Boolean(response && offset + (response.results?.length || 0) < Number(response.total || 0))
+        ),
+        total_pages: total > 0 ? Math.ceil(total / limit) : 1,
+      };
+    }
+  }
 
   // 순차 검색 시도 (결과가 발견되면 페이징 메타데이터와 함께 반환)
   for (const term of searchTerms) {

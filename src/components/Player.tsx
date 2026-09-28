@@ -35,6 +35,7 @@ import PlayerSettingsModal, {
   saveUserSettingsToDb,
   DEFAULT_PLAYER_SETTINGS,
 } from "./PlayerSettingsModal";
+import SubtitleSelectModal, { SubtitleOption } from "./SubtitleSelectModal";
 import IframePlayer from "./IframePlayer";
 import { isReanimeId } from "@/lib/providers/ids";
 import type { ServerSource } from "@/lib/providers/types";
@@ -100,6 +101,7 @@ interface SubtitleItem {
   sourceCreatorWebsite?: string;
   sourceMatchedTitle?: string;
   sourceProvider?: "aniall" | "anissia";
+  isCached?: boolean;
 }
 
 const creatorIdentity = (creator: CreatorInfo) => `${creator.website}\n${creator.matchedTitle || ""}`;
@@ -176,6 +178,7 @@ export default function Player(props: PlayerProps) {
   // Hybrid PiP Refs
   const currentAssContentRef = useRef<string | null>(null);
   const currentSubRef = useRef<SubtitleItem | null>(null);
+  const subtitleCacheProgressRef = useRef<{ key: string; seconds: number; lastTime: number | null; saving: boolean; saved: boolean }>({ key: "", seconds: 0, lastTime: null, saving: false, saved: false });
   const pendingSubtitleRef = useRef<SubtitleItem | null>(null);
   const applySubtitleRef = useRef<((sub: SubtitleItem | null, offset?: number) => void) | null>(null);
   const syncSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -587,6 +590,7 @@ export default function Player(props: PlayerProps) {
   const [needsManualSubtitleChoice, setNeedsManualSubtitleChoice] = useState(false);
   const [creators, setCreators] = useState<CreatorInfo[]>([]);
   const [loadingCreatorName, setLoadingCreatorName] = useState<string | null>(null);
+  const [isSubtitleFinderOpen, setIsSubtitleFinderOpen] = useState(false);
   const [currentSyncOffset, setCurrentSyncOffset] = useState<number>(0.0);
   const [currentSubSize, setCurrentSubSize] = useState<number>(() => {
     if (typeof window !== "undefined") {
@@ -1722,7 +1726,7 @@ export default function Player(props: PlayerProps) {
             ep: episodeToSave,
             syncOffset: offset,
             subtitleName: currentSub?.name || "",
-            subtitleUrl: currentSub?.url || "",
+            subtitleUrl: currentSub?.sourceCreatorWebsite || currentSub?.url || "",
           }),
         }).catch((err) => console.error("Failed to save episode subtitle sync:", err));
       }, 500);
@@ -1969,6 +1973,7 @@ export default function Player(props: PlayerProps) {
           matchedTitle: creator.matchedTitle,
           sourceProvider: creator.sourceProvider,
           episodeNumber: currentEpRef.current,
+          creatorEpisode: creator.episode,
         }),
       });
       const data = await res.json();
@@ -2046,6 +2051,26 @@ export default function Player(props: PlayerProps) {
     } finally {
       setLoadingCreatorName(null);
     }
+  };
+
+  const handleSelectFoundSubtitle = (option: SubtitleOption) => {
+    const subtitle: SubtitleItem = {
+      name: option.name,
+      format: option.format,
+      is_ass: option.is_ass,
+      content: option.content,
+      url: option.url,
+      sourceCreatorWebsite: option.sourceCreatorWebsite,
+      sourceMatchedTitle: option.sourceMatchedTitle || option.matchedTitle,
+      sourceProvider: option.sourceProvider,
+      isCached: option.isCached,
+    };
+    const next = [subtitle, ...subs.filter((item) => item.name !== subtitle.name)];
+    setSubs(next);
+    setSelectedSubIndex(0);
+    setNeedsManualSubtitleChoice(false);
+    applySubtitle(subtitle, currentSyncOffset);
+    refreshSubtitleSettings(next, 0);
   };
 
   const autoNextRef = useRef(autoNextEnabled);
@@ -3146,6 +3171,45 @@ export default function Player(props: PlayerProps) {
           const dur = art.duration || art.template?.$video?.duration || 0;
           const curSaveKey = getSaveKey(currentEpRef.current);
 
+          const selectedSubtitle = currentSubRef.current;
+          const sourceUrl = selectedSubtitle?.sourceCreatorWebsite || selectedSubtitle?.url || "";
+          const cacheKey = selectedSubtitle && !selectedSubtitle.isCached && selectedSubtitle.sourceProvider &&
+            /^https?:\/\//i.test(sourceUrl) && selectedSubtitle.content
+            ? `${animeId}:${currentEpRef.current}:${selectedSubtitle.sourceProvider}:${sourceUrl}:${selectedSubtitle.sourceMatchedTitle || ""}`
+            : "";
+          const progress = subtitleCacheProgressRef.current;
+          if (progress.key !== cacheKey) {
+            subtitleCacheProgressRef.current = { key: cacheKey, seconds: 0, lastTime: null, saving: false, saved: false };
+          }
+          const cacheProgress = subtitleCacheProgressRef.current;
+          if (cacheKey && !art.paused && !art.ended) {
+            const delta = cacheProgress.lastTime === null ? 0 : cur - cacheProgress.lastTime;
+            if (delta > 0 && delta <= 4) cacheProgress.seconds += delta;
+            cacheProgress.lastTime = cur;
+            if (cacheProgress.seconds >= 60 && !cacheProgress.saving && !cacheProgress.saved) {
+              cacheProgress.saving = true;
+              fetch("/api/anime/subtitle-cache", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  animeId, episodeNumber: currentEpRef.current, mediaSeconds: cacheProgress.seconds,
+                  sourceProvider: selectedSubtitle!.sourceProvider, sourceUrl,
+                  matchedTitle: selectedSubtitle!.sourceMatchedTitle || "",
+                  filename: selectedSubtitle!.name, format: selectedSubtitle!.format,
+                  content: selectedSubtitle!.content,
+                }),
+              }).then((response) => {
+                if (!response.ok) throw new Error(`Subtitle cache returned ${response.status}`);
+                cacheProgress.saved = true;
+                if (artRef.current) artRef.current.notice.show = "자막을 1분 이상 재생해 Pi에 저장했습니다. 다음 재생부터 저장본을 사용합니다.";
+              }).catch((error) => {
+                console.error("Failed to cache verified subtitle:", error);
+              }).finally(() => { cacheProgress.saving = false; });
+            }
+          } else {
+            cacheProgress.lastTime = null;
+          }
+
           if (cur > 2 && !art.ended) {
             const completed = isPlaybackCompleted(cur, dur);
             if (completed) {
@@ -3386,6 +3450,7 @@ export default function Player(props: PlayerProps) {
           sourceCreatorWebsite: s.sourceCreatorWebsite,
           sourceMatchedTitle: s.sourceMatchedTitle,
           sourceProvider: s.sourceProvider,
+          isCached: Boolean(s.isCached),
         }));
 
         const combined = [...fetchedList, ...newSubs];
@@ -4113,6 +4178,10 @@ export default function Player(props: PlayerProps) {
 
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-400 mr-1">총 {subs.length}개 발견</span>
+            <button type="button" onClick={() => setIsSubtitleFinderOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-200 transition hover:bg-amber-500/20">
+              <Search className="h-3.5 w-3.5" /> 자막 찾기
+            </button>
             <input type="file" ref={uploadFileInputRef} accept=".ass,.ssa,.smi,.srt,.vtt,.zip"
               onChange={handleUploadSubFile} className="hidden" />
             <button type="button" disabled={uploadingSub} onClick={() => uploadFileInputRef.current?.click()}
@@ -4380,6 +4449,18 @@ export default function Player(props: PlayerProps) {
       )}
 
       {/* Player Settings Modal */}
+      <SubtitleSelectModal
+        isOpen={isSubtitleFinderOpen}
+        onClose={() => setIsSubtitleFinderOpen(false)}
+        animeId={animeId}
+        animeTitle={animeTitle}
+        episodeNumber={currentEp}
+        creators={creators}
+        currentSubName={currentSubRef.current?.name}
+        currentSubSourceCreatorWebsite={currentSubRef.current?.sourceCreatorWebsite}
+        currentSubMatchedTitle={currentSubRef.current?.sourceMatchedTitle}
+        onSelectSubtitle={handleSelectFoundSubtitle}
+      />
       <PlayerSettingsModal
         isOpen={isSettingsModalOpen}
         onClose={() => setIsSettingsModalOpen(false)}

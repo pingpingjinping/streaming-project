@@ -41,6 +41,7 @@ export interface SubtitleOption {
   sourceCreatorWebsite?: string;
   sourceMatchedTitle?: string;
   sourceProvider?: "aniall" | "anissia";
+  isCached?: boolean;
 }
 
 const creatorKey = (creator: CreatorInfo) => `${creator.website}\n${creator.matchedTitle || ""}`;
@@ -78,6 +79,7 @@ export default function SubtitleSelectModal({
   const [searchEp, setSearchEp] = useState(episodeNumber || 1);
   const [searchResults, setSearchResults] = useState<SubtitleOption[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [isSearchingLocal, setIsSearchingLocal] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
 
   // Creator download states
@@ -123,6 +125,7 @@ export default function SubtitleSelectModal({
           title: searchKeyword || animeTitle,
           matchedTitle: creator.matchedTitle,
           episodeNumber: episodeNumber,
+          creatorEpisode: creator.episode,
           sourceProvider: creator.sourceProvider,
         }),
       });
@@ -179,9 +182,12 @@ export default function SubtitleSelectModal({
         content: s.content || "",
         url: s.url || "",
         matchScore: s.matchScore,
-        matchedTitle: s.matchedTitle,
+        matchedTitle: s.matchedTitle || s.sourceMatchedTitle,
         verifiedMatch: s.verifiedMatch,
         sourceProvider: s.sourceProvider,
+        sourceCreatorWebsite: s.sourceCreatorWebsite,
+        sourceMatchedTitle: s.sourceMatchedTitle,
+        isCached: Boolean(s.isCached),
       }));
 
       // The server has already grouped these in the configured provider order.
@@ -193,6 +199,40 @@ export default function SubtitleSelectModal({
       setSearchError(err.message || "자막을 검색하는 중 오류가 발생했습니다.");
     } finally {
       setIsSearching(false);
+    }
+  };
+
+  const handleLocalSearch = async () => {
+    const keyword = searchKeyword.trim();
+    if (!keyword) return;
+    setIsSearchingLocal(true);
+    setSearchError(null);
+    setSearchResults([]);
+    try {
+      const res = await fetch(
+        `/api/anime/subtitles/local?title=${encodeURIComponent(keyword)}&ep=${searchEp}&animeId=${encodeURIComponent(animeId)}`
+      );
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.message || "로컬 자막 검색 실패");
+      const subs: SubtitleOption[] = (data.subtitles || []).map((s: any) => ({
+        name: s.name,
+        format: s.is_ass ? "ASS" : "VTT",
+        is_ass: Boolean(s.is_ass),
+        content: s.content || "",
+        url: s.url || "",
+        matchScore: s.matchScore,
+        matchedTitle: s.matchedTitle || s.sourceMatchedTitle,
+        verifiedMatch: s.verifiedMatch,
+        sourceProvider: s.sourceProvider,
+        sourceCreatorWebsite: s.sourceCreatorWebsite,
+        sourceMatchedTitle: s.sourceMatchedTitle,
+      }));
+      setSearchResults(subs);
+      if (subs.length === 0) setSearchError("Pi의 로컬 보관함에서 해당 회차 자막을 찾지 못했어.");
+    } catch (err: any) {
+      setSearchError(err.message || "로컬 자막을 검색하는 중 오류가 발생했습니다.");
+    } finally {
+      setIsSearchingLocal(false);
     }
   };
 
@@ -440,7 +480,7 @@ export default function SubtitleSelectModal({
           {/* Tab 2: Manual Title Search */}
           {activeTab === "search" && (
             <div className="space-y-4">
-              <form onSubmit={handleSearch} className="flex gap-2">
+              <form onSubmit={handleSearch} className="flex flex-wrap gap-2">
                 <input
                   type="text"
                   value={searchKeyword}
@@ -457,11 +497,20 @@ export default function SubtitleSelectModal({
                 />
                 <button
                   type="submit"
-                  disabled={isSearching}
+                  disabled={isSearching || isSearchingLocal}
                   className="flex items-center gap-1.5 rounded-xl bg-purple-600 px-5 py-2.5 text-xs font-bold text-white shadow-lg shadow-purple-600/30 transition hover:bg-purple-500 disabled:opacity-50"
                 >
                   {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                  검색
+                  온라인 검색
+                </button>
+                <button
+                  type="button"
+                  onClick={handleLocalSearch}
+                  disabled={isSearching || isSearchingLocal}
+                  className="flex items-center gap-1.5 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-xs font-bold text-amber-200 transition hover:bg-amber-500/20 disabled:opacity-50"
+                >
+                  {isSearchingLocal ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                  Pi 로컬 검색
                 </button>
               </form>
 
@@ -498,7 +547,7 @@ export default function SubtitleSelectModal({
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-400 line-clamp-1">
-                        {sub.matchedTitle ? `애니시아: ${sub.matchedTitle} · ` : ""}자막 내용 {sub.content?.length || 0}자 포함
+                        {sub.matchedTitle ? `${sub.sourceProvider === "aniall" ? "DB 작품명" : "애니시아"}: ${sub.matchedTitle} · ` : ""}자막 내용 {sub.content?.length || 0}자 포함
                       </p>
                     </div>
 

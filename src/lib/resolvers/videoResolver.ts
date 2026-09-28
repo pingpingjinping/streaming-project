@@ -117,7 +117,8 @@ export async function resolveAnissiaStream(
   anissiaId: number,
   episodeNumber: number,
   title?: string,
-  originalTitle?: string
+  originalTitle?: string,
+  requestedSource?: "rean" | "linkkf" | "ohli24"
 ): Promise<EpisodeStreamInfo | null> {
   const serverSources: ServerSource[] = [];
 
@@ -169,6 +170,7 @@ export async function resolveAnissiaStream(
   // Step 2: 1순위 ReAnime 1080p 고화질 탐색
   // ==========================================================
   try {
+    if (!requestedSource || requestedSource === "rean") {
     let reanimeId = cachedReanimeId;
 
     // 캐시된 ID가 있다면 해당 회차가 실제로 존재하는지 검증
@@ -243,6 +245,7 @@ export async function resolveAnissiaStream(
             serverSources.push({
               label: "ReAnime 1080p (고화질)",
               player_url: epItem.watch_url,
+              id: "rean",
             });
 
             // 실제로 유효한 스트림을 획득했을 때만 DB에 영구 캐싱
@@ -259,6 +262,7 @@ export async function resolveAnissiaStream(
         }
       }
     }
+    }
   } catch (err) {
     console.warn("[videoResolver] ReAnime stream attempt failed:", err);
   }
@@ -267,6 +271,7 @@ export async function resolveAnissiaStream(
   // Step 3: 2순위 Linkkf 자체자막 스트림 폴백
   // ==========================================================
   try {
+    if (!requestedSource || requestedSource === "linkkf") {
     let linkkfId = cachedLinkkfId;
 
     if (!linkkfId && korTitle) {
@@ -291,6 +296,7 @@ export async function resolveAnissiaStream(
             serverSources.push({
               label: "Linkkf (자체자막)",
               player_url: epItem.watch_url,
+              id: "linkkf",
             });
 
             setAnissiaStreamCache({
@@ -306,6 +312,7 @@ export async function resolveAnissiaStream(
         }
       }
     }
+    }
   } catch (err) {
     console.warn("[videoResolver] Linkkf fallback attempt failed:", err);
   }
@@ -314,6 +321,7 @@ export async function resolveAnissiaStream(
   // Step 4: 3순위 Ohli24 예비 스트림 폴백
   // ==========================================================
   try {
+    if (!requestedSource || requestedSource === "ohli24") {
     if (korTitle) {
       const cleanKor = korTitle.replace(SUBTITLE_DELIMITERS, "").trim();
       const ohRes = await ohli24Provider.searchAnime(cleanKor);
@@ -332,6 +340,7 @@ export async function resolveAnissiaStream(
               serverSources.push({
                 label: "Ohli24",
                 player_url: epItem.watch_url,
+                id: "ohli24",
               });
 
               setAnissiaStreamCache({
@@ -347,6 +356,7 @@ export async function resolveAnissiaStream(
           }
         }
       }
+    }
     }
   } catch (err) {
     console.warn("[videoResolver] Ohli24 fallback attempt failed:", err);
