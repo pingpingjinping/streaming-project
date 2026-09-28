@@ -14,12 +14,14 @@ export default function AnissiaVideoSourceSelect({
   selectedSource,
   creator,
   subUrl,
+  isDub = false,
 }: {
   animeId: string;
   episodeNumber: number;
   selectedSource: string;
   creator?: string;
   subUrl?: string;
+  isDub?: boolean;
 }) {
   return (
     <section className="mb-4 rounded-2xl border border-slate-700/70 bg-slate-900/70 p-4">
@@ -32,6 +34,7 @@ export default function AnissiaVideoSourceSelect({
           const query = new URLSearchParams({ video_source: source.id });
           if (creator) query.set("creator", creator);
           if (subUrl) query.set("sub_url", subUrl);
+          if (isDub) query.set("dub", "1");
           const active = selectedSource === source.id;
           return (
             <Link
