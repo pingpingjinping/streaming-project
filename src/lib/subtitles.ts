@@ -2,6 +2,7 @@ import * as cheerio from "cheerio";
 import iconv from "iconv-lite";
 import AdmZip from "adm-zip";
 import { getCachedKoreanAnimeTitle, saveKoreanAnimeTitleMapping, getAniAllMatches, getSubtitleSourcePriority } from "@/lib/db";
+import { getMonthlyAnissiaCandidates } from "@/lib/reanimeMatches";
 
 export const HEADERS: Record<string, string> = {
   "User-Agent":
@@ -1548,16 +1549,24 @@ export async function getAnissiaCreators(
   episodeNumber: number,
   timeoutMs = 3500,
   directAnimeNo?: number | null,
-  referenceTitle = title
+  referenceTitle = title,
+  animeId?: string
 ): Promise<CreatorInfo[]> {
   const results: CreatorInfo[] = [];
   try {
     const candidates = new Map<number, { animeNo: number; subject: string; searchScore: number; matchScore?: number; verifiedMatch?: boolean }>();
+    const monthlyIds = new Set<number>();
 
     // 만약 애니시아 animeNo가 직접 전달된 경우 (애니시아 허브 모드) 0.05초 직통 조회
     if (directAnimeNo && directAnimeNo > 0) {
       candidates.set(directAnimeNo, { animeNo: directAnimeNo, subject: title, searchScore: 150, verifiedMatch: true });
     } else {
+      // Persisted monthly suggestions remain visible even if title search misses them.
+      for (const item of await getMonthlyAnissiaCandidates(animeId || "")) {
+        candidates.set(item.animeNo, { animeNo: item.animeNo, subject: item.subject,
+          searchScore: item.score, matchScore: item.score, verifiedMatch: false });
+        monthlyIds.add(item.animeNo);
+      }
       const resolvedTitle = await resolveKoreanTitle(title);
       const targetSeason = parseSeason(resolvedTitle) || parseSeason(title);
       const queries = generateAnissiaSearchQueries(resolvedTitle);
@@ -1593,6 +1602,7 @@ export async function getAnissiaCreators(
     }
 
     const ranked = [...candidates.values()].sort((a, b) =>
+      Number(monthlyIds.has(b.animeNo)) - Number(monthlyIds.has(a.animeNo)) ||
       (b.matchScore ?? b.searchScore) - (a.matchScore ?? a.searchScore));
     const captionLists = await Promise.all(ranked.slice(0, 4).map(async (anime) => {
       try {
@@ -1655,7 +1665,7 @@ export async function searchAllSubtitlesParallel(
 
     // Fetch both indexed AniAll posts and current Anissia results concurrently.
     const [anissiaCreators, aniallMatches, kairanSub, sourcePriority] = await Promise.all([
-      getAnissiaCreators(targetTitle, episodeNumber, 3500, directAnimeNo, referenceTitle),
+      getAnissiaCreators(targetTitle, episodeNumber, 3500, directAnimeNo, referenceTitle, animeId),
       getAniAllMatches(targetTitle, animeId, true),
       findKairanSubtitle(targetTitle, configuredSourceEpisode, 3500),
       getSubtitleSourcePriority(),
