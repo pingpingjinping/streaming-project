@@ -271,8 +271,21 @@ export async function getAnissiaArchiveSubtitles(
         let subtitle = null;
         if (filename.toLowerCase().endsWith(".zip")) {
           const { zip, entries } = inspectSubtitleArchive(await readFile(filePath));
+          const archiveRange = filename.match(/(?:^|[^\\d])(\\d{1,3})\\s*[-~]\\s*(\\d{1,3})(?!\\d)/);
+          const archiveStart = archiveRange ? Number(archiveRange[1]) : 0;
+          const archiveEnd = archiveRange ? Number(archiveRange[2]) : 0;
+          if (archiveRange && (archiveStart < 1 || archiveEnd < archiveStart || episode < archiveStart || episode > archiveEnd)) continue;
+
           const exactEntries = entries.filter((entry) => entry.episode === episode);
-          const selected = exactEntries.length ? exactEntries : entries.length === 1 && recordMatchesEpisode ? entries : [];
+          let selected = exactEntries.length ? exactEntries : [];
+          if (!selected.length && archiveRange && archiveEnd - archiveStart + 1 === entries.length) {
+            const orderedEntries = [...entries].sort((a, b) =>
+              a.filename.localeCompare(b.filename, undefined, { numeric: true }));
+            selected = orderedEntries.filter((_, index) => archiveStart + index === episode);
+          }
+          if (!selected.length && !archiveRange && entries.length === 1 && recordMatchesEpisode) {
+            selected = entries;
+          }
           if (selected.length !== 1) continue;
           const item = selected[0];
           subtitle = extractSubtitleFromBuffer(zip.getEntries()[item.index].getData(), episode, item.filename);
