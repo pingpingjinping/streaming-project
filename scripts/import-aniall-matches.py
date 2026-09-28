@@ -11,11 +11,11 @@ import subprocess
 import sys
 
 if len(sys.argv) != 2:
-    raise SystemExit("Pass the reviewed AniAll mapping JSON path.")
+    raise SystemExit("Usage: import-aniall-matches.py mapping.json")
 with open(sys.argv[1], encoding="utf-8") as source_file:
     matches = json.load(source_file)
 if not isinstance(matches, list) or not matches:
-    raise SystemExit("The reviewed AniAll mapping list is empty or invalid.")
+    raise SystemExit("The AniAll mapping list is empty or invalid.")
 
 stream = io.StringIO()
 stream.write("""BEGIN;
