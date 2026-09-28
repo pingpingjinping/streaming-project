@@ -10,6 +10,36 @@ import {
 import { ANISSIA_PREFIX, stripAnissiaId, toAnissiaId } from "./ids";
 import { resolveAnissiaStream } from "../resolvers/videoResolver";
 
+/** Parse Anissia episode labels without concatenating punctuation-separated digits.
+ * Labels such as `24.9` are special/decimal episode notation, not episode 249.
+ */
+function parseAnissiaEpisodeNumbers(value: unknown): number[] {
+  const text = String(value ?? "").trim();
+  if (!text) return [];
+
+  const numbers = new Set<number>();
+  const ranges = /(?:^|[^\d])(\d{1,3})\s*(?:~|〜|–|—|-|\.\.|to)\s*(\d{1,3})(?=$|[^\d])/gi;
+  let remainder = text;
+  for (const match of text.matchAll(ranges)) {
+    const start = Number(match[1]);
+    const end = Number(match[2]);
+    if (start > 0 && end >= start && end - start <= 100) {
+      for (let episode = start; episode <= end; episode++) numbers.add(episode);
+    } else {
+      if (start > 0) numbers.add(start);
+      if (end > 0) numbers.add(end);
+    }
+  }
+  remainder = remainder.replace(ranges, " ");
+
+  // Keep only the integer portion of decimals (24.9 -> episode 24).
+  for (const match of remainder.matchAll(/(?:^|[^\d])(\d{1,3})(?:\.\d+)?(?=$|[^\d])/g)) {
+    const episode = Number(match[1]);
+    if (episode > 0) numbers.add(episode);
+  }
+  return [...numbers];
+}
+
 export const ANISSIA_BASE_URL = "https://api.anissia.net";
 export const ANILIST_GRAPHQL_URL = "https://graphql.anilist.co";
 
@@ -746,17 +776,17 @@ class AnissiaProvider implements AnimeProvider {
       // 에피소드 목록 추출 (자막 등록된 에피소드 번호 파싱 또는 1부터 최대 번호까지)
       const epNumbers = new Set<number>();
       for (const c of captions) {
-        const ep = parseInt(String(c.episode || "").replace(/[^0-9]/g, ""), 10);
-        if (!isNaN(ep) && ep > 0) {
-          epNumbers.add(ep);
-        }
+        for (const episode of parseAnissiaEpisodeNumbers(c.episode)) epNumbers.add(episode);
       }
 
       // 자막 정보 맵 (회차 -> { creator, website })
       const captionMap = new Map<number, { creator: string; website: string }>();
       for (const c of captions) {
-        const ep = parseInt(String(c.episode || "").replace(/[^0-9]/g, ""), 10);
-        if (!isNaN(ep) && ep > 0 && c.website) {
+        // Only attach a post to one episode when its label names one exact integer.
+        // Decimal/special labels such as 24.9 must not point at a fictitious episode 249.
+        const exactEpisode = String(c.episode ?? "").trim().match(/^0*(\d+)(?:화)?$/);
+        const ep = exactEpisode ? Number(exactEpisode[1]) : 0;
+        if (ep > 0 && c.website) {
           if (!captionMap.has(ep)) {
             captionMap.set(ep, {
               creator: c.name || "",

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
+import AnissiaVideoSourceSelect from "@/components/AnissiaVideoSourceSelect";
 import {
   AlertCircle,
   ArrowLeft,
@@ -31,6 +32,7 @@ interface AnissiaStreamFallbackProps {
   maxAvailableEp?: number;
   unsupportedReason?: string;
   totalEpisodes?: number;
+  selectedVideoSource?: string;
 }
 
 export default function AnissiaStreamFallback({
@@ -44,6 +46,7 @@ export default function AnissiaStreamFallback({
   preloadedSub,
   maxAvailableEp,
   unsupportedReason,
+  selectedVideoSource = "rean",
 }: AnissiaStreamFallbackProps) {
   const handleDownloadSub = () => {
     if (!preloadedSub?.content) return;
@@ -69,6 +72,13 @@ export default function AnissiaStreamFallback({
 
   return (
     <main className="mx-auto max-w-4xl px-4 py-8 sm:py-12">
+      <AnissiaVideoSourceSelect
+        animeId={animeId}
+        episodeNumber={episodeNumber}
+        selectedSource={selectedVideoSource}
+        creator={initialCreator}
+        subUrl={initialSubUrl}
+      />
       {/* Anime Info Header */}
       <div className="flex flex-col items-center sm:flex-row sm:items-start gap-5 rounded-3xl border border-slate-800/80 bg-slate-900/60 p-6 backdrop-blur-xl shadow-2xl">
         {animePoster ? (

@@ -3,9 +3,11 @@ import Player from "@/components/Player";
 import ReanimeWatchFallback from "@/components/ReanimeWatchFallback";
 import AnissiaStreamFallback from "@/components/AnissiaStreamFallback";
 import ManualSourcePanel from "@/components/ManualSourcePanel";
+import AnissiaVideoSourceSelect from "@/components/AnissiaVideoSourceSelect";
 import { getProviderByAnimeId } from "@/lib/providers";
 import type { EpisodeStreamInfo } from "@/lib/providers/types";
 import { fetchCreatorSubtitle, resolveKoreanTitle } from "@/lib/subtitles";
+import { resolveAnissiaStream } from "@/lib/resolvers/videoResolver";
 import { getManualStreamSourceById } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import Link from "next/link";
@@ -57,16 +59,20 @@ export default async function WatchPage({
     creator?: string;
     sub_url?: string;
     manual_source?: string;
+    video_source?: string;
   }>;
 }) {
   const user = await requireAuth();
 
   const { id, ep } = await params;
-  const { dub, creator, sub_url, manual_source } = await searchParams;
+  const { dub, creator, sub_url, manual_source, video_source } = await searchParams;
   const epNum = parseInt(ep, 10) || 1;
   const isDub = dub === "1";
   const isReanime = id.startsWith("re_");
   const isAnissia = id.startsWith("ani_");
+  const requestedVideoSource = ["rean", "linkkf", "ohli24"].includes(video_source || "")
+    ? video_source as "rean" | "linkkf" | "ohli24"
+    : undefined;
 
   const manualSourceId = parseInt(manual_source || "0", 10);
   const manualCandidate =
@@ -175,7 +181,11 @@ export default async function WatchPage({
   const initialSubUrl = sub_url || matched?.caption_url || "";
 
   const [providerStreamInfo, preloadedSub] = await Promise.all([
-    activeManual ? Promise.resolve(null) : provider.getEpisodeStream(watchUrl),
+    activeManual
+      ? Promise.resolve(null)
+      : isAnissia
+        ? resolveAnissiaStream(Number(id.replace(/^ani_/, "")), epNum, anime.title, anime.original_title, requestedVideoSource)
+        : provider.getEpisodeStream(watchUrl),
     (!isDub && initialSubUrl && initialSubUrl.startsWith("http"))
       ? resolveKoreanTitle(anime.title)
           .then((resolved) =>
@@ -226,6 +236,7 @@ export default async function WatchPage({
             maxAvailableEp={streamInfo?.max_available_ep}
             unsupportedReason={streamInfo?.unsupported_reason}
             totalEpisodes={anime.total_episodes}
+            selectedVideoSource={requestedVideoSource || "rean"}
           />
         </div>
       );
@@ -286,6 +297,15 @@ export default async function WatchPage({
       <Navbar />
 
       <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        {isAnissia && (
+          <AnissiaVideoSourceSelect
+            animeId={id}
+            episodeNumber={epNum}
+            selectedSource={providerStreamInfo?.server_sources?.[0]?.id || requestedVideoSource || "rean"}
+            creator={initialCreator}
+            subUrl={initialSubUrl}
+          />
+        )}
         <ManualSourcePanel
           animeId={id}
           episodeNumber={epNum}

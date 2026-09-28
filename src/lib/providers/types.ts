@@ -53,6 +53,7 @@ export interface AnimeDetail {
 export interface ServerSource {
   label: string;
   player_url: string;
+  id?: "rean" | "linkkf" | "ohli24";
 }
 
 export interface EpisodeStreamInfo {
