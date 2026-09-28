@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 import iconv from "iconv-lite";
 import AdmZip from "adm-zip";
-import { getCachedKoreanAnimeTitle, saveKoreanAnimeTitleMapping, getAniAllMatches, getSubtitleSourcePriority } from "@/lib/db";
+import { getCachedKoreanAnimeTitle, saveKoreanAnimeTitleMapping, getAniAllMatches, getAniAllCandidates, getSubtitleSourcePriority } from "@/lib/db";
 import { getMonthlyAnissiaCandidates } from "@/lib/reanimeMatches";
 
 export const HEADERS: Record<string, string> = {
@@ -1664,9 +1664,10 @@ export async function searchAllSubtitlesParallel(
     const targetTitle = resolvedTitle || title;
 
     // Fetch both indexed AniAll posts and current Anissia results concurrently.
-    const [anissiaCreators, aniallMatches, kairanSub, sourcePriority] = await Promise.all([
+    const [anissiaCreators, aniallMatches, aniallCandidates, kairanSub, sourcePriority] = await Promise.all([
       getAnissiaCreators(targetTitle, episodeNumber, 3500, directAnimeNo, referenceTitle, animeId),
       getAniAllMatches(targetTitle, animeId, true),
+      getAniAllCandidates(targetTitle, animeId),
       findKairanSubtitle(targetTitle, configuredSourceEpisode, 3500),
       getSubtitleSourcePriority(),
     ]);
@@ -1676,9 +1677,16 @@ export async function searchAllSubtitlesParallel(
       matchedTitle: match.canonicalTitle, verifiedMatch: match.confidence >= 90,
       sourceProvider: "aniall",
     }));
+    const aniallReviewCreators: CreatorInfo[] = aniallCandidates.map((match) => ({
+      name: `AniAll 후보 · ${match.blogTitle}`, episode: "매칭 검토 필요", update_date: "",
+      website: match.postUrl, is_current_ep: false, matchScore: match.confidence,
+      matchedTitle: match.canonicalTitle, verifiedMatch: false,
+      sourceProvider: "aniall",
+    }));
     const allCreators = [
       ...anissiaCreators.map((creator) => ({ ...creator, sourceProvider: "anissia" as const })),
       ...aniallCreators,
+      ...aniallReviewCreators,
     ];
 
     const collectedSubs: SubtitleResult[] = [];
@@ -1688,7 +1696,7 @@ export async function searchAllSubtitlesParallel(
 
     // 2. Filter valid creators who have an active blog for this episode
     const candidateCreators = allCreators.filter(
-      (c) => c.website && c.website.startsWith("http")
+      (c) => c.website && c.website.startsWith("http") && !c.name.startsWith("AniAll 후보 ·")
     ).sort((a, b) => {
       if (a.sourceProvider !== b.sourceProvider) return a.sourceProvider === sourcePriority ? -1 : 1;
       if (a.verifiedMatch !== b.verifiedMatch) return a.verifiedMatch ? -1 : 1;
