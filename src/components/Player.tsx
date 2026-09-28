@@ -56,6 +56,7 @@ export interface CreatorInfo {
   matchScore?: number;
   verifiedMatch?: boolean;
   sourceProvider?: "aniall" | "anissia";
+  localArchive?: boolean;
 }
 
 const SPEED_CYCLE_RATES = [1.0, 1.3, 1.5, 2.0];
@@ -102,6 +103,7 @@ interface SubtitleItem {
   sourceMatchedTitle?: string;
   sourceProvider?: "aniall" | "anissia";
   isCached?: boolean;
+  localArchive?: boolean;
 }
 
 const creatorIdentity = (creator: CreatorInfo) => `${creator.website}\n${creator.matchedTitle || ""}`;
@@ -3443,7 +3445,7 @@ export default function Player(props: PlayerProps) {
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const fetchedList: SubtitleItem[] = (data.subtitles || []).map((s: any) => ({
-          name: `${s.sourceProvider === "aniall" ? "[AniAll]" : "[애니시아]"} ${s.name} (${s.format})`,
+          name: `${s.localArchive ? "[Pi 로컬 · AniAll]" : s.sourceProvider === "aniall" ? "[AniAll]" : "[애니시아]"} ${s.name} (${s.format})`,
           format: s.format,
           is_ass: s.is_ass,
           content: s.content,
@@ -3451,6 +3453,7 @@ export default function Player(props: PlayerProps) {
           sourceMatchedTitle: s.sourceMatchedTitle,
           sourceProvider: s.sourceProvider,
           isCached: Boolean(s.isCached),
+          localArchive: Boolean(s.localArchive),
         }));
 
         const combined = [...fetchedList, ...newSubs];
