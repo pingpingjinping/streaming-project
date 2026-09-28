@@ -350,11 +350,9 @@ export async function initDb() {
       CREATE TABLE IF NOT EXISTS subtitle_episode_starts (
         user_id VARCHAR(100) NOT NULL,
         anime_id VARCHAR(100) NOT NULL,
-        source_website TEXT NOT NULL,
-        matched_title VARCHAR(255) NOT NULL DEFAULT '',
         start_episode INT NOT NULL CHECK (start_episode > 0 AND start_episode <= 10000),
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (user_id, anime_id, source_website, matched_title)
+        PRIMARY KEY (user_id, anime_id)
       )
     `;
   } catch (e: any) {
@@ -404,17 +402,14 @@ export async function setSubtitleSourcePriority(value: SubtitleSourcePriority): 
   }
 }
 
-export async function getSubtitleEpisodeStart(
-  userId: string, animeId: string, sourceWebsite: string, matchedTitle = ""
-): Promise<number | null> {
+export async function getSubtitleEpisodeStart(userId: string, animeId: string): Promise<number | null> {
   const sql = getDb();
-  if (!sql || !userId || !animeId || !sourceWebsite) return null;
+  if (!sql || !userId || !animeId) return null;
   await initDb();
   try {
     const rows = await sql`
       SELECT start_episode FROM subtitle_episode_starts
       WHERE user_id = ${userId} AND anime_id = ${animeId}
-        AND source_website = ${sourceWebsite} AND matched_title = ${matchedTitle}
       LIMIT 1
     `;
     return rows[0] ? Number(rows[0].start_episode) : null;
@@ -425,24 +420,20 @@ export async function getSubtitleEpisodeStart(
 }
 
 export async function setSubtitleEpisodeStart(
-  userId: string, animeId: string, sourceWebsite: string, matchedTitle: string, startEpisode: number | null
+  userId: string, animeId: string, startEpisode: number | null
 ): Promise<boolean> {
   const sql = getDb();
-  if (!sql || !userId || !animeId || !sourceWebsite || sourceWebsite.length > 2000 ||
+  if (!sql || !userId || !animeId || animeId.length > 100 ||
       (startEpisode !== null && (!Number.isInteger(startEpisode) || startEpisode < 1 || startEpisode > 10000))) return false;
   await initDb();
   try {
     if (startEpisode === null) {
-      await sql`
-        DELETE FROM subtitle_episode_starts
-        WHERE user_id = ${userId} AND anime_id = ${animeId}
-          AND source_website = ${sourceWebsite} AND matched_title = ${matchedTitle}
-      `;
+      await sql`DELETE FROM subtitle_episode_starts WHERE user_id = ${userId} AND anime_id = ${animeId}`;
     } else {
       await sql`
-        INSERT INTO subtitle_episode_starts (user_id, anime_id, source_website, matched_title, start_episode, updated_at)
-        VALUES (${userId}, ${animeId}, ${sourceWebsite}, ${matchedTitle}, ${startEpisode}, CURRENT_TIMESTAMP)
-        ON CONFLICT (user_id, anime_id, source_website, matched_title)
+        INSERT INTO subtitle_episode_starts (user_id, anime_id, start_episode, updated_at)
+        VALUES (${userId}, ${animeId}, ${startEpisode}, CURRENT_TIMESTAMP)
+        ON CONFLICT (user_id, anime_id)
         DO UPDATE SET start_episode = EXCLUDED.start_episode, updated_at = CURRENT_TIMESTAMP
       `;
     }
