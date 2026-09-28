@@ -3,9 +3,9 @@
 import Link from "next/link";
 
 const SOURCES = [
-  { id: "rean", label: "ReAnime", hint: "기본" },
-  { id: "linkkf", label: "Linkkf", hint: "대체" },
-  { id: "ohli24", label: "Ohli24", hint: "대체" },
+  { id: "rean", label: "ReAnime", hint: "고화질" },
+  { id: "linkkf", label: "Linkkf", hint: "자체자막" },
+  { id: "ohli24", label: "Ohli24", hint: "국내" },
 ] as const;
 
 export default function AnissiaVideoSourceSelect({
@@ -27,7 +27,7 @@ export default function AnissiaVideoSourceSelect({
     <section className="mb-4 rounded-2xl border border-slate-700/70 bg-slate-900/70 p-4">
       <div className="mb-3">
         <h2 className="text-sm font-bold text-white">영상 제공처</h2>
-        <p className="mt-1 text-xs text-slate-400">기본은 ReAnime입니다. 재생이 안 되면 다른 제공처를 선택해 보세요.</p>
+        <p className="mt-1 text-xs text-slate-400">현재 사이트에서 재생이 안 되면 다른 제공처를 선택해 보세요.</p>
       </div>
       <div className="flex flex-wrap gap-2">
         {SOURCES.map((source) => {
