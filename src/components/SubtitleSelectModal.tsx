@@ -302,6 +302,7 @@ export default function SubtitleSelectModal({
         sourceCreatorWebsite: creator.website,
         sourceMatchedTitle: creator.matchedTitle,
         sourceProvider: creator.sourceProvider,
+        localArchive: Boolean(creator.localArchive),
       };
 
       onSelectSubtitle(newSub);
