@@ -1,4 +1,5 @@
 import postgres from "postgres";
+import { createHash } from "node:crypto";
 
 let dbClient: ReturnType<typeof postgres> | null = null;
 
@@ -452,6 +453,45 @@ export interface AniAllMatch {
   confidence: number;
   reviewStatus: string;
   evidence: string;
+}
+
+/** A rejected source is scoped to one anime, not the whole creator or blog. */
+export async function getSubtitleRejections(animeId: string): Promise<Array<{ provider: string; sourceKey: string }>> {
+  const sql = getDb();
+  if (!sql || !animeId) return [];
+  try {
+    const rows = await sql`SELECT provider, source_key FROM anime_subtitle_rejections WHERE anime_id=${animeId}`;
+    return rows.map((row) => ({ provider: String(row.provider), sourceKey: String(row.source_key) }));
+  } catch {
+    return [];
+  }
+}
+
+export async function updateSubtitleRejection(animeId: string, provider: string, sourceKey: string,
+  reject: boolean): Promise<boolean> {
+  const sql = getDb();
+  if (!sql) return false;
+  const hash = createHash("sha256").update(sourceKey).digest("hex");
+  try {
+    await sql`CREATE TABLE IF NOT EXISTS anime_subtitle_rejections (
+      anime_id TEXT NOT NULL, provider TEXT NOT NULL,
+      source_key_hash TEXT NOT NULL, source_key TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (anime_id, provider, source_key_hash)
+    )`;
+    if (reject) {
+      await sql`INSERT INTO anime_subtitle_rejections (anime_id,provider,source_key_hash,source_key)
+        VALUES (${animeId},${provider},${hash},${sourceKey})
+        ON CONFLICT (anime_id,provider,source_key_hash) DO UPDATE SET source_key=EXCLUDED.source_key`;
+    } else {
+      await sql`DELETE FROM anime_subtitle_rejections
+        WHERE anime_id=${animeId} AND provider=${provider} AND source_key_hash=${hash}`;
+    }
+    return true;
+  } catch (error) {
+    console.warn("[updateSubtitleRejection warning]:", error);
+    return false;
+  }
 }
 
 function aniAllSeason(value: string): number | null {
