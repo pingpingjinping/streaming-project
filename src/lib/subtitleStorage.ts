@@ -161,6 +161,8 @@ function recordNumber(record: Record<string, any>, keys: string[]): number | nul
 async function loadAnissiaArchiveIndex(): Promise<AnissiaArchiveIndexEntry[]> {
   const corpus = path.join(root, "anissia_subtitles");
   const finishPaths: string[] = [];
+  const archiveDirs = new Set<string>();
+  const finishDirs = new Set<string>();
   const pending: Array<{ dir: string; depth: number }> = [{ dir: corpus, depth: 0 }];
   let inspected = 0;
 
@@ -173,13 +175,19 @@ async function loadAnissiaArchiveIndex(): Promise<AnissiaArchiveIndexEntry[]> {
       if (error?.code === "ENOENT") continue;
       throw error;
     }
+    if (entries.some((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".zip"))) {
+      archiveDirs.add(current.dir);
+    }
     for (const entry of entries) {
       inspected++;
       if (inspected >= 30000) break;
       if (entry.name.startsWith(".") || entry.name === "__MACOSX") continue;
       const fullPath = path.join(current.dir, entry.name);
       if (entry.isDirectory() && current.depth < 10) pending.push({ dir: fullPath, depth: current.depth + 1 });
-      else if (entry.isFile() && entry.name.toLowerCase() === "finish.txt") finishPaths.push(fullPath);
+      else if (entry.isFile() && entry.name.toLowerCase() === "finish.txt") {
+        finishPaths.push(fullPath);
+        finishDirs.add(current.dir);
+      }
     }
   }
 
@@ -195,9 +203,26 @@ async function loadAnissiaArchiveIndex(): Promise<AnissiaArchiveIndexEntry[]> {
       return null;
     }
   }));
-  return indexed.filter((entry): entry is AnissiaArchiveIndexEntry => Boolean(entry));
-}
 
+  // Manually saved Anissia archives may not have finish.txt. Infer metadata
+  // from the same title/episode/creator directory layout and ZIP filename.
+  const inferred = await Promise.all([...archiveDirs].filter((dir) => !finishDirs.has(dir)).map(async (dir) => {
+    try {
+      const files = (await readdir(dir)).filter((name) => name.toLowerCase().endsWith(".zip"));
+      const stats = await Promise.all(files.map((name) => stat(path.join(dir, name))));
+      const latestModified = Math.max(0, ...stats.map((info) => info.mtimeMs));
+      return {
+        finishPath: path.join(dir, "finish.txt"),
+        record: {},
+        updatedAt: latestModified ? new Date(latestModified).toISOString() : "",
+      };
+    } catch {
+      return null;
+    }
+  }));
+
+  return [...indexed, ...inferred].filter((entry): entry is AnissiaArchiveIndexEntry => Boolean(entry));
+}
 async function getAnissiaArchiveIndex(): Promise<AnissiaArchiveIndexEntry[]> {
   if (anissiaArchiveIndex && anissiaArchiveIndex.expiresAt > Date.now()) return anissiaArchiveIndex.entries;
   if (!anissiaArchiveIndexPromise) {
