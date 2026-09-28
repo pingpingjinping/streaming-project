@@ -449,6 +449,37 @@ export async function getAniAllMatches(title: string, animeId = ""): Promise<Ani
   }
 }
 
+/** Search reviewed AniAll mappings by a partial title for manual local archive lookup. */
+export async function searchAniAllMatchesByTitleFragment(fragment: string): Promise<AniAllMatch[]> {
+  const sql = getDb();
+  const compact = fragment.normalize("NFKC").toLocaleLowerCase("ko-KR").replace(/[^\\p{L}\\p{N}]/gu, "");
+  if (!sql || compact.length < 2) return [];
+  try {
+    await initDb();
+    const rows = await sql`
+      SELECT DISTINCT ON (post_id, canonical_title)
+        post_id, canonical_title, blog_title, post_url, confidence, review_status, evidence
+      FROM anime_aniall_matches
+      WHERE POSITION(
+        ${compact} IN regexp_replace(lower(canonical_title), '[^[:alnum:]가-힣]', '', 'g')
+      ) > 0
+      ORDER BY post_id, canonical_title,
+        CASE WHEN review_status = 'approved' THEN 0 ELSE 1 END,
+        confidence DESC
+      LIMIT 100
+    `;
+    return rows.map((row) => ({
+      postId: String(row.post_id), canonicalTitle: String(row.canonical_title),
+      blogTitle: String(row.blog_title), postUrl: String(row.post_url),
+      confidence: Number(row.confidence), reviewStatus: String(row.review_status),
+      evidence: String(row.evidence || ""),
+    }));
+  } catch (e) {
+    console.warn("[searchAniAllMatchesByTitleFragment warning]:", e);
+    return [];
+  }
+}
+
 function normalizeAnimeTitleKey(title: string): string {
   return title.normalize("NFKC").trim().toLocaleLowerCase("en-US").replace(/\s+/g, " ");
 }
