@@ -56,12 +56,12 @@ export async function GET(request: NextRequest) {
     }
     const savedUrl = animeIdParam ? await getManualSubtitleLink(user.username, animeIdParam, ep) : null;
     if (savedUrl) {
-      const manual = await fetchCreatorSubtitle("직접 자막", savedUrl, title, ep, 12000);
+      const manual = await fetchCreatorSubtitle("직접 자막", savedUrl, title, sourceEpisode, 12000);
       if (manual?.content) {
         return NextResponse.json({ success: true, anime_title: title, episode: ep, count: 1, subtitles: [manual], creators: [] }, { headers: { "Cache-Control": "no-store" } });
       }
     }
-    const cached = animeIdParam ? await getVerifiedSubtitleCache(animeIdParam, ep) : null;
+    const cached = animeIdParam && !sourceEpisodeStart ? await getVerifiedSubtitleCache(animeIdParam, ep) : null;
     if (cached) {
       return NextResponse.json({ success: true, anime_title: title, episode: ep, count: 1,
         subtitles: [cached], creators: [], verified_cache: true }, { headers: { "Cache-Control": "no-store" } });
