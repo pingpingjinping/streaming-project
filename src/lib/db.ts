@@ -429,7 +429,7 @@ export async function setSubtitleEpisodeStart(
 ): Promise<boolean> {
   const sql = getDb();
   if (!sql || !userId || !animeId || !sourceWebsite || sourceWebsite.length > 2000 ||
-      !Number.isInteger(startEpisode) || (startEpisode !== null && (startEpisode < 1 || startEpisode > 10000))) return false;
+      (startEpisode !== null && (!Number.isInteger(startEpisode) || startEpisode < 1 || startEpisode > 10000))) return false;
   await initDb();
   try {
     if (startEpisode === null) {
