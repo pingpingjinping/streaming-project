@@ -8,7 +8,7 @@ import { getProviderByAnimeId } from "@/lib/providers";
 import type { EpisodeStreamInfo } from "@/lib/providers/types";
 import { fetchCreatorSubtitle, resolveKoreanTitle } from "@/lib/subtitles";
 import { resolveAnissiaStream } from "@/lib/resolvers/videoResolver";
-import { getManualStreamSourceById } from "@/lib/db";
+import { getManualStreamSourceById, getSubtitleEpisodeStart } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -178,6 +178,8 @@ export default async function WatchPage({
   }
 
   const initialCreator = creator || matched?.creator_name || "";
+  const sourceEpisodeStart = await getSubtitleEpisodeStart(user.username, anime.id);
+  const sourceEpisode = sourceEpisodeStart && sourceEpisodeStart > 0 ? sourceEpisodeStart + epNum - 1 : epNum;
   const initialSubUrl = sub_url || matched?.caption_url || "";
 
   const [providerStreamInfo, preloadedSub] = await Promise.all([
@@ -193,7 +195,7 @@ export default async function WatchPage({
               initialCreator || "제작자",
               initialSubUrl,
               resolved || anime.title,
-              epNum,
+              sourceEpisode,
               4000
             )
           )
