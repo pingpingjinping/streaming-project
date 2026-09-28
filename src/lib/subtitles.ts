@@ -1324,7 +1324,10 @@ export async function fetchCreatorSubtitle(
           const category = $init('a[href*="/category/"]').toArray()
             .map((a) => $init(a).attr("href") || "")
             .find((href) => {
-              try { return href.startsWith("/category/") && decodeURIComponent(href).includes("/category/자막/"); } catch { return false; }
+              try {
+                const categoryPath = decodeURIComponent(new URL(href, website).pathname);
+                return /\/category\/[^/]*(?:자막|subtitle)/i.test(categoryPath);
+              } catch { return false; }
             });
           if (category) {
             const categoryUrl = new URL(category, website).toString();
@@ -1335,14 +1338,20 @@ export async function fetchCreatorSubtitle(
             if (categoryResponse.ok) {
               const $category = cheerio.load(await categoryResponse.text());
               let matchingPost = "";
-              $category(".article-content a.link-article").each((_, a) => {
-                const heading = $category(a).text().trim().split(/\r?\n/)[0].trim();
+              $category("a[href]").each((_, a) => {
+                if (matchingPost) return;
                 const href = $category(a).attr("href") || "";
-                if (!matchingPost && /\d+\s*화/.test(heading) &&
-                    parseEpisodes(heading).includes(episodeNumber) &&
-                    /^\/\d+(?:\?|$)/.test(href)) {
-                  matchingPost = new URL(href, categoryUrl).toString();
-                }
+                if (!href || href.startsWith("#")) return;
+                let postUrl: URL;
+                try { postUrl = new URL(href, categoryUrl); } catch { return; }
+                if (postUrl.origin !== new URL(website).origin ||
+                    !/^\/(?:\d+|entry\/[^/]+)\/?$/.test(postUrl.pathname)) return;
+
+                const anchor = $category(a);
+                const heading = (anchor.text().trim() || anchor.attr("title") ||
+                  anchor.closest("article, li, .post-item, .article-item, .list_content").text())
+                  .trim().split(/\r?\n/)[0].trim();
+                if (parseEpisodes(heading).includes(episodeNumber)) matchingPost = postUrl.toString();
               });
               if (matchingPost) {
                 const categorySubtitle = await tryExtractFromPage(matchingPost);
