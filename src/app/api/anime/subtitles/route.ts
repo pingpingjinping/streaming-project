@@ -256,7 +256,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { creatorName, website, title, matchedTitle, episodeNumber, creatorEpisode, sourceProvider } = body;
+    const { creatorName, website, title, matchedTitle, episodeNumber, creatorEpisode, sourceProvider, localArchive } = body;
     const animeId = typeof body.animeId === "string" ? body.animeId.trim() : "";
     const ep = parseInt(String(episodeNumber || "1"), 10) || 1;
     const sourceEpisodeStart = animeId
@@ -280,7 +280,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 보안: website는 서버에서 fetch하므로 SSRF 가드 통과 필수
-    if (website) {
+    if (website && !(localArchive && sourceProvider === "anissia")) {
       try {
         await assertSafeProxyUrl(String(website));
       } catch (e) {
@@ -302,7 +302,8 @@ export async function POST(request: NextRequest) {
       ? sourceEpisodeStart + ep - 1
       : mapProviderEpisodeNumber(String(creatorEpisode || ""), ep, targetSeason);
 
-    const isErusha = creatorName.includes("에루샤") || (website && website.toLowerCase().includes("erulabo"));
+    const isErusha = (creatorName.includes("에루샤") || (website && website.toLowerCase().includes("erulabo")))
+      && !(localArchive && sourceProvider === "anissia");
     if (isErusha) {
       return NextResponse.json({
         success: false,
@@ -311,7 +312,32 @@ export async function POST(request: NextRequest) {
     }
 
     let sub = null;
-    if (creatorName.includes("카이란") || (website && website.toLowerCase().includes("kairan"))) {
+    if (localArchive && sourceProvider === "anissia") {
+      const animeNoMatch = animeId.match(/^(?:ani_)?(\d+)$/);
+      const animeNo = animeNoMatch ? Number(animeNoMatch[1]) : null;
+      const archives = await getAnissiaArchiveSubtitles(
+        [targetTitle, requestedTitle, String(title)],
+        sourceEpisode,
+        animeNo,
+        targetSeason,
+      );
+      const requestedCreator = String(creatorName).replace(/^Anissia\s*[·|]\s*/i, "").trim();
+      const local = archives.find((item) =>
+        (website && item.website === website) ||
+        (item.creator.toLocaleLowerCase("ko-KR") === requestedCreator.toLocaleLowerCase("ko-KR")
+          && (!matchedTitle || item.matchedTitle === matchedTitle))
+      );
+      if (local) {
+        sub = {
+          name: local.name,
+          orig_filename: local.orig_filename,
+          content: local.content,
+          format: local.format,
+          is_ass: local.is_ass,
+          url: local.website || undefined,
+        };
+      }
+    } else if (creatorName.includes("카이란") || (website && website.toLowerCase().includes("kairan"))) {
       sub = await findKairanSubtitle(targetTitle, sourceEpisode, 5000);
     } else if (website) {
       if (sourceProvider === "aniall") {
