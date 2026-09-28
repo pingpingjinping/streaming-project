@@ -67,8 +67,11 @@ export async function GET(request: NextRequest) {
     const comparisonTitle = reanimeMatch?.koreanTitle ||
       (referenceTitle ? await resolveKoreanTitle(referenceTitle) || referenceTitle : searchTarget);
 
-    // 0순위: 애니시아에서 이미 파악된 자막 블로그 링크가 직통으로 넘어온 경우 (초고속 직통 모드)
-    if (website && website.startsWith("http")) {
+    const sourcePriority = await getSubtitleSourcePriority();
+
+    // 애니시아 우선일 때만 전달된 링크를 바로 가져온다.
+    // AniAll 우선이면 Pi 보관함을 먼저 확인하고, 없을 때 AniAll 검색을 우선한다.
+    if (website && website.startsWith("http") && sourcePriority !== "aniall") {
       const directSub = await fetchCreatorSubtitle(creatorName || "제작자", website, searchTarget, ep, 5000);
       if (directSub && directSub.content) {
         return NextResponse.json({
@@ -95,19 +98,30 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const localMatches = (await getSubtitleSourcePriority()) === "aniall"
+    const localMatches = sourcePriority === "aniall"
       ? (await getAniAllMatches(comparisonTitle, animeIdParam)).sort((a, b) => b.confidence - a.confidence)
       : [];
+    const localCreators: Array<{ name: string; episode: string; update_date: string; website: string;
+      is_current_ep: boolean; matchedTitle: string; matchScore: number; verifiedMatch: boolean;
+      sourceProvider: "aniall"; localArchive: true }> = [];
+    let bestLocal: { subtitle: NonNullable<Awaited<ReturnType<typeof getAniAllArchiveSubtitle>>>;
+      match: (typeof localMatches)[number] } | null = null;
     for (const match of localMatches) {
       const localSub = await getAniAllArchiveSubtitle(match.blogTitle, ep, parseSeason(match.canonicalTitle));
       if (!localSub) continue;
+      if (!bestLocal) bestLocal = { subtitle: localSub, match };
+      localCreators.push({ name: `AniAll · ${match.blogTitle}`, episode: "Pi에 저장된 자막",
+        update_date: "", website: match.postUrl, is_current_ep: true, matchedTitle: match.canonicalTitle,
+        matchScore: match.confidence, verifiedMatch: match.confidence >= 90,
+        sourceProvider: "aniall", localArchive: true });
+      if (localCreators.length >= 8) break;
+    }
+    if (bestLocal) {
       return NextResponse.json({
         success: true, anime_title: title, resolved_title: resolvedTitle, episode: ep, count: 1,
-        subtitles: [{ ...localSub, sourceProvider: "aniall", sourceCreatorWebsite: match.postUrl,
-          sourceMatchedTitle: match.canonicalTitle }],
-        creators: localMatches.map((item) => ({ name: `AniAll · ${item.blogTitle}`, episode: "게시글 첨부 자막",
-          update_date: "", website: item.postUrl, is_current_ep: true, matchedTitle: item.canonicalTitle,
-          matchScore: item.confidence, verifiedMatch: item.confidence >= 90, sourceProvider: "aniall" })),
+        subtitles: [{ ...bestLocal.subtitle, sourceProvider: "aniall", sourceCreatorWebsite: bestLocal.match.postUrl,
+          sourceMatchedTitle: bestLocal.match.canonicalTitle, localArchive: true }],
+        creators: localCreators,
         local_archive: true,
       }, { headers: { "Cache-Control": "no-store" } });
     }
