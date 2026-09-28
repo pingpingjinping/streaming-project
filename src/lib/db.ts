@@ -423,7 +423,7 @@ function toAniAllMatch(row: any): AniAllMatch {
   };
 }
 
-export async function getAniAllMatches(title: string, animeId = ""): Promise<AniAllMatch[]> {
+export async function getAniAllMatches(title: string, animeId = "", includeOtherSeasons = false): Promise<AniAllMatch[]> {
   const sql = getDb();
   if (!sql || !title.trim()) return [];
   try {
@@ -480,7 +480,7 @@ export async function getAniAllMatches(title: string, animeId = ""): Promise<Ani
     `;
     let exactMatches = rows.map(toAniAllMatch);
     const seasonHint = aniAllSeason(title) ?? aniAllSeason(canonical) ?? sourceTitles.map(aniAllSeason).find((season) => season !== null) ?? null;
-    if (seasonHint === null) return exactMatches;
+    if (!includeOtherSeasons) return exactMatches;
 
     const baseTitles = [...new Set([canonical, ...sourceTitles].map(aniAllTitleBase).filter((base) => base.length >= 3))];
     const fallbackRows = (await Promise.all(baseTitles.map((base) => sql`
@@ -491,21 +491,21 @@ export async function getAniAllMatches(title: string, animeId = ""): Promise<Ani
       ORDER BY post_id, canonical_title, confidence DESC
       LIMIT 100
     `))).flat();
-    exactMatches = exactMatches.filter((match) => {
-      const rowSeason = aniAllSeason(match.canonicalTitle) ?? aniAllSeason(match.blogTitle) ?? aniAllSeason(match.evidence);
-      return rowSeason === null || rowSeason === seasonHint;
-    });
     const seen = new Set(exactMatches.map((match) => `${match.postId}\n${match.canonicalTitle}`));
     const seasonMatches = fallbackRows.map(toAniAllMatch).filter((match) => {
       if (!baseTitles.includes(aniAllTitleBase(match.canonicalTitle))) return false;
-      const rowSeason = aniAllSeason(match.canonicalTitle) ?? aniAllSeason(match.blogTitle) ?? aniAllSeason(match.evidence);
-      return rowSeason === seasonHint;
+      return true;
     });
     for (const match of seasonMatches) {
       const key = `${match.postId}\n${match.canonicalTitle}`;
       if (!seen.has(key)) { exactMatches.push(match); seen.add(key); }
     }
-    return exactMatches;
+    const seasonRank = (match: AniAllMatch) => {
+      const candidateSeason = aniAllSeason(match.canonicalTitle) ?? aniAllSeason(match.blogTitle) ?? aniAllSeason(match.evidence);
+      if (seasonHint !== null) return candidateSeason === seasonHint ? 0 : candidateSeason === null ? 1 : 2;
+      return candidateSeason === null || candidateSeason === 1 ? 0 : 1;
+    };
+    return exactMatches.sort((a, b) => seasonRank(a) - seasonRank(b) || b.confidence - a.confidence);
   } catch (e) {
     console.warn("[getAniAllMatches warning]:", e);
     return [];
