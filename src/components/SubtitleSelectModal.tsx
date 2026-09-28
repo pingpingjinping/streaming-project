@@ -50,12 +50,12 @@ const creatorKey = (creator: CreatorInfo) => `${creator.website}\n${creator.matc
 type RejectedSource = { provider: string; sourceKey: string };
 const rejectionId = (provider: string, sourceKey: string) => JSON.stringify([provider, sourceKey]);
 const creatorSource = (creator: CreatorInfo): RejectedSource => ({
-  provider: creator.localArchive ? "local" : creator.sourceProvider || "anissia",
+  provider: creator.website ? creator.sourceProvider || "anissia" : "local",
   sourceKey: creator.website || creator.name,
 });
 const subtitleSource = (subtitle: SubtitleOption): RejectedSource => ({
-  provider: subtitle.localArchive ? "local" : subtitle.sourceProvider || "local",
-  sourceKey: subtitle.sourceCreatorWebsite || subtitle.url || subtitle.name,
+  provider: subtitle.sourceCreatorWebsite ? subtitle.sourceProvider || "anissia" : "local",
+  sourceKey: subtitle.sourceCreatorWebsite || (subtitle.localArchive ? subtitle.name : subtitle.url || subtitle.name),
 });
 
 interface SubtitleSelectModalProps {
