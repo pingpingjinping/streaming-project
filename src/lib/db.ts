@@ -398,6 +398,31 @@ export interface AniAllMatch {
   evidence: string;
 }
 
+function aniAllSeason(value: string): number | null {
+  const text = value.normalize("NFKC");
+  const match = text.match(/(?:season\s*|시즌\s*|파트\s*|part\s*|第\s*)(\d{1,2})|(?:\b|^)(\d{1,2})\s*기|\bS(\d{1,2})(?:\b|$)/i);
+  if (match) return Number(match[1] || match[2] || match[3]);
+  if (/\bII\b|Ⅱ/i.test(text)) return 2;
+  if (/\bIII\b|Ⅲ/i.test(text)) return 3;
+  if (/\bIV\b|Ⅳ/i.test(text)) return 4;
+  return null;
+}
+
+function aniAllTitleBase(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase("ko-KR")
+    .replace(/(?:season|시즌|파트|part|第)\s*\d{1,2}|\b\d{1,2}\s*기|\bS\d{1,2}\b|\b(?:II|III|IV|Ⅱ|Ⅲ|Ⅳ)\b/gi, "")
+    .replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+function toAniAllMatch(row: any): AniAllMatch {
+  return {
+    postId: String(row.post_id), canonicalTitle: String(row.canonical_title),
+    blogTitle: String(row.blog_title), postUrl: String(row.post_url),
+    confidence: Number(row.confidence), reviewStatus: String(row.review_status),
+    evidence: String(row.evidence || ""),
+  };
+}
+
 export async function getAniAllMatches(title: string, animeId = ""): Promise<AniAllMatch[]> {
   const sql = getDb();
   if (!sql || !title.trim()) return [];
@@ -412,17 +437,33 @@ export async function getAniAllMatches(title: string, animeId = ""): Promise<Ani
         ? { source: "Anissia", id: animeId.replace(/^ani_/, "") }
         : null;
     const sourceRefs = sourceRef ? [sourceRef] : [];
+    const sourceTitles: string[] = [];
     if (sourceRef) {
       try {
         const sourceRows = await sql`
-          SELECT payload->>'cross_source_ids_json' AS cross_source_ids_json
+          SELECT payload->>'cross_source_ids_json' AS cross_source_ids_json,
+            payload->>'title_english' AS title_english, payload->>'title_romaji' AS title_romaji,
+            payload->>'title_native' AS title_native
           FROM anime_catalog_entries WHERE source = ${sourceRef.source} AND source_record_id = ${sourceRef.id}
           LIMIT 1
         `;
+        for (const field of ["title_english", "title_romaji", "title_native"] as const) {
+          if (sourceRows[0]?.[field]) sourceTitles.push(String(sourceRows[0][field]));
+        }
         const cross = JSON.parse(String(sourceRows[0]?.cross_source_ids_json || "{}"));
         for (const id of cross.anilist_ids || []) sourceRefs.push({ source: "AniList", id: String(id) });
         for (const id of cross.reanime_ids || []) sourceRefs.push({ source: "ReAnime", id: String(id) });
         for (const id of cross.anissia_ids || []) sourceRefs.push({ source: "Anissia", id: String(id) });
+      } catch {}
+    }
+    if (sourceRef) {
+      try {
+        const koreanRows = sourceRef.source === "ReAnime"
+          ? await sql`SELECT korean_title FROM anime_reanime_matches WHERE reanime_id = ${sourceRef.id} LIMIT 1`
+          : sourceRef.source === "Anissia"
+            ? await sql`SELECT korean_title FROM anime_reanime_matches WHERE anissia_no = ${Number(sourceRef.id)} LIMIT 1`
+            : [];
+        if (koreanRows[0]?.korean_title) sourceTitles.push(String(koreanRows[0].korean_title));
       } catch {}
     }
     const refKeys = sourceRefs.map((ref) => `${ref.source}:${ref.id}`);
@@ -437,6 +478,59 @@ export async function getAniAllMatches(title: string, animeId = ""): Promise<Ani
       FROM anime_aniall_matches WHERE LOWER(canonical_title) = LOWER(${canonical})
       ORDER BY post_id, confidence DESC
     `;
+    let exactMatches = rows.map(toAniAllMatch);
+    const seasonHint = aniAllSeason(title) ?? aniAllSeason(canonical) ?? sourceTitles.map(aniAllSeason).find((season) => season !== null) ?? null;
+    if (seasonHint === null) return exactMatches;
+
+    const baseTitles = [...new Set([canonical, ...sourceTitles].map(aniAllTitleBase).filter((base) => base.length >= 3))];
+    const fallbackRows = (await Promise.all(baseTitles.map((base) => sql`
+      SELECT DISTINCT ON (post_id, canonical_title)
+        post_id, canonical_title, blog_title, post_url, confidence, review_status, evidence
+      FROM anime_aniall_matches
+      WHERE POSITION(${base} IN regexp_replace(lower(canonical_title), '[^[:alnum:]가-힣]', '', 'g')) > 0
+      ORDER BY post_id, canonical_title, confidence DESC
+      LIMIT 100
+    `))).flat();
+    exactMatches = exactMatches.filter((match) => {
+      const rowSeason = aniAllSeason(match.canonicalTitle) ?? aniAllSeason(match.blogTitle) ?? aniAllSeason(match.evidence);
+      return rowSeason === null || rowSeason === seasonHint;
+    });
+    const seen = new Set(exactMatches.map((match) => `${match.postId}\n${match.canonicalTitle}`));
+    const seasonMatches = fallbackRows.map(toAniAllMatch).filter((match) => {
+      if (!baseTitles.includes(aniAllTitleBase(match.canonicalTitle))) return false;
+      const rowSeason = aniAllSeason(match.canonicalTitle) ?? aniAllSeason(match.blogTitle) ?? aniAllSeason(match.evidence);
+      return rowSeason === seasonHint;
+    });
+    for (const match of seasonMatches) {
+      const key = `${match.postId}\n${match.canonicalTitle}`;
+      if (!seen.has(key)) { exactMatches.push(match); seen.add(key); }
+    }
+    return exactMatches;
+  } catch (e) {
+    console.warn("[getAniAllMatches warning]:", e);
+    return [];
+  }
+}
+
+/** Search reviewed AniAll mappings by a partial Korean title for manual local-archive lookup. */
+export async function searchAniAllMatchesByTitleFragment(fragment: string): Promise<AniAllMatch[]> {
+  const sql = getDb();
+  const compact = fragment.normalize("NFKC").toLocaleLowerCase("ko-KR").replace(/[^\p{L}\p{N}]/gu, "");
+  if (!sql || compact.length < 2) return [];
+  try {
+    await initDb();
+    const rows = await sql`
+      SELECT DISTINCT ON (post_id, canonical_title)
+        post_id, canonical_title, blog_title, post_url, confidence, review_status, evidence
+      FROM anime_aniall_matches
+      WHERE POSITION(
+        ${compact} IN regexp_replace(lower(canonical_title), '[^[:alnum:]가-힣]', '', 'g')
+      ) > 0
+      ORDER BY post_id, canonical_title,
+        CASE WHEN review_status = 'approved' THEN 0 ELSE 1 END,
+        confidence DESC
+      LIMIT 100
+    `;
     return rows.map((row) => ({
       postId: String(row.post_id), canonicalTitle: String(row.canonical_title),
       blogTitle: String(row.blog_title), postUrl: String(row.post_url),
@@ -444,7 +538,7 @@ export async function getAniAllMatches(title: string, animeId = ""): Promise<Ani
       evidence: String(row.evidence || ""),
     }));
   } catch (e) {
-    console.warn("[getAniAllMatches warning]:", e);
+    console.warn("[searchAniAllMatchesByTitleFragment warning]:", e);
     return [];
   }
 }
