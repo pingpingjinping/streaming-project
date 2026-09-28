@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 import iconv from "iconv-lite";
 import AdmZip from "adm-zip";
-import { getCachedKoreanAnimeTitle, saveKoreanAnimeTitleMapping, getAniAllMatches, getAniAllCandidates, getSubtitleSourcePriority } from "@/lib/db";
+import { getCachedKoreanAnimeTitle, saveKoreanAnimeTitleMapping, getAniAllMatches, getAniAllCandidates, getSubtitleSourcePriority, getSubtitleRejections } from "@/lib/db";
 import { getMonthlyAnissiaCandidates } from "@/lib/reanimeMatches";
 
 export const HEADERS: Record<string, string> = {
@@ -1664,13 +1664,16 @@ export async function searchAllSubtitlesParallel(
     const targetTitle = resolvedTitle || title;
 
     // Fetch both indexed AniAll posts and current Anissia results concurrently.
-    const [anissiaCreators, aniallMatches, aniallCandidates, kairanSub, sourcePriority] = await Promise.all([
+    const [anissiaCreators, aniallMatches, aniallCandidates, kairanSub, sourcePriority, rejected] = await Promise.all([
       getAnissiaCreators(targetTitle, episodeNumber, 3500, directAnimeNo, referenceTitle, animeId),
       getAniAllMatches(targetTitle, animeId, true),
       getAniAllCandidates(targetTitle, animeId),
       findKairanSubtitle(targetTitle, configuredSourceEpisode, 3500),
       getSubtitleSourcePriority(),
+      getSubtitleRejections(animeId),
     ]);
+    const isRejected = (provider: string, sourceKey: string) =>
+      rejected.some((entry) => entry.provider === provider && entry.sourceKey === sourceKey);
     const aniallCreators: CreatorInfo[] = aniallMatches.map((match) => ({
       name: `AniAll · ${match.blogTitle}`, episode: "게시글 첨부 자막", update_date: "",
       website: match.postUrl, is_current_ep: true, matchScore: match.confidence,
@@ -1687,10 +1690,10 @@ export async function searchAllSubtitlesParallel(
       ...anissiaCreators.map((creator) => ({ ...creator, sourceProvider: "anissia" as const })),
       ...aniallCreators,
       ...aniallReviewCreators,
-    ];
+    ].filter((creator) => !isRejected(creator.sourceProvider, creator.website || creator.name));
 
     const collectedSubs: SubtitleResult[] = [];
-    if (kairanSub) {
+    if (kairanSub && !isRejected("anissia", kairanSub.sourceCreatorWebsite || kairanSub.url || kairanSub.name)) {
       collectedSubs.push({ ...kairanSub, sourceProvider: "anissia" });
     }
 
