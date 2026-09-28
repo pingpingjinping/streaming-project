@@ -568,6 +568,38 @@ export async function getAniAllMatches(title: string, animeId = "", includeOther
   }
 }
 
+/** Scored monthly AniAll suggestions stay separate from confirmed subtitle links. */
+export async function getAniAllCandidates(title: string, animeId = ""): Promise<AniAllMatch[]> {
+  const sql = getDb();
+  if (!sql || !title.trim()) return [];
+  try {
+    const alias = await sql`SELECT korean_title FROM anime_title_aliases
+      WHERE normalized_title = ${normalizeAnimeTitleKey(title)} LIMIT 1`;
+    const related = animeId.startsWith("re_")
+      ? await sql`SELECT korean_title FROM anime_reanime_matches
+          WHERE reanime_id = ${animeId.slice(3)} LIMIT 1`
+      : [];
+    const names = [...new Set([title, alias[0]?.korean_title, related[0]?.korean_title]
+      .map((value) => String(value || "").trim()).filter(Boolean))];
+    const bases = names.map(aniAllTitleBase).filter((base) => base.length >= 3);
+    if (!bases.length) return [];
+    const rows = await sql`
+      SELECT c.post_id, c.canonical_title, c.blog_title, c.post_url,
+             c.confidence, 'candidate' AS review_status, c.evidence
+      FROM anime_aniall_candidates c
+      WHERE NOT EXISTS (SELECT 1 FROM anime_aniall_matches m WHERE m.post_id = c.post_id)
+        AND (${sql.array(names)}::text[] @> ARRAY[c.canonical_title]
+          OR EXISTS (SELECT 1 FROM unnest(${sql.array(bases)}::text[]) AS b(base)
+            WHERE b.base = regexp_replace(lower(c.canonical_title), '[^[:alnum:]가-힣]', '', 'g')))
+      ORDER BY c.confidence DESC, c.post_id DESC LIMIT 20
+    `;
+    return rows.map(toAniAllMatch);
+  } catch {
+    // An older Pi database may not have imported the candidates table yet.
+    return [];
+  }
+}
+
 /** Search reviewed AniAll mappings by a partial Korean title for manual local-archive lookup. */
 export async function searchAniAllMatchesByTitleFragment(fragment: string): Promise<AniAllMatch[]> {
   const sql = getDb();
