@@ -252,15 +252,10 @@ export async function resolveAnissiaStream(
 
             // 실제로 유효한 스트림을 획득했을 때만 DB에 영구 캐싱
             if (anissiaId !== null) {
-
               setAnissiaStreamCache({
-
                 anissia_id: anissiaId,
-
                 reanime_id: reanimeId,
-
               }).catch(() => {});
-
             }
 
             return {
@@ -309,20 +304,10 @@ export async function resolveAnissiaStream(
             });
 
             if (anissiaId !== null) {
-
-
               setAnissiaStreamCache({
-
-
                 anissia_id: anissiaId,
-
-
                 linkkf_id: linkkfId,
-
-
               }).catch(() => {});
-
-
             }
 
             return {
@@ -365,20 +350,10 @@ export async function resolveAnissiaStream(
               });
 
               if (anissiaId !== null) {
-
-
                 setAnissiaStreamCache({
-
-
                   anissia_id: anissiaId,
-
-
                   ohli24_id: ohliId,
-
-
                 }).catch(() => {});
-
-
               }
 
               return {
