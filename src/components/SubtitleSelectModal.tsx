@@ -75,6 +75,8 @@ export default function SubtitleSelectModal({
 }: SubtitleSelectModalProps) {
   const [mounted, setMounted] = useState(false);
   const [activeTab, setActiveTab] = useState<"creators" | "search" | "file">("creators");
+  const [localArchiveOptions, setLocalArchiveOptions] = useState<SubtitleOption[]>([]);
+  const [isLoadingLocalArchives, setIsLoadingLocalArchives] = useState(false);
 
   // Search tab states
   const [searchKeyword, setSearchKeyword] = useState(animeTitle || "");
@@ -107,6 +109,51 @@ export default function SubtitleSelectModal({
       setFileError(null);
     }
   }, [isOpen, animeTitle, episodeNumber]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setLocalArchiveOptions([]);
+      return;
+    }
+    let cancelled = false;
+    setIsLoadingLocalArchives(true);
+    const params = new URLSearchParams({
+      title: animeTitle,
+      ep: String(episodeNumber || 1),
+      animeId,
+    });
+    fetch(`/api/anime/subtitles/local?${params.toString()}`, { cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.message || "로컬 자막 검색 실패");
+        return data;
+      })
+      .then((data) => {
+        if (cancelled) return;
+        setLocalArchiveOptions((data.subtitles || []).map((subtitle: any) => ({
+          name: subtitle.name,
+          format: subtitle.is_ass ? "ASS" : "VTT",
+          is_ass: Boolean(subtitle.is_ass),
+          content: subtitle.content || "",
+          url: subtitle.url || "",
+          matchScore: subtitle.matchScore,
+          matchedTitle: subtitle.matchedTitle || subtitle.sourceMatchedTitle,
+          verifiedMatch: subtitle.verifiedMatch,
+          sourceProvider: "aniall",
+          sourceCreatorWebsite: subtitle.sourceCreatorWebsite,
+          sourceMatchedTitle: subtitle.sourceMatchedTitle,
+          localArchive: true,
+        })));
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.warn("[Local archive recommendations]:", error);
+          setLocalArchiveOptions([]);
+        }
+      })
+      .finally(() => { if (!cancelled) setIsLoadingLocalArchives(false); });
+    return () => { cancelled = true; };
+  }, [isOpen, animeId, animeTitle, episodeNumber]);
 
   if (!mounted || !isOpen) return null;
 
@@ -373,6 +420,27 @@ export default function SubtitleSelectModal({
           {/* Tab 1: Creators List */}
           {activeTab === "creators" && (
             <div className="space-y-3">
+              <section className="rounded-2xl border border-emerald-500/25 bg-emerald-950/15 p-4">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-bold text-emerald-200">Pi 로컬 자막</h3>
+                  {isLoadingLocalArchives && <span className="text-xs text-emerald-300">검색 중…</span>}
+                </div>
+                {localArchiveOptions.length ? (
+                  <div className="space-y-2">
+                    {localArchiveOptions.map((subtitle, index) => (
+                      <button key={`${subtitle.name}-${index}`} type="button"
+                        onClick={() => { onSelectSubtitle(subtitle); onClose(); }}
+                        className="flex w-full flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-500/20 bg-slate-900/70 px-3 py-2 text-left hover:border-emerald-400/50 hover:bg-slate-900">
+                        <span className="min-w-0 truncate text-sm font-semibold text-white">{subtitle.name}</span>
+                        <span className="shrink-0 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-bold text-emerald-300">Pi 로컬 적용</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : !isLoadingLocalArchives ? (
+                  <p className="text-xs text-slate-400">현재 회차의 로컬 자막을 찾지 못했어. 다른 제목 검색에서 로컬 검색을 할 수 있어.</p>
+                ) : null}
+              </section>
+
               {creatorError && (
                 <div className="flex items-center gap-2 rounded-xl bg-red-500/10 border border-red-500/30 p-3 text-xs text-red-400">
                   <AlertCircle className="h-4 w-4 shrink-0" />
