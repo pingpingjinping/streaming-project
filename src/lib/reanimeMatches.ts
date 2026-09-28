@@ -23,6 +23,45 @@ export function findReanimeSearchTitles(koreanTitle: string): string[] {
     .slice(0, 4).map((row) => row[2]);
 }
 
+/** Resolve partial Korean queries (for example, "슬라임") to ReAnime titles
+ * through the reviewed catalog imported into Postgres.
+ */
+export async function findReanimeSearchTitlesFromDb(koreanQuery: string): Promise<string[]> {
+  const query = koreanQuery.normalize("NFKC").trim();
+  if (!/[가-힣]/.test(query)) return [];
+  const sql = getDb();
+  if (!sql) return [];
+
+  const compact = query.toLocaleLowerCase("ko-KR").replace(/[^\p{L}\p{N}]/gu, "");
+  if (compact.length < 2) return [];
+
+  try {
+    const like = `%${query}%`;
+    const compactLike = `%${compact}%`;
+    const rows = await sql`
+      SELECT m.reanime_id, m.korean_title,
+        COALESCE(NULLIF(r.payload->>'title_english', ''),
+                 NULLIF(r.payload->>'title_romaji', ''),
+                 NULLIF(r.payload->>'title_native', '')) AS search_title
+      FROM anime_reanime_matches m
+      LEFT JOIN anime_catalog_entries r
+        ON r.source = 'ReAnime' AND r.source_record_id = m.reanime_id
+      WHERE m.korean_title ILIKE ${like}
+         OR regexp_replace(lower(m.korean_title), '[^[:alnum:]가-힣]', '', 'g') LIKE ${compactLike}
+      ORDER BY CASE
+        WHEN regexp_replace(lower(m.korean_title), '[^[:alnum:]가-힣]', '', 'g') = ${compact} THEN 0
+        ELSE 1 END,
+        length(m.korean_title), m.korean_title
+      LIMIT 12
+    `;
+
+    return [...new Set(rows.map((row) => String(row.search_title || "").trim()).filter(Boolean))];
+  } catch (error) {
+    console.warn("[findReanimeSearchTitlesFromDb warning]:", error);
+    return [];
+  }
+}
+
 export async function getReanimeMatch(animeId: string): Promise<ReanimeMatch | null> {
   if (!animeId.startsWith("re_")) return null;
   const slug = animeId.slice(3);
