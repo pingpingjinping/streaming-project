@@ -225,10 +225,9 @@ export async function getAnissiaArchiveSubtitles(
   const matched: Array<{ entry: AnissiaArchiveIndexEntry; title: string; creator: string; website: string; order: number }> = [];
 
   for (const entry of index) {
-    const objects = recordObjects(entry.record);
     const recordAnimeNo = recordNumber(entry.record, ["animeNo", "anime_no", "anissiaNo"]);
     const folderTitle = path.basename(path.dirname(path.dirname(path.dirname(entry.finishPath))));
-    const recordTitle = recordValue(entry.record, ["subject", "animeTitle", "workTitle", "title", "anime_name", "work", "name"]) || folderTitle;
+    const recordTitle = recordValue(entry.record, ["subject", "animeTitle", "workTitle", "title", "anime_name", "work"]) || folderTitle;
     const exactTitleMatch = [recordTitle, folderTitle].some((value) => wantedTitles.has(normalizeBlogTitle(value)));
     if (!(animeNo && recordAnimeNo === animeNo) && !exactTitleMatch) continue;
 
