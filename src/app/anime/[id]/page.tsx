@@ -1,6 +1,7 @@
 import Navbar from "@/components/Navbar";
 import FavoriteButton from "@/components/FavoriteButton";
 import EpisodeListSection from "@/components/EpisodeListSection";
+import SubtitleEpisodeStartSetting from "@/components/SubtitleEpisodeStartSetting";
 import ReanimeDetailFallback from "@/components/ReanimeDetailFallback";
 import { getProviderByAnimeId } from "@/lib/providers";
 import { requireAuth, getCurrentUserId } from "@/lib/auth";
@@ -129,6 +130,8 @@ export default async function AnimeDetailPage({
             </div>
           </div>
         </div>
+
+        <SubtitleEpisodeStartSetting animeId={anime.id} />
 
         {/* Episodes Section (50-chunk ranges, sorting, jump search, watched badges) */}
         <EpisodeListSection
