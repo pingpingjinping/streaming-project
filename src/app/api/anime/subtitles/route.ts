@@ -219,6 +219,15 @@ export async function POST(request: NextRequest) {
     }
 
     if (!sub || !sub.content) {
+      if (sourceProvider === "aniall") {
+        console.warn("[AniAll subtitle extraction failed]", {
+          blogTitle: String(creatorName).replace(/^AniAll\s*[·|]\s*/i, "").trim(),
+          episode: ep,
+          sourceEpisode,
+          season: targetSeason,
+          website,
+        });
+      }
       return NextResponse.json({
         success: false,
         message: "해당 제작자 블로그에서 자막을 자동으로 추출하지 못했습니다.",
