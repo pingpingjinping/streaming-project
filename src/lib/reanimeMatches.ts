@@ -7,6 +7,37 @@ export interface ReanimeMatch {
   searchTitle?: string;
 }
 
+export interface ReanimeSubtitleCandidate {
+  animeNo: number;
+  subject: string;
+  score: number;
+  reason: string;
+}
+
+/** Monthly candidates are suggestions; only reviewed/unique automatic links are direct IDs. */
+export async function getMonthlyAnissiaCandidates(animeId: string): Promise<ReanimeSubtitleCandidate[]> {
+  if (!animeId.startsWith("re_")) return [];
+  const sql = getDb();
+  if (!sql) return [];
+  try {
+    const rows = await sql`
+      SELECT c.anissia_no, c.score, c.reason,
+        COALESCE(a.payload->>'title_ko', '') AS subject
+      FROM anime_monthly_match_candidates c
+      JOIN anime_catalog_entries a ON a.source='Anissia'
+        AND a.source_record_id=c.anissia_no::text
+      WHERE c.reanime_id=${animeId.slice(3)} AND c.score>=70
+      ORDER BY c.score DESC, c.anissia_no
+      LIMIT 4
+    `;
+    return rows.map((row) => ({ animeNo: Number(row.anissia_no),
+      subject: String(row.subject), score: Number(row.score), reason: String(row.reason) }));
+  } catch {
+    // Older Pi databases may not have imported the monthly candidate table yet.
+    return [];
+  }
+}
+
 const bundled = matches as unknown as Record<string, [string, number | null, string]>;
 
 export function getBundledReanimeMatch(animeId: string): ReanimeMatch | null {
