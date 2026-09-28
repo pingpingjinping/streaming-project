@@ -57,12 +57,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: true, anime_title: title, episode: ep, count: 1,
         subtitles: [uploaded], creators: [] }, { headers: { "Cache-Control": "no-store" } });
     }
-    const cached = animeIdParam && !sourceEpisodeStart ? await getVerifiedSubtitleCache(animeIdParam, ep) : null;
-    if (cached && !isRejected(cached.sourceProvider,
-      cached.sourceCreatorWebsite || cached.name)) {
-      return NextResponse.json({ success: true, anime_title: title, episode: ep, count: 1,
-        subtitles: [cached], creators: [], verified_cache: true }, { headers: { "Cache-Control": "no-store" } });
-    }
     const resolvedTitle = await resolveKoreanTitle(title);
     const searchTarget = reanimeMatch?.koreanTitle || resolvedTitle || title;
     const comparisonTitle = reanimeMatch?.koreanTitle ||
@@ -161,6 +155,13 @@ export async function GET(request: NextRequest) {
     for (const resolveLocal of localResolvers) {
       const localResponse = await resolveLocal();
       if (localResponse) return localResponse;
+    }
+
+    const cached = animeIdParam && !sourceEpisodeStart ? await getVerifiedSubtitleCache(animeIdParam, ep) : null;
+    if (cached && !isRejected(cached.sourceProvider,
+      cached.sourceCreatorWebsite || cached.name)) {
+      return NextResponse.json({ success: true, anime_title: title, episode: ep, count: 1,
+        subtitles: [cached], creators: [], verified_cache: true }, { headers: { "Cache-Control": "no-store" } });
     }
 
     // 직접 저장한 웹 링크와 AniAll/Anissia 링크는 모든 Pi 로컬 보관함을 확인한 뒤 사용한다.
