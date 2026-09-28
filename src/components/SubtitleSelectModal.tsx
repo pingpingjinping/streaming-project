@@ -50,11 +50,11 @@ const creatorKey = (creator: CreatorInfo) => `${creator.website}\n${creator.matc
 type RejectedSource = { provider: string; sourceKey: string };
 const rejectionId = (provider: string, sourceKey: string) => JSON.stringify([provider, sourceKey]);
 const creatorSource = (creator: CreatorInfo): RejectedSource => ({
-  provider: creator.website ? creator.sourceProvider || "anissia" : "local",
+  provider: creator.localArchive ? creator.sourceProvider || "local" : creator.website ? creator.sourceProvider || "anissia" : "local",
   sourceKey: creator.website || creator.name,
 });
 const subtitleSource = (subtitle: SubtitleOption): RejectedSource => ({
-  provider: subtitle.sourceCreatorWebsite ? subtitle.sourceProvider || "anissia" : "local",
+  provider: subtitle.localArchive ? subtitle.sourceProvider || "local" : subtitle.sourceCreatorWebsite ? subtitle.sourceProvider || "anissia" : "local",
   sourceKey: subtitle.sourceCreatorWebsite || (subtitle.localArchive ? subtitle.name : subtitle.url || subtitle.name),
 });
 
@@ -219,7 +219,7 @@ export default function SubtitleSelectModal({
           matchScore: subtitle.matchScore,
           matchedTitle: subtitle.matchedTitle || subtitle.sourceMatchedTitle,
           verifiedMatch: subtitle.verifiedMatch,
-          sourceProvider: "aniall",
+          sourceProvider: subtitle.sourceProvider || "aniall",
           sourceCreatorWebsite: subtitle.sourceCreatorWebsite,
           sourceMatchedTitle: subtitle.sourceMatchedTitle,
           localArchive: true,
@@ -266,7 +266,7 @@ export default function SubtitleSelectModal({
 
   // 1. Download and apply creator's subtitle
   const handleSelectCreator = async (creator: CreatorInfo) => {
-    if (!creator.website || loadingCreator) return;
+    if ((!creator.website && !creator.localArchive) || loadingCreator) return;
     const selectedCreatorKey = creatorKey(creator);
     setLoadingCreator(selectedCreatorKey);
     setCreatorError(null);
@@ -283,6 +283,7 @@ export default function SubtitleSelectModal({
           episodeNumber: episodeNumber,
           creatorEpisode: creator.episode,
           sourceProvider: creator.sourceProvider,
+          localArchive: creator.localArchive,
           animeId,
         }),
       });
