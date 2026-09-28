@@ -25,6 +25,8 @@ reviews = db.execute('''SELECT anime_no,anissia_year,subject,original_subject,ca
  WHERE year_status != '같은 연도 재발견' ''').fetchall()
 catalog,aliases=build_catalog(db)
 reanime_matches=build_reanime_matches(db,catalog)
+has_monthly_candidates=db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='monthly_match_candidates'").fetchone()
+monthly_candidates=db.execute('SELECT anissia_no,reanime_id,score,reason,evidence_json FROM monthly_match_candidates WHERE score>=70').fetchall() if has_monthly_candidates else []
 source_counts = {row['source']: row['n'] for row in db.execute(
     'SELECT source,COUNT(*) AS n FROM entries GROUP BY source')}
 if not all(source_counts.get(source, 0) for source in ('AniList','ReAnime','Onnada','Anissia')) or not catalog:
@@ -62,6 +64,11 @@ CREATE TABLE IF NOT EXISTS anime_reanime_matches (
  reanime_id TEXT PRIMARY KEY, korean_title TEXT NOT NULL, anissia_no INTEGER,
  review_status TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS anime_monthly_match_candidates (
+ reanime_id TEXT NOT NULL, anissia_no INTEGER NOT NULL, score INTEGER NOT NULL,
+ reason TEXT NOT NULL, evidence JSONB NOT NULL,
+ PRIMARY KEY(reanime_id,anissia_no)
+);
 CREATE TABLE IF NOT EXISTS anime_title_aliases (
  normalized_title VARCHAR(512) PRIMARY KEY, original_title TEXT NOT NULL,
  korean_title TEXT NOT NULL, source VARCHAR(40) NOT NULL,
@@ -70,7 +77,7 @@ CREATE TABLE IF NOT EXISTS anime_title_aliases (
 CREATE TEMP TABLE catalog_alias_stage (
  normalized_title VARCHAR(512),original_title TEXT,korean_title TEXT
 );
-TRUNCATE anime_catalog_entries, anime_unmatched_review, anime_korean_catalog, anime_reanime_matches;
+TRUNCATE anime_catalog_entries, anime_unmatched_review, anime_korean_catalog, anime_reanime_matches, anime_monthly_match_candidates;
 COPY anime_catalog_entries (source,source_record_id,payload) FROM STDIN WITH (FORMAT csv);
 ''')
 writer=csv.writer(stream,lineterminator='\n')
@@ -86,6 +93,9 @@ stream.write('\\.\nCOPY anime_reanime_matches (reanime_id,korean_title,anissia_n
 for match in reanime_matches:
     writer.writerow((match['reanimeId'],match['koreanTitle'],
       match['anissiaNo'] if match['anissiaNo'] is not None else '\\N',match['reviewStatus']))
+stream.write('\\.\nCOPY anime_monthly_match_candidates (anissia_no,reanime_id,score,reason,evidence) FROM STDIN WITH (FORMAT csv);\n')
+for row in monthly_candidates:
+    writer.writerow((row['anissia_no'],row['reanime_id'],row['score'],row['reason'],row['evidence_json']))
 stream.write('\\.\nCOPY catalog_alias_stage (normalized_title,original_title,korean_title) FROM STDIN WITH (FORMAT csv);\n')
 for alias in aliases:writer.writerow(alias)
 stream.write('''\\.
@@ -101,4 +111,4 @@ cmd=['docker','compose','exec','-T','db','sh','-c',
 result=subprocess.run(cmd,input=stream.getvalue(),text=True,check=False)
 if result.returncode:
     raise SystemExit(f'Import failed (exit {result.returncode}); transaction rolled back.')
-print(f'Imported {len(entries)} source records {source_counts}, {len(catalog)} Korean titles, {len(reanime_matches)} ReAnime links ({sum(r["anissiaNo"] is not None for r in reanime_matches)} direct subtitles), {len(aliases)} aliases and {len(reviews)} review items. Existing stream links kept.')
+print(f'Imported {len(entries)} source records {source_counts}, {len(catalog)} Korean titles, {len(reanime_matches)} ReAnime links ({sum(r["anissiaNo"] is not None for r in reanime_matches)} direct subtitles), {len(monthly_candidates)} scored new-work candidates, {len(aliases)} aliases and {len(reviews)} review items. Existing stream links kept.')
