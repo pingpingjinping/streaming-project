@@ -8,6 +8,8 @@ def key(title):
 def build_catalog(db):
     db.row_factory = __import__('sqlite3').Row
     matches = {r['anime_no']: dict(r) for r in db.execute('SELECT * FROM anissia_year_match')}
+    has_auto = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='monthly_auto_matches'").fetchone()
+    auto_links = {r['anissia_no']: dict(r) for r in db.execute('SELECT * FROM monthly_auto_matches')} if has_auto else {}
     entries = list(db.execute('SELECT * FROM entries'))
     by_source = {(r['source'],r['source_record_id']):r for r in entries}
     catalog = []
@@ -25,11 +27,19 @@ def build_catalog(db):
         if r['source'] not in ('Onnada','Anissia') or not r['title_ko']:continue
         ids=json.loads(r['cross_source_ids_json'])
         ani=matches.get(int(r['source_record_id'])) if r['source']=='Anissia' else None
+        auto=auto_links.get(int(r['source_record_id'])) if r['source']=='Anissia' and not ani else None
         status=ani['review_label'] if ani else (
             '검토된 사항' if r['existing_match_status']=='strong_exact' else
-            '주의' if r['existing_match_status']=='review' else '미매칭')
+            '주의' if r['existing_match_status']=='review' else
+            '자동확정' if auto else '미매칭')
         anilist_ids=ids.get('anilist_ids',[])
         reanime_ids=ids.get('reanime_ids',[])
+        if auto and auto['reanime_id'] not in reanime_ids:
+            reanime_ids.append(auto['reanime_id'])
+            source=by_source.get(('ReAnime',auto['reanime_id']))
+            if source:
+                for aid in json.loads(source['cross_source_ids_json']).get('anilist_ids',[]):
+                    if aid not in anilist_ids:anilist_ids.append(aid)
         if ani and ani['same_year_match_status'] in ('exact_title_same_year','high_similarity_same_year_review'):
             for c in db.execute('SELECT source,source_record_id,anilist_id,reanime_id FROM anissia_year_candidates WHERE anime_no=?',(ani['anime_no'],)):
                 if c['anilist_id'] and c['anilist_id'] not in anilist_ids:anilist_ids.append(c['anilist_id'])
@@ -37,6 +47,7 @@ def build_catalog(db):
         # Only the reviewed links are used to display automatic Korean titles.
         priority=(3 if r['source']=='Onnada' and r['existing_match_status']=='strong_exact'
                   else 2 if ani and ani['same_year_match_status']=='exact_title_same_year'
+                  else 1 if auto
                   else 1 if status=='검토된 사항' else 0)
         if priority:
             add_aliases(r,r['title_ko'],priority)
@@ -105,4 +116,15 @@ def build_reanime_matches(db,catalog):
                        'anissiaNo':next(iter(anime_nos)) if len(anime_nos)==1 else None,
                        'searchTitle':search_title,
                        'reviewStatus':'검토된 사항'})
+    has_auto=db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='monthly_auto_matches'").fetchone()
+    if has_auto:
+        for row in db.execute('SELECT * FROM monthly_auto_matches'):
+            slug=row['reanime_id']
+            # A previously reviewed link or disputed title always wins.
+            if slug in candidates or any(item['reanimeId']==slug for item in result):continue
+            target=original_titles.get(slug)
+            search_title=(target['title_english'] or target['title_romaji'] or target['title_native']) if target else ''
+            result.append({'reanimeId':slug,'koreanTitle':row['korean_title'],
+                           'anissiaNo':row['anissia_no'],'searchTitle':search_title,
+                           'reviewStatus':'자동확정'})
     return result
