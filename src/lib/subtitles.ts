@@ -1633,7 +1633,8 @@ export async function searchAllSubtitlesParallel(
   maxTotalTimeMs = 45000,
   directAnimeNo?: number | null,
   referenceTitle = title,
-  animeId = ""
+  animeId = "",
+  sourceEpisodeStart: number | null = null
 ): Promise<{
   subtitles: SubtitleResult[];
   creators: CreatorInfo[];
@@ -1646,6 +1647,9 @@ export async function searchAllSubtitlesParallel(
   });
 
   const workerPromise = (async () => {
+    const configuredSourceEpisode = sourceEpisodeStart && sourceEpisodeStart > 0
+      ? sourceEpisodeStart + episodeNumber - 1
+      : episodeNumber;
     const resolvedTitle = await resolveKoreanTitle(title);
     const targetTitle = resolvedTitle || title;
 
@@ -1653,7 +1657,7 @@ export async function searchAllSubtitlesParallel(
     const [anissiaCreators, aniallMatches, kairanSub, sourcePriority] = await Promise.all([
       getAnissiaCreators(targetTitle, episodeNumber, 3500, directAnimeNo, referenceTitle),
       getAniAllMatches(targetTitle, animeId, true),
-      findKairanSubtitle(targetTitle, episodeNumber, 3500),
+      findKairanSubtitle(targetTitle, configuredSourceEpisode, 3500),
       getSubtitleSourcePriority(),
     ]);
     const aniallCreators: CreatorInfo[] = aniallMatches.map((match) => ({
@@ -1696,7 +1700,9 @@ export async function searchAllSubtitlesParallel(
     // 3. Parallel fetch creator subtitles with individual 3.5s timeouts
     const creatorSubPromises = topCreators.map(async (c) => {
       const targetSeason = parseSeason(c.matchedTitle || targetTitle) || parseSeason(targetTitle);
-      const sourceEpisode = mapProviderEpisodeNumber(c.episode, episodeNumber, targetSeason);
+      const sourceEpisode = sourceEpisodeStart && sourceEpisodeStart > 0
+        ? sourceEpisodeStart + episodeNumber - 1
+        : mapProviderEpisodeNumber(c.episode, episodeNumber, targetSeason);
       const subtitle = await fetchCreatorSubtitle(c.name, c.website, c.matchedTitle || targetTitle, sourceEpisode, 10000);
       return subtitle ? { ...subtitle, matchScore: c.matchScore,
         matchedTitle: c.matchedTitle, verifiedMatch: c.verifiedMatch,

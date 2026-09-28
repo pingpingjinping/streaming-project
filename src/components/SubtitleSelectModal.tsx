@@ -89,6 +89,10 @@ export default function SubtitleSelectModal({
   // Creator download states
   const [loadingCreator, setLoadingCreator] = useState<string | null>(null);
   const [creatorError, setCreatorError] = useState<string | null>(null);
+  const [startEpisodeInput, setStartEpisodeInput] = useState("");
+  const [savedStartEpisode, setSavedStartEpisode] = useState<number | null>(null);
+  const [savingStartEpisode, setSavingStartEpisode] = useState(false);
+  const [startEpisodeNotice, setStartEpisodeNotice] = useState<string | null>(null);
 
   // File upload states
   const [uploadedSub, setUploadedSub] = useState<SubtitleOption | null>(null);
@@ -111,6 +115,28 @@ export default function SubtitleSelectModal({
       setFileNotice(null);
     }
   }, [isOpen, animeTitle, episodeNumber]);
+
+  useEffect(() => {
+    if (!isOpen || !animeId) return;
+    let cancelled = false;
+    fetch(`/api/anime/subtitle-episode-start?animeId=${encodeURIComponent(animeId)}`, { cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.message || "시작 회차 설정을 불러오지 못했습니다.");
+        return data;
+      })
+      .then((data) => {
+        if (cancelled) return;
+        const value = Number(data.startEpisode);
+        const start = Number.isInteger(value) && value > 0 ? value : null;
+        setSavedStartEpisode(start);
+        setStartEpisodeInput(start ? String(start) : "");
+      })
+      .catch((error) => {
+        if (!cancelled) setStartEpisodeNotice(error.message || "시작 회차 설정을 불러오지 못했습니다.");
+      });
+    return () => { cancelled = true; };
+  }, [isOpen, animeId]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -159,6 +185,33 @@ export default function SubtitleSelectModal({
 
   if (!mounted || !isOpen) return null;
 
+  const handleSaveStartEpisode = async () => {
+    const raw = startEpisodeInput.trim();
+    const value = raw ? Number(raw) : null;
+    if (value !== null && (!Number.isInteger(value) || value < 1 || value > 10000)) {
+      setStartEpisodeNotice("시작 회차는 1~10000 사이의 정수로 입력해 주세요.");
+      return;
+    }
+    setSavingStartEpisode(true);
+    setStartEpisodeNotice(null);
+    try {
+      const response = await fetch("/api/anime/subtitle-episode-start", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ animeId, startEpisode: value }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.message || "저장에 실패했습니다.");
+      setSavedStartEpisode(value);
+      setStartEpisodeInput(value === null ? "" : String(value));
+      setStartEpisodeNotice(value === null ? "기본 회차 검색으로 되돌렸어." : `${value}화부터 연결하도록 저장했어.`);
+    } catch (error: any) {
+      setStartEpisodeNotice(error.message || "시작 회차 설정을 저장하지 못했습니다.");
+    } finally {
+      setSavingStartEpisode(false);
+    }
+  };
+
   // 1. Download and apply creator's subtitle
   const handleSelectCreator = async (creator: CreatorInfo) => {
     if (!creator.website || loadingCreator) return;
@@ -178,6 +231,7 @@ export default function SubtitleSelectModal({
           episodeNumber: episodeNumber,
           creatorEpisode: creator.episode,
           sourceProvider: creator.sourceProvider,
+          animeId,
         }),
       });
 
@@ -473,6 +527,39 @@ export default function SubtitleSelectModal({
                   <span>{creatorError}</span>
                 </div>
               )}
+
+              <section className="rounded-2xl border border-amber-500/25 bg-amber-950/10 p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <label htmlFor="subtitle-start-episode" className="text-xs font-semibold text-amber-100">
+                    이 작품 페이지 자막 시작 회차
+                  </label>
+                  <input
+                    id="subtitle-start-episode"
+                    type="number"
+                    min={1}
+                    max={10000}
+                    value={startEpisodeInput}
+                    onChange={(event) => setStartEpisodeInput(event.target.value)}
+                    placeholder="기본값"
+                    className="w-24 rounded-lg border border-amber-500/30 bg-slate-900 px-3 py-2 text-xs text-white outline-none focus:border-amber-300"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveStartEpisode}
+                    disabled={savingStartEpisode}
+                    className="rounded-lg bg-amber-500/15 px-3 py-2 text-xs font-bold text-amber-100 hover:bg-amber-500/25 disabled:opacity-50"
+                  >
+                    {savingStartEpisode ? "저장 중…" : "저장"}
+                  </button>
+                </div>
+                <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
+                  예: 13을 저장하면 이 작품 페이지의 1화를 블로그 13화로 찾고, 12화는 24화로 찾아. 이 페이지의 모든 제작자에게 적용돼.
+                </p>
+                {savedStartEpisode && (
+                  <p className="mt-1 text-[11px] text-amber-200">현재 설정: {savedStartEpisode}화부터</p>
+                )}
+                {startEpisodeNotice && <p className="mt-1 text-[11px] text-amber-200">{startEpisodeNotice}</p>}
+              </section>
 
               {creators.length === 0 ? (
                 <div className="py-12 text-center text-slate-400">

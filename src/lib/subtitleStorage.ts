@@ -108,7 +108,7 @@ export async function saveVerifiedSubtitleCache(input: {
   }));
 }
 
-export async function getAniAllArchiveSubtitle(blogTitle: string, episode: number, seasonNumber: number | null = null) {
+export async function getAniAllArchiveSubtitle(blogTitle: string, episode: number, seasonNumber: number | null = null, startEpisodeOverride: number | null = null) {
   const corpus = path.join(root, "aniall_subtitles");
   let folders: string[];
   try { folders = await readdir(corpus); } catch (error: any) {
@@ -127,8 +127,14 @@ export async function getAniAllArchiveSubtitle(blogTitle: string, episode: numbe
       if (!info.isFile() || info.size === 0 || info.size > 100 * 1024 * 1024) continue;
       const { zip, entries } = inspectSubtitleArchive(await readFile(filePath));
       const targetSeason = seasonNumber || 1;
-      let selected = entries.filter((entry) => entry.episode === episode && entry.season === targetSeason);
+      let selected = (!startEpisodeOverride || targetSeason > 1)
+        ? entries.filter((entry) => entry.episode === episode && entry.season === targetSeason)
+        : [];
       let ambiguousSeasonMapping = false;
+      if (!selected.length && startEpisodeOverride && startEpisodeOverride > 0) {
+        const sourceEpisode = startEpisodeOverride + episode - 1;
+        selected = entries.filter((entry) => entry.season === null && entry.episode === sourceEpisode);
+      }
       if (!selected.length) {
         const unseasoned = entries.filter((entry) => entry.season === null && entry.episode !== null);
         const available = [...new Set(unseasoned.map((entry) => entry.episode as number))].sort((a, b) => a - b);
@@ -160,8 +166,10 @@ export async function getAniAllArchiveSubtitle(blogTitle: string, episode: numbe
         const range = filename.match(/(?:^|[^\d])(\d{1,3})\s*[-~]\s*(\d{1,3})(?!\d)/);
         const start = range ? Number(range[1]) : 0;
         const end = range ? Number(range[2]) : 0;
-        const sourceEpisode = seasonNumber && seasonNumber > 1 && episode >= 1 && episode <= end - start + 1
-          ? start + episode - 1 : episode;
+        const sourceEpisode = startEpisodeOverride && startEpisodeOverride > 0
+          ? startEpisodeOverride + episode - 1
+          : seasonNumber && seasonNumber > 1 && episode >= 1 && episode <= end - start + 1
+            ? start + episode - 1 : episode;
         if (start > 0 && end >= start && end - start + 1 === entries.length && sourceEpisode >= start && sourceEpisode <= end) {
           selected = [...entries].sort((a, b) => a.filename.localeCompare(b.filename, undefined, { numeric: true }))
             .filter((_, index) => start + index === sourceEpisode);
