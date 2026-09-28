@@ -4,6 +4,7 @@ import path from "node:path";
 import { deleteUploadedSubtitle as deleteLegacyUploadedSubtitle, getUploadedSubtitle as getLegacyUploadedSubtitle } from "@/lib/db";
 import { extractSubtitleFromBuffer } from "@/lib/subtitles";
 import { episodeFromSubtitleFilename, inspectSubtitleArchive } from "@/lib/subtitleUpload";
+import { parseEpisodes, parseSeason } from "@/lib/subtitles";
 
 const root = process.env.SUBTITLE_STORAGE_DIR || path.join(process.cwd(), "data", "subtitles");
 const safeSegment = (value: string) => {
@@ -106,6 +107,199 @@ export async function saveVerifiedSubtitleCache(input: {
     filename: input.filename, format: input.format, sourceProvider: input.sourceProvider,
     sourceUrl: input.sourceUrl, matchedTitle: input.matchedTitle, verifiedAt: new Date().toISOString(),
   }));
+}
+
+
+
+export interface AnissiaArchiveSubtitle {
+  name: string;
+  orig_filename: string;
+  content: string;
+  format: "ASS" | "VTT";
+  is_ass: boolean;
+  episode: number;
+  creator: string;
+  website: string;
+  matchedTitle: string;
+  updatedAt: string;
+  animeNo: number | null;
+}
+
+interface AnissiaArchiveIndexEntry {
+  finishPath: string;
+  record: Record<string, any>;
+  updatedAt: string;
+}
+
+let anissiaArchiveIndex: { entries: AnissiaArchiveIndexEntry[]; expiresAt: number } | null = null;
+let anissiaArchiveIndexPromise: Promise<AnissiaArchiveIndexEntry[]> | null = null;
+
+function recordObjects(record: Record<string, any>): Record<string, any>[] {
+  return [record, record.data, record.anime, record.work, record.caption, record.item]
+    .filter((item): item is Record<string, any> => Boolean(item && typeof item === "object" && !Array.isArray(item)));
+}
+
+function recordValue(record: Record<string, any>, keys: string[]): string {
+  for (const object of recordObjects(record)) {
+    for (const key of keys) {
+      const value = object[key];
+      if (typeof value === "string" || typeof value === "number") {
+        const text = String(value).trim();
+        if (text) return text;
+      }
+    }
+  }
+  return "";
+}
+
+function recordNumber(record: Record<string, any>, keys: string[]): number | null {
+  const value = recordValue(record, keys);
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number > 0 ? number : null;
+}
+
+async function loadAnissiaArchiveIndex(): Promise<AnissiaArchiveIndexEntry[]> {
+  const corpus = path.join(root, "anissia_subtitles");
+  const finishPaths: string[] = [];
+  const pending: Array<{ dir: string; depth: number }> = [{ dir: corpus, depth: 0 }];
+  let inspected = 0;
+
+  while (pending.length && inspected < 30000) {
+    const current = pending.pop()!;
+    let entries;
+    try {
+      entries = await readdir(current.dir, { withFileTypes: true });
+    } catch (error: any) {
+      if (error?.code === "ENOENT") continue;
+      throw error;
+    }
+    for (const entry of entries) {
+      inspected++;
+      if (inspected >= 30000) break;
+      if (entry.name.startsWith(".") || entry.name === "__MACOSX") continue;
+      const fullPath = path.join(current.dir, entry.name);
+      if (entry.isDirectory() && current.depth < 10) pending.push({ dir: fullPath, depth: current.depth + 1 });
+      else if (entry.isFile() && entry.name.toLowerCase() === "finish.txt") finishPaths.push(fullPath);
+    }
+  }
+
+  const indexed = await Promise.all(finishPaths.map(async (finishPath) => {
+    try {
+      const info = await stat(finishPath);
+      if (info.size <= 0 || info.size > 256 * 1024) return null;
+      const record = JSON.parse(await readFile(finishPath, "utf8"));
+      if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+      const updatedAt = recordValue(record, ["updDt", "updatedAt", "updateDate", "updated", "date"]);
+      return { finishPath, record, updatedAt };
+    } catch {
+      return null;
+    }
+  }));
+  return indexed.filter((entry): entry is AnissiaArchiveIndexEntry => Boolean(entry));
+}
+
+async function getAnissiaArchiveIndex(): Promise<AnissiaArchiveIndexEntry[]> {
+  if (anissiaArchiveIndex && anissiaArchiveIndex.expiresAt > Date.now()) return anissiaArchiveIndex.entries;
+  if (!anissiaArchiveIndexPromise) {
+    anissiaArchiveIndexPromise = loadAnissiaArchiveIndex()
+      .then((entries) => {
+        anissiaArchiveIndex = { entries, expiresAt: Date.now() + 60_000 };
+        return entries;
+      })
+      .finally(() => { anissiaArchiveIndexPromise = null; });
+  }
+  return anissiaArchiveIndexPromise;
+}
+
+/** Find an offline Anissia subtitle archive using its adjacent finish.txt metadata. */
+export async function getAnissiaArchiveSubtitles(
+  titles: string[],
+  episode: number,
+  animeNo?: number | null,
+  seasonNumber?: number | null,
+): Promise<AnissiaArchiveSubtitle[]> {
+  if (!Number.isSafeInteger(episode) || episode < 1) return [];
+  const wantedTitles = new Set(titles.map(normalizeBlogTitle).filter((value) => value.length >= 2));
+  const wantedSeason = seasonNumber || titles.map(parseSeason).find((value) => value !== null) || null;
+  const index = await getAnissiaArchiveIndex();
+  const matched: Array<{ entry: AnissiaArchiveIndexEntry; title: string; creator: string; website: string; order: number }> = [];
+
+  for (const entry of index) {
+    const objects = recordObjects(entry.record);
+    const recordAnimeNo = recordNumber(entry.record, ["animeNo", "anime_no", "anissiaNo"]);
+    const folderTitle = path.basename(path.dirname(path.dirname(path.dirname(entry.finishPath))));
+    const recordTitle = recordValue(entry.record, ["subject", "animeTitle", "workTitle", "title", "anime_name", "work", "name"]) || folderTitle;
+    const exactTitleMatch = [recordTitle, folderTitle].some((value) => wantedTitles.has(normalizeBlogTitle(value)));
+    if (!(animeNo && recordAnimeNo === animeNo) && !exactTitleMatch) continue;
+
+    const recordEpisode = recordValue(entry.record, ["episode", "episodeNumber", "episode_number", "episodeNo", "ep"]);
+    const episodeNumbers = recordEpisode ? parseEpisodes(recordEpisode) : [];
+    const episodeFolder = path.basename(path.dirname(path.dirname(entry.finishPath)));
+    const pathEpisodes = parseEpisodes(episodeFolder);
+    const hasEpisodeData = episodeNumbers.length > 0 || pathEpisodes.length > 0;
+    if (hasEpisodeData && !episodeNumbers.includes(episode) && !pathEpisodes.includes(episode)) continue;
+
+    const titleSeason = parseSeason(recordTitle) || parseSeason(folderTitle);
+    if (wantedSeason && titleSeason && wantedSeason !== titleSeason) continue;
+    const creator = recordValue(entry.record, ["name", "creator", "creatorName", "captionName"]) || path.basename(path.dirname(entry.finishPath));
+    const website = recordValue(entry.record, ["website", "url", "sourceUrl"]);
+    const timestamp = Date.parse(entry.updatedAt) || 0;
+    matched.push({ entry, title: recordTitle, creator, website, order: timestamp });
+  }
+
+  matched.sort((a, b) => b.order - a.order);
+  const results: AnissiaArchiveSubtitle[] = [];
+  for (const candidate of matched) {
+    const dir = path.dirname(candidate.entry.finishPath);
+    let files: string[] = [];
+    try { files = await readdir(dir); } catch { continue; }
+    const archives = files.filter((name) => name.toLowerCase().endsWith(".zip"))
+      .sort((a, b) => Number(b.toLowerCase() === "subtitle.zip") - Number(a.toLowerCase() === "subtitle.zip") ||
+        a.localeCompare(b, undefined, { numeric: true }));
+    const loose = files.filter((name) => /\.(ass|ssa|smi|srt|vtt)$/i.test(name));
+    const recordEpisode = recordValue(candidate.entry.record, ["episode", "episodeNumber", "episode_number", "episodeNo", "ep"]);
+    const recordedEpisodes = recordEpisode ? parseEpisodes(recordEpisode) : [];
+    const episodeFolder = path.basename(path.dirname(path.dirname(candidate.entry.finishPath)));
+    const pathEpisodes = parseEpisodes(episodeFolder);
+    const recordMatchesEpisode = recordedEpisodes.includes(episode) || pathEpisodes.includes(episode) ||
+      (!recordedEpisodes.length && !pathEpisodes.length);
+
+    for (const filename of [...archives, ...loose]) {
+      try {
+        const filePath = path.join(dir, filename);
+        const info = await stat(filePath);
+        if (!info.isFile() || info.size <= 0 || info.size > 100 * 1024 * 1024) continue;
+        let subtitle = null;
+        if (filename.toLowerCase().endsWith(".zip")) {
+          const { zip, entries } = inspectSubtitleArchive(await readFile(filePath));
+          const exactEntries = entries.filter((entry) => entry.episode === episode);
+          const selected = exactEntries.length ? exactEntries : entries.length === 1 && recordMatchesEpisode ? entries : [];
+          if (selected.length !== 1) continue;
+          const item = selected[0];
+          subtitle = extractSubtitleFromBuffer(zip.getEntries()[item.index].getData(), episode, item.filename);
+        } else if (recordMatchesEpisode) {
+          subtitle = extractSubtitleFromBuffer(await readFile(filePath), episode, filename);
+        }
+        if (!subtitle?.content) continue;
+        results.push({
+          name: subtitle.filename,
+          orig_filename: subtitle.orig_filename,
+          content: subtitle.content,
+          format: subtitle.format,
+          is_ass: subtitle.is_ass,
+          episode,
+          creator: candidate.creator,
+          website: candidate.website,
+          matchedTitle: candidate.title,
+          updatedAt: candidate.entry.updatedAt,
+          animeNo: recordNumber(candidate.entry.record, ["animeNo", "anime_no", "anissiaNo"]),
+        });
+        break;
+      } catch {}
+    }
+    if (results.length >= 12) break;
+  }
+  return results;
 }
 
 export async function getAniAllArchiveSubtitle(blogTitle: string, episode: number, seasonNumber: number | null = null, startEpisodeOverride: number | null = null) {
