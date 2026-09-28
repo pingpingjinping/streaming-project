@@ -93,6 +93,7 @@ export default function SubtitleSelectModal({
   // File upload states
   const [uploadedSub, setUploadedSub] = useState<SubtitleOption | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [fileNotice, setFileNotice] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -107,6 +108,7 @@ export default function SubtitleSelectModal({
       setCreatorError(null);
       setSearchError(null);
       setFileError(null);
+      setFileNotice(null);
     }
   }, [isOpen, animeTitle, episodeNumber]);
 
@@ -287,11 +289,43 @@ export default function SubtitleSelectModal({
     }
   };
 
-  // 3. Process local subtitle file (.ass, .srt, .smi, .vtt)
-  const processSubtitleFile = (file: File) => {
+  // Open a subtitle file directly, or unpack and save an episode ZIP on the Pi.
+  const processSubtitleFile = async (file: File) => {
     setFileError(null);
+    setFileNotice(null);
+    setUploadedSub(null);
     const fileName = file.name;
     const lowerName = fileName.toLowerCase();
+
+    if (lowerName.endsWith(".zip")) {
+      try {
+        const form = new FormData();
+        form.set("animeId", animeId);
+        form.set("ep", String(episodeNumber || 1));
+        form.set("file", file);
+        form.set("mode", "open");
+        const response = await fetch("/api/anime/uploaded-subtitle", { method: "POST", body: form });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data.message || "ZIP 자막을 Pi에 저장하지 못했습니다.");
+        }
+        const saved = Array.isArray(data.saved) ? data.saved : [];
+        if (data.subtitle) {
+          setUploadedSub({
+            name: data.subtitle.name || "Pi 저장: " + fileName,
+            format: data.subtitle.is_ass ? "ASS" : "VTT",
+            is_ass: Boolean(data.subtitle.is_ass),
+            content: data.subtitle.content || "",
+          });
+          setFileNotice("Pi에 " + saved.length + "개 회차 저장 · 현재 " + episodeNumber + "화 자막 준비 완료");
+        } else {
+          setFileNotice("Pi에 " + saved.length + "개 회차 저장 · 현재 " + episodeNumber + "화 자막은 ZIP에 없어");
+        }
+      } catch (error) {
+        setFileError(error instanceof Error ? error.message : "ZIP 자막을 읽지 못했습니다.");
+      }
+      return;
+    }
 
     if (
       !lowerName.endsWith(".ass") &&
@@ -300,7 +334,7 @@ export default function SubtitleSelectModal({
       !lowerName.endsWith(".smi") &&
       !lowerName.endsWith(".vtt")
     ) {
-      setFileError("지원되는 자막 형식(.ass, .ssa, .srt, .smi, .vtt)이 아닙니다.");
+      setFileError("지원되는 자막 형식(.ass, .ssa, .srt, .smi, .vtt) 또는 ZIP이 아닙니다.");
       return;
     }
 
@@ -311,23 +345,15 @@ export default function SubtitleSelectModal({
         setFileError("자막 파일 내용이 비어 있습니다.");
         return;
       }
-
       const isAss = lowerName.endsWith(".ass") || lowerName.endsWith(".ssa");
-      const newSub: SubtitleOption = {
-        name: `[로컬 파일] ${fileName}`,
+      setUploadedSub({
+        name: "[로컬 파일] " + fileName,
         format: isAss ? "ASS" : "VTT",
         is_ass: isAss,
         content: text,
-      };
-
-      setUploadedSub(newSub);
+      });
     };
-
-    reader.onerror = () => {
-      setFileError("파일을 읽는 도중 오류가 발생했습니다.");
-    };
-
-    // Korean SMI/SRT are often CP949 or UTF-8
+    reader.onerror = () => setFileError("파일을 읽는 도중 오류가 발생했습니다.");
     reader.readAsText(file, "UTF-8");
   };
 
@@ -335,13 +361,13 @@ export default function SubtitleSelectModal({
     e.preventDefault();
     setIsDragging(false);
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      processSubtitleFile(e.dataTransfer.files[0]);
+      void processSubtitleFile(e.dataTransfer.files[0]);
     }
   };
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      processSubtitleFile(e.target.files[0]);
+      void processSubtitleFile(e.target.files[0]);
     }
   };
 
@@ -662,12 +688,12 @@ export default function SubtitleSelectModal({
                 </div>
                 <h4 className="text-sm font-bold text-white">자막 파일을 이곳에 드래그하거나 클릭하여 선택하세요</h4>
                 <p className="mt-1 text-xs text-slate-400">
-                  지원 확장자: <strong>.ass, .ssa, .srt, .smi, .vtt</strong>
+                  지원 확장자: <strong>.ass, .ssa, .srt, .smi, .vtt, .zip</strong> · ZIP은 회차별로 나눠 Pi에 저장
                 </p>
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".ass,.ssa,.srt,.smi,.vtt"
+                  accept=".ass,.ssa,.srt,.smi,.vtt,.zip"
                   onChange={handleFileChange}
                   className="hidden"
                 />
@@ -676,6 +702,11 @@ export default function SubtitleSelectModal({
               {fileError && (
                 <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-3 text-xs text-red-400">
                   {fileError}
+                </div>
+              )}
+              {fileNotice && (
+                <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/30 p-3 text-xs text-emerald-300">
+                  {fileNotice}
                 </div>
               )}
 
