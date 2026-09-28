@@ -9,7 +9,7 @@ import {
 } from "@/lib/subtitles";
 import { assertSafeProxyUrl, UnsafeProxyUrlError } from "@/lib/proxyGuard";
 import { getSessionUser } from "@/lib/auth";
-import { getAniAllMatches, getManualSubtitleLink, getSubtitleSourcePriority, getSubtitleEpisodeStart } from "@/lib/db";
+import { getAniAllMatches, getManualSubtitleLink, getSubtitleSourcePriority, getSubtitleEpisodeStart, getSubtitleRejections } from "@/lib/db";
 import { getAniAllArchiveSubtitle, getUploadedSubtitle, getVerifiedSubtitleCache } from "@/lib/subtitleStorage";
 import { getReanimeMatch } from "@/lib/reanimeMatches";
 
@@ -40,6 +40,9 @@ export async function GET(request: NextRequest) {
   const sourceEpisode = sourceEpisodeStart && sourceEpisodeStart > 0 ? sourceEpisodeStart + ep - 1 : ep;
   const website = searchParams.get("website")?.trim() || searchParams.get("sub_url")?.trim() || "";
   const creatorName = searchParams.get("creatorName")?.trim() || searchParams.get("creator")?.trim() || "";
+  const rejections = animeIdParam ? await getSubtitleRejections(animeIdParam) : [];
+  const isRejected = (provider: string, sourceKey: string) =>
+    rejections.some((entry) => entry.provider === provider && entry.sourceKey === sourceKey);
 
   if (!title) {
     return NextResponse.json(
@@ -50,19 +53,20 @@ export async function GET(request: NextRequest) {
 
   try {
     const uploaded = animeIdParam ? await getUploadedSubtitle(user.username, animeIdParam, ep) : null;
-    if (uploaded) {
+    if (uploaded && !isRejected("local", uploaded.name)) {
       return NextResponse.json({ success: true, anime_title: title, episode: ep, count: 1,
         subtitles: [uploaded], creators: [] }, { headers: { "Cache-Control": "no-store" } });
     }
     const savedUrl = animeIdParam ? await getManualSubtitleLink(user.username, animeIdParam, ep) : null;
-    if (savedUrl) {
+    if (savedUrl && !isRejected("anissia", savedUrl)) {
       const manual = await fetchCreatorSubtitle("직접 자막", savedUrl, title, sourceEpisode, 12000);
       if (manual?.content) {
         return NextResponse.json({ success: true, anime_title: title, episode: ep, count: 1, subtitles: [manual], creators: [] }, { headers: { "Cache-Control": "no-store" } });
       }
     }
     const cached = animeIdParam && !sourceEpisodeStart ? await getVerifiedSubtitleCache(animeIdParam, ep) : null;
-    if (cached) {
+    if (cached && !isRejected(cached.sourceProvider,
+      cached.sourceCreatorWebsite || cached.name)) {
       return NextResponse.json({ success: true, anime_title: title, episode: ep, count: 1,
         subtitles: [cached], creators: [], verified_cache: true }, { headers: { "Cache-Control": "no-store" } });
     }
@@ -75,7 +79,8 @@ export async function GET(request: NextRequest) {
 
     // 애니시아 우선일 때만 전달된 링크를 바로 가져온다.
     // AniAll 우선이면 Pi 보관함을 먼저 확인하고, 없을 때 AniAll 검색을 우선한다.
-    if (website && website.startsWith("http") && sourcePriority !== "aniall") {
+    if (website && website.startsWith("http") && sourcePriority !== "aniall"
+      && !isRejected("anissia", website)) {
       const directSub = await fetchCreatorSubtitle(creatorName || "제작자", website, searchTarget, sourceEpisode, 5000);
       if (directSub && directSub.content) {
         return NextResponse.json({
@@ -103,7 +108,9 @@ export async function GET(request: NextRequest) {
     }
 
     const localMatches = sourcePriority === "aniall"
-      ? (await getAniAllMatches(comparisonTitle, animeIdParam)).sort((a, b) => b.confidence - a.confidence)
+      ? (await getAniAllMatches(comparisonTitle, animeIdParam))
+          .filter((match) => !isRejected("aniall", match.postUrl))
+          .sort((a, b) => b.confidence - a.confidence)
       : [];
     const localCreators: Array<{ name: string; episode: string; update_date: string; website: string;
       is_current_ep: boolean; matchedTitle: string; matchScore: number; verifiedMatch: boolean;
@@ -198,6 +205,15 @@ export async function POST(request: NextRequest) {
         { success: false, message: "필수 정보가 누락되었습니다." },
         { status: 400 }
       );
+    }
+
+    if (animeId && website) {
+      const rejected = await getSubtitleRejections(animeId);
+      if (rejected.some((entry) => entry.provider === (sourceProvider === "aniall" ? "aniall" : "anissia")
+        && entry.sourceKey === website)) {
+        return NextResponse.json({ success: false, message: "이 작품에서 숨긴 자막입니다. 숨긴 자막 목록에서 되돌릴 수 있어요." },
+          { status: 409 });
+      }
     }
 
     // 보안: website는 서버에서 fetch하므로 SSRF 가드 통과 필수
