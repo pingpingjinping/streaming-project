@@ -289,10 +289,7 @@ export async function resolveAnissiaStream(
     if (linkkfId) {
       const detail = await linkkfProvider.getAnimeDetail(linkkfId);
       if (detail && detail.sub_episodes.length > 0) {
-        const epItem =
-          detail.sub_episodes.find((e) => e.number === episodeNumber) ||
-          detail.sub_episodes[episodeNumber - 1] ||
-          detail.sub_episodes[0];
+        const epItem = detail.sub_episodes.find((e) => e.number === episodeNumber);
 
         if (epItem?.watch_url) {
           const stream = await linkkfProvider.getEpisodeStream(epItem.watch_url);
@@ -335,10 +332,7 @@ export async function resolveAnissiaStream(
         const ohliId = ohRes.items[0].id;
         const detail = await ohli24Provider.getAnimeDetail(ohliId);
         if (detail && detail.sub_episodes.length > 0) {
-          const epItem =
-            detail.sub_episodes.find((e) => e.number === episodeNumber) ||
-            detail.sub_episodes[episodeNumber - 1] ||
-            detail.sub_episodes[0];
+          const epItem = detail.sub_episodes.find((e) => e.number === episodeNumber);
 
           if (epItem?.watch_url) {
             const stream = await ohli24Provider.getEpisodeStream(epItem.watch_url);
