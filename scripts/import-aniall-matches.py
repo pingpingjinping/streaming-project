@@ -67,10 +67,16 @@ stream.write("""WITH resolved AS (
 )
 INSERT INTO anime_aniall_matches (post_id,canonical_title,blog_title,post_url,confidence,review_status,evidence,ref_source,ref_source_id)
 SELECT post_id,canonical_title,blog_title,post_url,confidence,review_status,evidence,COALESCE(source,''),COALESCE(source_id,'')
-FROM deduplicated
+FROM deduplicated AS incoming
+WHERE incoming.review_status NOT LIKE 'auto_%' OR NOT EXISTS (
+ SELECT 1 FROM anime_aniall_matches existing
+ WHERE existing.post_id=incoming.post_id AND existing.review_status NOT LIKE 'auto_%'
+)
 ON CONFLICT (post_id,canonical_title,ref_source,ref_source_id) DO UPDATE SET
  blog_title=EXCLUDED.blog_title, post_url=EXCLUDED.post_url, confidence=EXCLUDED.confidence,
- review_status=EXCLUDED.review_status, evidence=EXCLUDED.evidence;
+ review_status=EXCLUDED.review_status, evidence=EXCLUDED.evidence
+ WHERE EXCLUDED.review_status NOT LIKE 'auto_%'
+    OR anime_aniall_matches.review_status LIKE 'auto_%';
 SELECT 'reviewed rows=' || COUNT(*) FROM aniall_match_stage;
 SELECT 'stored mappings=' || COUNT(*) FROM anime_aniall_matches;
 COMMIT;
