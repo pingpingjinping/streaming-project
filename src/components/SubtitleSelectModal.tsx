@@ -27,6 +27,7 @@ export interface CreatorInfo {
   matchedTitle?: string;
   verifiedMatch?: boolean;
   sourceProvider?: "aniall" | "anissia";
+  localArchive?: boolean;
 }
 
 export interface SubtitleOption {
@@ -42,6 +43,7 @@ export interface SubtitleOption {
   sourceMatchedTitle?: string;
   sourceProvider?: "aniall" | "anissia";
   isCached?: boolean;
+  localArchive?: boolean;
 }
 
 const creatorKey = (creator: CreatorInfo) => `${creator.website}\n${creator.matchedTitle || ""}`;
@@ -188,6 +190,7 @@ export default function SubtitleSelectModal({
         sourceCreatorWebsite: s.sourceCreatorWebsite,
         sourceMatchedTitle: s.sourceMatchedTitle,
         isCached: Boolean(s.isCached),
+        localArchive: Boolean(s.localArchive),
       }));
 
       // The server has already grouped these in the configured provider order.
@@ -226,6 +229,7 @@ export default function SubtitleSelectModal({
         sourceProvider: s.sourceProvider,
         sourceCreatorWebsite: s.sourceCreatorWebsite,
         sourceMatchedTitle: s.sourceMatchedTitle,
+        localArchive: Boolean(s.localArchive),
       }));
       setSearchResults(subs);
       if (subs.length === 0) setSearchError("Pi의 로컬 보관함에서 해당 회차 자막을 찾지 못했어.");
@@ -414,6 +418,7 @@ export default function SubtitleSelectModal({
                           <div className="flex flex-wrap items-center gap-2">
                         <span className="font-bold text-white text-sm">{c.name}</span>
                             <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${c.sourceProvider === "aniall" ? "bg-amber-500/15 text-amber-200" : "bg-cyan-500/15 text-cyan-200"}`}>{c.sourceProvider === "aniall" ? "AniAll" : "애니시아"}</span>
+                            {c.localArchive && <span className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-bold text-emerald-300">Pi 로컬</span>}
                             {c.matchedTitle && <span className="text-xs font-semibold text-slate-300">· {c.matchedTitle}</span>}
                             {c.verifiedMatch ? (
                               <span className="rounded-md bg-emerald-500/20 px-2 py-0.5 text-[11px] font-bold text-emerald-300">DB 연결 확인</span>
@@ -466,7 +471,7 @@ export default function SubtitleSelectModal({
                           ) : isCurrent ? (
                             "적용됨"
                           ) : (
-                            "이 제작자 자막 적용"
+                            c.localArchive ? "Pi 로컬 자막 적용" : "이 제작자 자막 적용"
                           )}
                         </button>
                       </div>
@@ -531,6 +536,7 @@ export default function SubtitleSelectModal({
                       <div className="flex items-center gap-2">
                         <span className="font-bold text-white text-xs">{sub.name}</span>
                         {sub.sourceProvider && <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${sub.sourceProvider === "aniall" ? "bg-amber-500/15 text-amber-200" : "bg-cyan-500/15 text-cyan-200"}`}>{sub.sourceProvider === "aniall" ? "AniAll" : "애니시아"}</span>}
+                        {sub.localArchive && <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">Pi 로컬</span>}
                         {sub.verifiedMatch ? (
                           <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">DB 연결 확인</span>
                         ) : typeof sub.matchScore === "number" ? (
