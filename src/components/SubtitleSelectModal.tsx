@@ -231,7 +231,7 @@ export default function SubtitleSelectModal({
           episodeNumber: episodeNumber,
           creatorEpisode: creator.episode,
           sourceProvider: creator.sourceProvider,
-          sourceEpisodeStart: savedStartEpisode,
+          animeId,
         }),
       });
 
