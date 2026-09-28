@@ -88,7 +88,7 @@ export async function GET(request: NextRequest) {
     }
 
     // 13초 타임아웃 방어 가드 적용 (directAnimeNo 지원)
-    const result = await searchAllSubtitlesParallel(searchTarget, ep, 45000, directAnimeNo, comparisonTitle);
+    const result = await searchAllSubtitlesParallel(searchTarget, ep, 45000, directAnimeNo, comparisonTitle, animeIdParam);
 
     // HTML 등 비정상 자막 필터링
     const validSubtitles = (result.subtitles || []).filter((s) => {
@@ -109,6 +109,7 @@ export async function GET(request: NextRequest) {
         count: validSubtitles.length,
         subtitles: validSubtitles,
         creators: result.creators,
+        needs_manual_subtitle_choice: result.needsManualSubtitleChoice,
       },
       {
         status: 200,
@@ -142,7 +143,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { creatorName, website, title, episodeNumber } = body;
+    const { creatorName, website, title, matchedTitle, episodeNumber, sourceProvider } = body;
     const ep = parseInt(String(episodeNumber || "1"), 10) || 1;
 
     if (!creatorName || !title) {
@@ -167,8 +168,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const resolvedTitle = await resolveKoreanTitle(title);
-    const targetTitle = resolvedTitle || title;
+    const requestedTitle = typeof matchedTitle === "string" && matchedTitle.trim() ? matchedTitle.trim() : title;
+    const resolvedTitle = await resolveKoreanTitle(requestedTitle);
+    const targetTitle = resolvedTitle || requestedTitle;
 
     const isErusha = creatorName.includes("에루샤") || (website && website.toLowerCase().includes("erulabo"));
     if (isErusha) {
@@ -203,7 +205,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      subtitle: sub,
+      subtitle: { ...sub, sourceProvider: sourceProvider === "aniall" ? "aniall" : "anissia" },
     });
   } catch (error) {
     console.error("[Subtitles POST error]:", error);

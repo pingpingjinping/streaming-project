@@ -51,6 +51,10 @@ export interface CreatorInfo {
   update_date: string;
   website: string;
   is_current_ep: boolean;
+  matchedTitle?: string;
+  matchScore?: number;
+  verifiedMatch?: boolean;
+  sourceProvider?: "aniall" | "anissia";
 }
 
 const SPEED_CYCLE_RATES = [1.0, 1.3, 1.5, 2.0];
@@ -93,7 +97,12 @@ interface SubtitleItem {
   is_ass: boolean;
   content?: string;
   url?: string;
+  sourceCreatorWebsite?: string;
+  sourceMatchedTitle?: string;
+  sourceProvider?: "aniall" | "anissia";
 }
+
+const creatorIdentity = (creator: CreatorInfo) => `${creator.website}\n${creator.matchedTitle || ""}`;
 
 interface SkipInterval {
   type: "op" | "ed" | "mixed-op" | "mixed-ed";
@@ -168,7 +177,8 @@ export default function Player(props: PlayerProps) {
   const currentAssContentRef = useRef<string | null>(null);
   const currentSubRef = useRef<SubtitleItem | null>(null);
   const pendingSubtitleRef = useRef<SubtitleItem | null>(null);
-  const applySubtitleRef = useRef<((sub: SubtitleItem, offset?: number) => void) | null>(null);
+  const applySubtitleRef = useRef<((sub: SubtitleItem | null, offset?: number) => void) | null>(null);
+  const syncSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshSubtitleSettingsRef = useRef<((currentSubs: SubtitleItem[], activeIdx: number) => void) | null>(null);
   const currentSyncOffsetRef = useRef<number>(0.0);
   const docPipWindowRef = useRef<Window | null>(null);
@@ -574,6 +584,7 @@ export default function Player(props: PlayerProps) {
   const [subs, setSubs] = useState<SubtitleItem[]>([]);
   const [selectedSubIndex, setSelectedSubIndex] = useState<number>(0);
   const [isLoadingSubs, setIsLoadingSubs] = useState<boolean>(true);
+  const [needsManualSubtitleChoice, setNeedsManualSubtitleChoice] = useState(false);
   const [creators, setCreators] = useState<CreatorInfo[]>([]);
   const [loadingCreatorName, setLoadingCreatorName] = useState<string | null>(null);
   const [currentSyncOffset, setCurrentSyncOffset] = useState<number>(0.0);
@@ -1489,7 +1500,7 @@ export default function Player(props: PlayerProps) {
 
   // 15. Subtitle switcher
   const applySubtitle = useCallback(
-    (sub: SubtitleItem, offset = 0.0) => {
+    (sub: SubtitleItem | null, offset = 0.0) => {
       currentSubRef.current = sub;
       pendingSubtitleRef.current = sub;
       if (!artRef.current) return;
@@ -1512,6 +1523,17 @@ export default function Player(props: PlayerProps) {
           .querySelectorAll(".libassjs-canvas-parent, canvas.libassjs-canvas")
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           .forEach((el: any) => el.remove());
+      }
+
+      if (!sub || sub.name === "자막 끄기") {
+        currentAssContentRef.current = null;
+        art.subtitle.show = false;
+        if (art.template?.$subtitle) art.template.$subtitle.style.display = "none";
+        updateNativeTrackElement("");
+        hideAllNativeVideoTracks();
+        if (nativePipTextTrackRef.current) nativePipTextTrackRef.current.mode = "hidden";
+        syncCuesToPipTrack(isNativePipActive());
+        return;
       }
 
       if (sub.is_ass) {
@@ -1618,7 +1640,7 @@ export default function Player(props: PlayerProps) {
         }
       }
     },
-    [syncCuesToPipTrack, isNativePipActive, toAbsoluteUrl]
+    [syncCuesToPipTrack, isNativePipActive, toAbsoluteUrl, updateNativeTrackElement, hideAllNativeVideoTracks]
   );
 
   useEffect(() => {
@@ -1685,12 +1707,50 @@ export default function Player(props: PlayerProps) {
         artRef.current.subtitle.offset = offset;
       }
       if (artRef.current) {
-        artRef.current.notice.show = `자막 싱크: ${offset > 0 ? "+" : ""}${offset.toFixed(1)} 초`;
+        artRef.current.notice.show = `자막 싱크: ${offset > 0 ? "+" : ""}${offset.toFixed(1)} 초 (이 회차에 저장)`;
       }
       syncCuesToPipTrack(isNativePipActive());
+      if (syncSaveTimerRef.current) clearTimeout(syncSaveTimerRef.current);
+      const episodeToSave = currentEpRef.current;
+      syncSaveTimerRef.current = setTimeout(() => {
+        const currentSub = currentSubRef.current;
+        fetch("/api/anime/reanime-sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            animeId,
+            ep: episodeToSave,
+            syncOffset: offset,
+            subtitleName: currentSub?.name || "",
+            subtitleUrl: currentSub?.url || "",
+          }),
+        }).catch((err) => console.error("Failed to save episode subtitle sync:", err));
+      }, 500);
     },
-    [syncCuesToPipTrack, isNativePipActive]
+    [animeId, syncCuesToPipTrack, isNativePipActive]
   );
+
+  // Restore subtitle sync independently for each episode.
+  useEffect(() => {
+    let cancelled = false;
+    currentSyncOffsetRef.current = 0;
+    setCurrentSyncOffset(0);
+    fetch(`/api/anime/reanime-sync?animeId=${encodeURIComponent(animeId)}&ep=${currentEp}`)
+      .then((response) => response.json())
+      .then((data) => {
+        if (cancelled || !data.success || !data.setting) return;
+        const offset = Number(data.setting.sync_offset) || 0;
+        currentSyncOffsetRef.current = offset;
+        setCurrentSyncOffset(offset);
+        if (octopusRef.current?.setTimeOffset) octopusRef.current.setTimeOffset(offset);
+        if (artRef.current?.subtitle) artRef.current.subtitle.offset = offset;
+        syncCuesToPipTrack(isNativePipActive());
+      })
+      .catch((err) => console.error("Failed to load episode subtitle sync:", err));
+    return () => {
+      cancelled = true;
+    };
+  }, [animeId, currentEp, syncCuesToPipTrack, isNativePipActive]);
 
   // Refresh ArtPlayer's setting menu for Subtitle Selector
   const refreshSubtitleSettings = useCallback(
@@ -1744,6 +1804,7 @@ export default function Player(props: PlayerProps) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           onSelect: function (item: any) {
             if (item.subData.name === "자막 끄기" || (!item.subData.url && !item.subData.content)) {
+              setNeedsManualSubtitleChoice(false);
               setSelectedSubIndex(-1);
               currentSubRef.current = null;
               currentAssContentRef.current = null;
@@ -1772,6 +1833,7 @@ export default function Player(props: PlayerProps) {
                 artRef.current.notice.show = "자막 꺼짐";
               }
             } else {
+              setNeedsManualSubtitleChoice(false);
               const foundIndex = currentSubs.findIndex((s) => s.name === item.subData.name);
               setSelectedSubIndex(foundIndex !== -1 ? foundIndex : 0);
               applySubtitle(item.subData, currentSyncOffset);
@@ -1890,7 +1952,8 @@ export default function Player(props: PlayerProps) {
       return;
     }
 
-    setLoadingCreatorName(creator.name);
+    const creatorKey = creatorIdentity(creator);
+    setLoadingCreatorName(creatorKey);
     if (artRef.current) {
       artRef.current.notice.show = `${creator.name} 자막 다운로드 중...`;
     }
@@ -1903,6 +1966,8 @@ export default function Player(props: PlayerProps) {
           creatorName: creator.name,
           website: creator.website,
           title: animeTitle,
+          matchedTitle: creator.matchedTitle,
+          sourceProvider: creator.sourceProvider,
           episodeNumber: currentEpRef.current,
         }),
       });
@@ -1913,6 +1978,9 @@ export default function Player(props: PlayerProps) {
           format: data.subtitle.format,
           is_ass: data.subtitle.is_ass,
           content: data.subtitle.content,
+          sourceCreatorWebsite: creator.website,
+          sourceMatchedTitle: creator.matchedTitle,
+          sourceProvider: creator.sourceProvider,
         };
 
         const isAss = !!data.subtitle.is_ass;
@@ -3286,11 +3354,14 @@ export default function Player(props: PlayerProps) {
   useEffect(() => {
     let isCancelled = false;
     setIsLoadingSubs(true);
+    setNeedsManualSubtitleChoice(false);
 
     fetch(`/api/anime/subtitles?title=${encodeURIComponent(animeTitle)}&ep=${currentEp}&animeId=${encodeURIComponent(animeId)}`)
       .then((r) => r.json())
       .then((data) => {
         if (isCancelled || !data.success) return;
+        const needsChoice = Boolean(data.needs_manual_subtitle_choice);
+        setNeedsManualSubtitleChoice(needsChoice);
 
         if (Array.isArray(data.creators)) {
           setCreators(data.creators);
@@ -3308,27 +3379,37 @@ export default function Player(props: PlayerProps) {
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const fetchedList: SubtitleItem[] = (data.subtitles || []).map((s: any) => ({
-          name: `${s.name} (${s.format})`,
+          name: `${s.sourceProvider === "aniall" ? "[AniAll]" : "[애니시아]"} ${s.name} (${s.format})`,
           format: s.format,
           is_ass: s.is_ass,
           content: s.content,
+          sourceCreatorWebsite: s.sourceCreatorWebsite,
+          sourceMatchedTitle: s.sourceMatchedTitle,
+          sourceProvider: s.sourceProvider,
         }));
 
-        const combined = [...newSubs, ...fetchedList];
+        const combined = [...fetchedList, ...newSubs];
         setSubs(combined);
 
-        const assIdx = combined.findIndex((s) => s.is_ass);
-        const targetIdx = assIdx >= 0 ? assIdx : 0;
-        if (combined.length > 0) {
-          setSelectedSubIndex(targetIdx);
-          if (applySubtitleRef.current) {
-            applySubtitleRef.current(combined[targetIdx], currentSyncOffsetRef.current);
-          }
-          setTimeout(() => {
-            if (refreshSubtitleSettingsRef.current) {
-              refreshSubtitleSettingsRef.current(combined, targetIdx);
+        if (needsChoice) {
+          // The best title match failed to load. Keep lower-ranked results
+          // available for an explicit choice; never silently apply one.
+          setSelectedSubIndex(-1);
+          applySubtitleRef.current?.(null, currentSyncOffsetRef.current);
+          setTimeout(() => refreshSubtitleSettingsRef.current?.(combined, -1), 150);
+        } else {
+          const targetIdx = 0;
+          if (combined.length > 0) {
+            setSelectedSubIndex(targetIdx);
+            if (applySubtitleRef.current) {
+              applySubtitleRef.current(combined[targetIdx], currentSyncOffsetRef.current);
             }
-          }, 150);
+            setTimeout(() => {
+              if (refreshSubtitleSettingsRef.current) {
+                refreshSubtitleSettingsRef.current(combined, targetIdx);
+              }
+            }, 150);
+          }
         }
       })
       .catch((e) => {
@@ -4072,6 +4153,7 @@ export default function Player(props: PlayerProps) {
             <button
               key={idx}
               onClick={() => {
+                setNeedsManualSubtitleChoice(false);
                 setSelectedSubIndex(idx);
                 applySubtitle(sub, currentSyncOffset);
                 refreshSubtitleSettings(subs, idx);
@@ -4095,6 +4177,11 @@ export default function Player(props: PlayerProps) {
             <span className="text-xs text-slate-500 py-1">자막이 제공되지 않는 회차입니다.</span>
           )}
         </div>
+        {needsManualSubtitleChoice && (
+          <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+            가장 높은 매칭 후보에서 자막을 불러오지 못했어요. 다른 후보는 자동 적용하지 않았으니, 아래 목록에서 직접 골라 주세요.
+          </div>
+        )}
       </div>
 
       {/* Anissia Subtitle Creators Status */}
@@ -4115,17 +4202,13 @@ export default function Player(props: PlayerProps) {
 
           <div className="mt-3 space-y-2">
             {creators.map((c, idx) => {
-              const matchedSub = subs.find(
-                (s) =>
-                  s.name.includes(c.name) ||
-                  (c.name.includes("카이란") && s.name.includes("카이란"))
+              const matchedSub = subs.find((s) =>
+                s.sourceCreatorWebsite === c.website && s.sourceMatchedTitle === c.matchedTitle
               );
               const isCurrentlyActive =
                 selectedSubIndex >= 0 &&
                 subs[selectedSubIndex] &&
-                (subs[selectedSubIndex].name.includes(c.name) ||
-                  (c.name.includes("카이란") && subs[selectedSubIndex].name.includes("카이란")) ||
-                  (matchedSub && subs[selectedSubIndex].name === matchedSub.name));
+                matchedSub && subs[selectedSubIndex].name === matchedSub.name;
               const isAss =
                 (matchedSub && matchedSub.is_ass) ||
                 c.name.includes("카이란") ||
@@ -4133,7 +4216,7 @@ export default function Player(props: PlayerProps) {
               const isErusha = Boolean(
                 c.name.includes("에루샤") || (c.website && c.website.includes("erulabo.com"))
               );
-              const isLoading = loadingCreatorName === c.name;
+              const isLoading = loadingCreatorName === creatorIdentity(c);
 
               return (
                 <div
@@ -4219,6 +4302,7 @@ export default function Player(props: PlayerProps) {
                           onClick={() => {
                             const foundIdx = subs.findIndex((s) => s.name === matchedSub.name);
                             if (foundIdx !== -1) {
+                              setNeedsManualSubtitleChoice(false);
                               setSelectedSubIndex(foundIdx);
                               applySubtitle(matchedSub, currentSyncOffset);
                               refreshSubtitleSettings(subs, foundIdx);

@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 import iconv from "iconv-lite";
 import AdmZip from "adm-zip";
-import { getCachedKoreanAnimeTitle, saveKoreanAnimeTitleMapping } from "@/lib/db";
+import { getCachedKoreanAnimeTitle, saveKoreanAnimeTitleMapping, getAniAllMatches, getSubtitleSourcePriority } from "@/lib/db";
 
 export const HEADERS: Record<string, string> = {
   "User-Agent":
@@ -22,6 +22,9 @@ export interface SubtitleResult {
   matchScore?: number;
   matchedTitle?: string;
   verifiedMatch?: boolean;
+  sourceCreatorWebsite?: string;
+  sourceMatchedTitle?: string;
+  sourceProvider?: "aniall" | "anissia";
 }
 
 export interface CreatorInfo {
@@ -33,6 +36,7 @@ export interface CreatorInfo {
   matchScore?: number;
   matchedTitle?: string;
   verifiedMatch?: boolean;
+  sourceProvider?: "aniall" | "anissia";
 }
 
 // Common Korean anime abbreviation mapping
@@ -1554,8 +1558,13 @@ export async function searchAllSubtitlesParallel(
   episodeNumber: number,
   maxTotalTimeMs = 45000,
   directAnimeNo?: number | null,
-  referenceTitle = title
-): Promise<{ subtitles: SubtitleResult[]; creators: CreatorInfo[] }> {
+  referenceTitle = title,
+  animeId = ""
+): Promise<{
+  subtitles: SubtitleResult[];
+  creators: CreatorInfo[];
+  needsManualSubtitleChoice: boolean;
+}> {
   // Create an overall timeout promise that resolves at 13 seconds
   let timeoutHandle: NodeJS.Timeout;
   const timeoutPromise = new Promise<null>((resolve) => {
@@ -1566,56 +1575,83 @@ export async function searchAllSubtitlesParallel(
     const resolvedTitle = await resolveKoreanTitle(title);
     const targetTitle = resolvedTitle || title;
 
-    // 1. Fetch Anissia creators and Kairan search concurrently
-    const [anissiaCreators, kairanSub] = await Promise.all([
+    // Fetch both indexed AniAll posts and current Anissia results concurrently.
+    const [anissiaCreators, aniallMatches, kairanSub, sourcePriority] = await Promise.all([
       getAnissiaCreators(targetTitle, episodeNumber, 3500, directAnimeNo, referenceTitle),
+      getAniAllMatches(targetTitle, animeId),
       findKairanSubtitle(targetTitle, episodeNumber, 3500),
+      getSubtitleSourcePriority(),
     ]);
+    const aniallCreators: CreatorInfo[] = aniallMatches.map((match) => ({
+      name: `AniAll · ${match.blogTitle}`, episode: "게시글 첨부 자막", update_date: "",
+      website: match.postUrl, is_current_ep: true, matchScore: match.confidence,
+      matchedTitle: match.canonicalTitle, verifiedMatch: match.confidence >= 90,
+      sourceProvider: "aniall",
+    }));
+    const allCreators = [
+      ...anissiaCreators.map((creator) => ({ ...creator, sourceProvider: "anissia" as const })),
+      ...aniallCreators,
+    ];
 
     const collectedSubs: SubtitleResult[] = [];
     if (kairanSub) {
-      collectedSubs.push(kairanSub);
+      collectedSubs.push({ ...kairanSub, sourceProvider: "anissia" });
     }
 
     // 2. Filter valid creators who have an active blog for this episode
-    const candidateCreators = anissiaCreators.filter(
+    const candidateCreators = allCreators.filter(
       (c) => c.website && c.website.startsWith("http")
-    );
+    ).sort((a, b) => {
+      if (a.sourceProvider !== b.sourceProvider) return a.sourceProvider === sourcePriority ? -1 : 1;
+      if (a.verifiedMatch !== b.verifiedMatch) return a.verifiedMatch ? -1 : 1;
+      return (b.matchScore ?? -Infinity) - (a.matchScore ?? -Infinity);
+    });
 
     // Spread downloads across distinct candidate titles before taking second creators.
     const firstPerTitle = new Set<string>();
-    const topCreators = [
-      ...candidateCreators.filter((c) => {
-        const key = c.matchedTitle || c.name;
-        if (firstPerTitle.has(key)) return false;
-        firstPerTitle.add(key);
-        return true;
-      }),
-      ...candidateCreators.filter((c) => c.matchedTitle &&
-        candidateCreators.find((first) => first.matchedTitle === c.matchedTitle) !== c),
-    ].slice(0, 4);
+    const distinctCreators = candidateCreators.filter((c) => {
+      const key = `${c.sourceProvider}:${c.website}:${c.matchedTitle || c.name}`;
+      if (firstPerTitle.has(key)) return false;
+      firstPerTitle.add(key);
+      return true;
+    });
+    const preferredCreators = distinctCreators.filter((c) => c.sourceProvider === sourcePriority).slice(0, 2);
+    const otherCreators = distinctCreators.filter((c) => c.sourceProvider !== sourcePriority).slice(0, 2);
+    const topCreators = [...preferredCreators, ...otherCreators].slice(0, 4);
 
     // 3. Parallel fetch creator subtitles with individual 3.5s timeouts
     const creatorSubPromises = topCreators.map(async (c) => {
-      const subtitle = await fetchCreatorSubtitle(c.name, c.website, targetTitle, episodeNumber, 10000);
+      const subtitle = await fetchCreatorSubtitle(c.name, c.website, c.matchedTitle || targetTitle, episodeNumber, 10000);
       return subtitle ? { ...subtitle, matchScore: c.matchScore,
-        matchedTitle: c.matchedTitle, verifiedMatch: c.verifiedMatch } : null;
+        matchedTitle: c.matchedTitle, verifiedMatch: c.verifiedMatch,
+        sourceCreatorWebsite: c.website, sourceMatchedTitle: c.matchedTitle,
+        sourceProvider: c.sourceProvider } : null;
     });
 
     const settled = await Promise.allSettled(creatorSubPromises);
+    const needsManualSubtitleChoice = Boolean(
+      topCreators.length > 0 &&
+      (settled[0]?.status !== "fulfilled" || settled[0].value === null)
+    );
     for (const s of settled) {
       if (s.status === "fulfilled" && s.value) {
         collectedSubs.push(s.value);
       }
     }
     collectedSubs.sort((a, b) => {
+      if (a.sourceProvider !== b.sourceProvider) return a.sourceProvider === sourcePriority ? -1 : 1;
       if (a.verifiedMatch !== b.verifiedMatch) return a.verifiedMatch ? -1 : 1;
       return (b.matchScore ?? -Infinity) - (a.matchScore ?? -Infinity) || 0;
     });
 
     return {
       subtitles: collectedSubs,
-      creators: anissiaCreators,
+      creators: allCreators.sort((a, b) => {
+        if (a.sourceProvider !== b.sourceProvider) return a.sourceProvider === sourcePriority ? -1 : 1;
+        if (a.verifiedMatch !== b.verifiedMatch) return a.verifiedMatch ? -1 : 1;
+        return (b.matchScore ?? -Infinity) - (a.matchScore ?? -Infinity);
+      }),
+      needsManualSubtitleChoice,
     };
   })();
 
@@ -1626,9 +1662,9 @@ export async function searchAllSubtitlesParallel(
       return winner;
     }
     // If timed out at 13s, return whatever is empty or basic fallback safely
-    return { subtitles: [], creators: [] };
+    return { subtitles: [], creators: [], needsManualSubtitleChoice: false };
   } catch {
     clearTimeout(timeoutHandle!);
-    return { subtitles: [], creators: [] };
+    return { subtitles: [], creators: [], needsManualSubtitleChoice: false };
   }
 }

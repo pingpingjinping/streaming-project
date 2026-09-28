@@ -1,0 +1,10 @@
+[Unit]
+Description=Import the monthly anime catalog on the 2nd
+
+[Timer]
+OnCalendar=*-*-02 10:30:00 Asia/Seoul
+Persistent=true
+Unit=streaming-anime-db-update.service
+
+[Install]
+WantedBy=timers.target

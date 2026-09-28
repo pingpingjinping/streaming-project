@@ -152,6 +152,31 @@ export async function initDb() {
     }
   }
 
+  // AniAll blog posts are linked to one or more canonical catalog titles.
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS anime_aniall_matches (
+        post_id TEXT NOT NULL,
+        canonical_title TEXT NOT NULL,
+        ref_source TEXT NOT NULL DEFAULT '',
+        ref_source_id TEXT NOT NULL DEFAULT '',
+        blog_title TEXT NOT NULL,
+        post_url TEXT NOT NULL,
+        confidence SMALLINT NOT NULL DEFAULT 0,
+        review_status TEXT NOT NULL,
+        evidence TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (post_id, canonical_title, ref_source, ref_source_id)
+      )
+    `;
+    await sql`ALTER TABLE anime_aniall_matches ADD COLUMN IF NOT EXISTS ref_source TEXT NOT NULL DEFAULT ''`;
+    await sql`ALTER TABLE anime_aniall_matches ADD COLUMN IF NOT EXISTS ref_source_id TEXT NOT NULL DEFAULT ''`;
+    await sql`ALTER TABLE anime_aniall_matches DROP CONSTRAINT IF EXISTS anime_aniall_matches_pkey`;
+    await sql`ALTER TABLE anime_aniall_matches ADD CONSTRAINT anime_aniall_matches_pkey PRIMARY KEY (post_id, canonical_title, ref_source, ref_source_id)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_anime_aniall_matches_title ON anime_aniall_matches (LOWER(canonical_title))`;
+  } catch (e: any) {
+    console.warn("[initDb AniAll matches warning]:", e?.message);
+  }
+
   // 7. User Settings Table (사용자 계정별 환경설정 및 플레이어 옵션)
   try {
     await sql`
@@ -321,6 +346,107 @@ export async function initDb() {
   }
 
   isInitialized = true;
+}
+
+export type SubtitleSourcePriority = "aniall" | "anissia";
+const DEFAULT_SUBTITLE_SOURCE_PRIORITY: SubtitleSourcePriority = "anissia";
+let cachedSubtitleSourcePriority: { value: SubtitleSourcePriority; timestamp: number } | null = null;
+
+export async function getSubtitleSourcePriority(): Promise<SubtitleSourcePriority> {
+  if (cachedSubtitleSourcePriority && Date.now() - cachedSubtitleSourcePriority.timestamp < 30_000) {
+    return cachedSubtitleSourcePriority.value;
+  }
+  const sql = getDb();
+  if (!sql) return DEFAULT_SUBTITLE_SOURCE_PRIORITY;
+  try {
+    await initDb();
+    const rows = await sql`SELECT value FROM system_settings WHERE key = 'subtitle_source_priority' LIMIT 1`;
+    const value = rows[0]?.value === "aniall" ? "aniall" : "anissia";
+    cachedSubtitleSourcePriority = { value, timestamp: Date.now() };
+    return value;
+  } catch (e) {
+    console.warn("[getSubtitleSourcePriority warning]:", e);
+    return DEFAULT_SUBTITLE_SOURCE_PRIORITY;
+  }
+}
+
+export async function setSubtitleSourcePriority(value: SubtitleSourcePriority): Promise<boolean> {
+  const sql = getDb();
+  if (!sql || !(value === "aniall" || value === "anissia")) return false;
+  try {
+    await initDb();
+    await sql`
+      INSERT INTO system_settings (key, value, updated_at)
+      VALUES ('subtitle_source_priority', ${value}, CURRENT_TIMESTAMP)
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP
+    `;
+    cachedSubtitleSourcePriority = { value, timestamp: Date.now() };
+    return true;
+  } catch (e) {
+    console.error("[setSubtitleSourcePriority error]:", e);
+    return false;
+  }
+}
+
+export interface AniAllMatch {
+  postId: string;
+  canonicalTitle: string;
+  blogTitle: string;
+  postUrl: string;
+  confidence: number;
+  reviewStatus: string;
+  evidence: string;
+}
+
+export async function getAniAllMatches(title: string, animeId = ""): Promise<AniAllMatch[]> {
+  const sql = getDb();
+  if (!sql || !title.trim()) return [];
+  try {
+    await initDb();
+    const key = normalizeAnimeTitleKey(title);
+    const aliases = await sql`SELECT korean_title FROM anime_title_aliases WHERE normalized_title = ${key} LIMIT 1`;
+    const canonical = String(aliases[0]?.korean_title || title).trim();
+    const sourceRef = animeId.startsWith("re_")
+      ? { source: "ReAnime", id: animeId.slice(3) }
+      : /^(?:ani_)?\d+$/.test(animeId)
+        ? { source: "Anissia", id: animeId.replace(/^ani_/, "") }
+        : null;
+    const sourceRefs = sourceRef ? [sourceRef] : [];
+    if (sourceRef) {
+      try {
+        const sourceRows = await sql`
+          SELECT payload->>'cross_source_ids_json' AS cross_source_ids_json
+          FROM anime_catalog_entries WHERE source = ${sourceRef.source} AND source_record_id = ${sourceRef.id}
+          LIMIT 1
+        `;
+        const cross = JSON.parse(String(sourceRows[0]?.cross_source_ids_json || "{}"));
+        for (const id of cross.anilist_ids || []) sourceRefs.push({ source: "AniList", id: String(id) });
+        for (const id of cross.reanime_ids || []) sourceRefs.push({ source: "ReAnime", id: String(id) });
+        for (const id of cross.anissia_ids || []) sourceRefs.push({ source: "Anissia", id: String(id) });
+      } catch {}
+    }
+    const refKeys = sourceRefs.map((ref) => `${ref.source}:${ref.id}`);
+    const rows = refKeys.length ? await sql`
+      SELECT DISTINCT ON (post_id, canonical_title) post_id, canonical_title, blog_title, post_url, confidence, review_status, evidence
+      FROM anime_aniall_matches
+      WHERE LOWER(canonical_title) = LOWER(${canonical})
+         OR ((ref_source || ':' || ref_source_id) = ANY(${sql.array(refKeys)}))
+      ORDER BY post_id, canonical_title, confidence DESC
+    ` : await sql`
+      SELECT DISTINCT ON (post_id) post_id, canonical_title, blog_title, post_url, confidence, review_status, evidence
+      FROM anime_aniall_matches WHERE LOWER(canonical_title) = LOWER(${canonical})
+      ORDER BY post_id, confidence DESC
+    `;
+    return rows.map((row) => ({
+      postId: String(row.post_id), canonicalTitle: String(row.canonical_title),
+      blogTitle: String(row.blog_title), postUrl: String(row.post_url),
+      confidence: Number(row.confidence), reviewStatus: String(row.review_status),
+      evidence: String(row.evidence || ""),
+    }));
+  } catch (e) {
+    console.warn("[getAniAllMatches warning]:", e);
+    return [];
+  }
 }
 
 function normalizeAnimeTitleKey(title: string): string {

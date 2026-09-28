@@ -26,6 +26,7 @@ export interface CreatorInfo {
   matchScore?: number;
   matchedTitle?: string;
   verifiedMatch?: boolean;
+  sourceProvider?: "aniall" | "anissia";
 }
 
 export interface SubtitleOption {
@@ -37,7 +38,12 @@ export interface SubtitleOption {
   matchScore?: number;
   matchedTitle?: string;
   verifiedMatch?: boolean;
+  sourceCreatorWebsite?: string;
+  sourceMatchedTitle?: string;
+  sourceProvider?: "aniall" | "anissia";
 }
+
+const creatorKey = (creator: CreatorInfo) => `${creator.website}\n${creator.matchedTitle || ""}`;
 
 interface SubtitleSelectModalProps {
   isOpen: boolean;
@@ -47,6 +53,8 @@ interface SubtitleSelectModalProps {
   episodeNumber: number;
   creators: CreatorInfo[];
   currentSubName?: string;
+  currentSubSourceCreatorWebsite?: string;
+  currentSubMatchedTitle?: string;
   onSelectSubtitle: (sub: SubtitleOption) => void;
 }
 
@@ -58,6 +66,8 @@ export default function SubtitleSelectModal({
   episodeNumber,
   creators,
   currentSubName,
+  currentSubSourceCreatorWebsite,
+  currentSubMatchedTitle,
   onSelectSubtitle,
 }: SubtitleSelectModalProps) {
   const [mounted, setMounted] = useState(false);
@@ -99,7 +109,8 @@ export default function SubtitleSelectModal({
   // 1. Download and apply creator's subtitle
   const handleSelectCreator = async (creator: CreatorInfo) => {
     if (!creator.website || loadingCreator) return;
-    setLoadingCreator(creator.name);
+    const selectedCreatorKey = creatorKey(creator);
+    setLoadingCreator(selectedCreatorKey);
     setCreatorError(null);
 
     try {
@@ -110,7 +121,9 @@ export default function SubtitleSelectModal({
           creatorName: creator.name,
           website: creator.website,
           title: searchKeyword || animeTitle,
+          matchedTitle: creator.matchedTitle,
           episodeNumber: episodeNumber,
+          sourceProvider: creator.sourceProvider,
         }),
       });
 
@@ -125,6 +138,9 @@ export default function SubtitleSelectModal({
         is_ass: Boolean(data.subtitle.is_ass),
         content: data.subtitle.content,
         url: data.subtitle.url,
+        sourceCreatorWebsite: creator.website,
+        sourceMatchedTitle: creator.matchedTitle,
+        sourceProvider: creator.sourceProvider,
       };
 
       onSelectSubtitle(newSub);
@@ -165,12 +181,11 @@ export default function SubtitleSelectModal({
         matchScore: s.matchScore,
         matchedTitle: s.matchedTitle,
         verifiedMatch: s.verifiedMatch,
+        sourceProvider: s.sourceProvider,
       }));
 
-      setSearchResults(subs.sort((a, b) => {
-        if (a.verifiedMatch !== b.verifiedMatch) return a.verifiedMatch ? -1 : 1;
-        return (b.matchScore ?? -Infinity) - (a.matchScore ?? -Infinity) || 0;
-      }));
+      // The server has already grouped these in the configured provider order.
+      setSearchResults(subs);
       if (subs.length === 0) {
         setSearchError("검색된 자막이 없습니다. 다른 제목(예: 한국어 정식 방영명)으로 검색해 보세요.");
       }
@@ -332,8 +347,15 @@ export default function SubtitleSelectModal({
                 <div className="space-y-2.5">
                   <p className="text-[11px] text-slate-400">제목 매칭 점수순 · 점수는 작품 제목과 시즌 비교 기준이며 자막 싱크를 뜻하지 않습니다.</p>
                   {creators.map((c, idx) => {
-                    const isCurrent = currentSubName?.includes(c.name);
-                    const isLoading = loadingCreator === c.name;
+                    // Creator names can repeat for several anime entries. A name
+                    // match alone made every row appear applied; only mark the
+                    // exact blog + matched work selected in this player.
+                    const isCurrent = Boolean(
+                      c.website &&
+                      currentSubSourceCreatorWebsite === c.website &&
+                      currentSubMatchedTitle === c.matchedTitle
+                    );
+                    const isLoading = loadingCreator === creatorKey(c);
                     const isAss =
                       c.name.includes("카이란") ||
                       c.name.includes("슈퍼소닉") ||
@@ -350,7 +372,8 @@ export default function SubtitleSelectModal({
                       >
                         <div className="flex flex-col gap-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-bold text-white text-sm">{c.name}</span>
+                        <span className="font-bold text-white text-sm">{c.name}</span>
+                            <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${c.sourceProvider === "aniall" ? "bg-amber-500/15 text-amber-200" : "bg-cyan-500/15 text-cyan-200"}`}>{c.sourceProvider === "aniall" ? "AniAll" : "애니시아"}</span>
                             {c.matchedTitle && <span className="text-xs font-semibold text-slate-300">· {c.matchedTitle}</span>}
                             {c.verifiedMatch ? (
                               <span className="rounded-md bg-emerald-500/20 px-2 py-0.5 text-[11px] font-bold text-emerald-300">DB 연결 확인</span>
@@ -458,6 +481,7 @@ export default function SubtitleSelectModal({
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-2">
                         <span className="font-bold text-white text-xs">{sub.name}</span>
+                        {sub.sourceProvider && <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${sub.sourceProvider === "aniall" ? "bg-amber-500/15 text-amber-200" : "bg-cyan-500/15 text-cyan-200"}`}>{sub.sourceProvider === "aniall" ? "AniAll" : "애니시아"}</span>}
                         {sub.verifiedMatch ? (
                           <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">DB 연결 확인</span>
                         ) : typeof sub.matchScore === "number" ? (

@@ -1,0 +1,13 @@
+[Unit]
+Description=Import the current anime catalog Release into streaming-project PostgreSQL
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/streaming-project
+EnvironmentFile=/home/pi/.config/streaming-project/anime-db.env
+UMask=0077
+ExecStart=/usr/bin/python3 /home/pi/streaming-project/scripts/update-anime-db-release.py

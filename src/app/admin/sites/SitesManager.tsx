@@ -11,6 +11,8 @@ export default function SitesManager() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const [subtitlePriority, setSubtitlePriority] = useState<"aniall" | "anissia">("anissia");
+  const [priorityBusy, setPriorityBusy] = useState(false);
 
   const load = async () => {
     try {
@@ -18,6 +20,9 @@ export default function SitesManager() {
       const data = await response.json();
       if (data.success) setProviders(data.providers);
       else setMessage(data.message || "사이트 목록을 불러오지 못했습니다.");
+      const priorityResponse = await fetch("/api/settings/subtitle-priority", { cache: "no-store" });
+      const priorityData = await priorityResponse.json();
+      if (priorityData.success) setSubtitlePriority(priorityData.priority);
     } catch {
       setMessage("사이트 목록을 불러오지 못했습니다.");
     } finally {
@@ -43,6 +48,23 @@ export default function SitesManager() {
       setMessage("사이트 설정을 변경하지 못했습니다.");
     } finally {
       setBusy(null);
+    }
+  };
+
+  const setPriority = async (priority: "aniall" | "anissia") => {
+    setPriorityBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/settings/subtitle-priority", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ priority }),
+      });
+      const data = await response.json();
+      if (!data.success) setMessage(data.message || "자막 우선순위를 저장하지 못했습니다.");
+      else setSubtitlePriority(data.priority);
+    } catch {
+      setMessage("자막 우선순위를 저장하지 못했습니다.");
+    } finally {
+      setPriorityBusy(false);
     }
   };
 
@@ -87,6 +109,19 @@ export default function SitesManager() {
               ))}
             </div>
           )}
+
+          <div className="mt-8 border-t border-white/10 pt-6">
+            <h2 className="font-semibold">자막 출처 우선순위</h2>
+            <p className="mt-1 text-xs text-slate-400">플레이어 자막 선택 목록에서 먼저 표시할 출처를 고릅니다. 다른 출처의 자막도 계속 선택할 수 있습니다.</p>
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              {([ ["aniall", "AniAll 우선"], ["anissia", "애니시아 우선"] ] as const).map(([value, label]) => (
+                <button key={value} type="button" disabled={priorityBusy} onClick={() => void setPriority(value)}
+                  className={`rounded-xl border px-4 py-3 text-sm font-bold transition disabled:opacity-50 ${subtitlePriority === value ? "border-purple-400 bg-purple-500/20 text-purple-100" : "border-white/10 bg-slate-950/50 text-slate-300 hover:border-white/30"}`}>
+                  {label}{priorityBusy && subtitlePriority === value ? " 저장 중…" : ""}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <div className="mt-6 rounded-2xl border border-sky-500/15 bg-sky-500/5 p-4 text-xs leading-relaxed text-slate-300">
             여기서 지원 중인 제공처를 검색·선택 목록에 추가하거나 제거할 수 있습니다. 제공처 주소 변경은 상단 메뉴의 도메인 설정에서 합니다. 새 사이트의 페이지 구조가 기존 제공처와 다르면 검색·회차·재생을 연결할 어댑터 지원이 먼저 필요합니다.
