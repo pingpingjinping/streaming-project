@@ -5,9 +5,16 @@ export interface SubtitleArchiveEntry {
   index: number;
   filename: string;
   episode: number | null;
+  season: number | null;
 }
 
 const EXTENSION = /\.(ass|ssa|smi|srt|vtt)$/i;
+
+export function seasonFromSubtitleFilename(filename: string): number | null {
+  const base = filename.split(/[\\/]/).pop()?.replace(EXTENSION, "") || "";
+  const match = base.match(/(?:^|[^a-z\d])s\s*0*(\d{1,2})\s*e\s*0*\d{1,3}(?!\d)/i);
+  return match ? Number(match[1]) : null;
+}
 
 export function episodeFromSubtitleFilename(filename: string): number | null {
   const base = filename.split(/[\\/]/).pop()?.replace(EXTENSION, "") || "";
@@ -45,7 +52,7 @@ export function inspectSubtitleArchive(buffer: Buffer): {
       const decoded = iconv.decode(entry.rawEntryName, "cp949");
       if (/[가-힣]/.test(decoded)) filename = decoded;
     }
-    entries.push({ index, filename, episode: episodeFromSubtitleFilename(filename) });
+    entries.push({ index, filename, episode: episodeFromSubtitleFilename(filename), season: seasonFromSubtitleFilename(filename) });
   }
   if (!entries.length) throw new Error("압축 파일에 자막이 없습니다.");
   return { zip, entries };

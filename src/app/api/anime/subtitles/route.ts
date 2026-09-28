@@ -3,11 +3,14 @@ import {
   searchAllSubtitlesParallel,
   findKairanSubtitle,
   fetchCreatorSubtitle,
+  mapProviderEpisodeNumber,
+  parseSeason,
   resolveKoreanTitle,
 } from "@/lib/subtitles";
 import { assertSafeProxyUrl, UnsafeProxyUrlError } from "@/lib/proxyGuard";
 import { getSessionUser } from "@/lib/auth";
-import { getManualSubtitleLink, getUploadedSubtitle } from "@/lib/db";
+import { getAniAllMatches, getManualSubtitleLink, getSubtitleSourcePriority } from "@/lib/db";
+import { getAniAllArchiveSubtitle, getUploadedSubtitle, getVerifiedSubtitleCache } from "@/lib/subtitleStorage";
 import { getReanimeMatch } from "@/lib/reanimeMatches";
 
 export async function GET(request: NextRequest) {
@@ -54,6 +57,11 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ success: true, anime_title: title, episode: ep, count: 1, subtitles: [manual], creators: [] }, { headers: { "Cache-Control": "no-store" } });
       }
     }
+    const cached = animeIdParam ? await getVerifiedSubtitleCache(animeIdParam, ep) : null;
+    if (cached) {
+      return NextResponse.json({ success: true, anime_title: title, episode: ep, count: 1,
+        subtitles: [cached], creators: [], verified_cache: true }, { headers: { "Cache-Control": "no-store" } });
+    }
     const resolvedTitle = await resolveKoreanTitle(title);
     const searchTarget = reanimeMatch?.koreanTitle || resolvedTitle || title;
     const comparisonTitle = reanimeMatch?.koreanTitle ||
@@ -85,6 +93,23 @@ export async function GET(request: NextRequest) {
           },
         });
       }
+    }
+
+    const localMatches = (await getSubtitleSourcePriority()) === "aniall"
+      ? (await getAniAllMatches(comparisonTitle, animeIdParam)).sort((a, b) => b.confidence - a.confidence)
+      : [];
+    for (const match of localMatches) {
+      const localSub = await getAniAllArchiveSubtitle(match.blogTitle, ep, parseSeason(match.canonicalTitle));
+      if (!localSub) continue;
+      return NextResponse.json({
+        success: true, anime_title: title, resolved_title: resolvedTitle, episode: ep, count: 1,
+        subtitles: [{ ...localSub, sourceProvider: "aniall", sourceCreatorWebsite: match.postUrl,
+          sourceMatchedTitle: match.canonicalTitle }],
+        creators: localMatches.map((item) => ({ name: `AniAll · ${item.blogTitle}`, episode: "게시글 첨부 자막",
+          update_date: "", website: item.postUrl, is_current_ep: true, matchedTitle: item.canonicalTitle,
+          matchScore: item.confidence, verifiedMatch: item.confidence >= 90, sourceProvider: "aniall" })),
+        local_archive: true,
+      }, { headers: { "Cache-Control": "no-store" } });
     }
 
     // 13초 타임아웃 방어 가드 적용 (directAnimeNo 지원)
@@ -143,7 +168,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { creatorName, website, title, matchedTitle, episodeNumber, sourceProvider } = body;
+    const { creatorName, website, title, matchedTitle, episodeNumber, creatorEpisode, sourceProvider } = body;
     const ep = parseInt(String(episodeNumber || "1"), 10) || 1;
 
     if (!creatorName || !title) {
@@ -171,6 +196,8 @@ export async function POST(request: NextRequest) {
     const requestedTitle = typeof matchedTitle === "string" && matchedTitle.trim() ? matchedTitle.trim() : title;
     const resolvedTitle = await resolveKoreanTitle(requestedTitle);
     const targetTitle = resolvedTitle || requestedTitle;
+    const targetSeason = parseSeason(targetTitle) || parseSeason(requestedTitle);
+    const sourceEpisode = mapProviderEpisodeNumber(String(creatorEpisode || ""), ep, targetSeason);
 
     const isErusha = creatorName.includes("에루샤") || (website && website.toLowerCase().includes("erulabo"));
     if (isErusha) {
@@ -184,7 +211,11 @@ export async function POST(request: NextRequest) {
     if (creatorName.includes("카이란") || (website && website.toLowerCase().includes("kairan"))) {
       sub = await findKairanSubtitle(targetTitle, ep, 5000);
     } else if (website) {
-      sub = await fetchCreatorSubtitle(creatorName, website, targetTitle, ep, 5000);
+      if (sourceProvider === "aniall") {
+        const blogTitle = String(creatorName).replace(/^AniAll\s*[·|]\s*/i, "").trim();
+        sub = await getAniAllArchiveSubtitle(blogTitle, ep, targetSeason);
+      }
+      if (!sub) sub = await fetchCreatorSubtitle(creatorName, website, targetTitle, sourceEpisode, 5000);
     }
 
     if (!sub || !sub.content) {

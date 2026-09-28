@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
-import { deleteUploadedSubtitle, getUploadedSubtitle, saveUploadedSubtitle, saveUploadedSubtitles } from "@/lib/db";
+import { deleteUploadedSubtitle, getUploadedSubtitle, saveUploadedSubtitle, saveUploadedSubtitles } from "@/lib/subtitleStorage";
 import { extractSubtitleFromBuffer } from "@/lib/subtitles";
 import { inspectSubtitleArchive } from "@/lib/subtitleUpload";
 

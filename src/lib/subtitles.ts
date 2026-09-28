@@ -337,6 +337,15 @@ export function parseEpisodes(text: string): number[] {
   return Array.from(eps).sort((a, b) => a - b);
 }
 
+export function mapProviderEpisodeNumber(episodeLabel: string, episodeNumber: number, seasonNumber: number | null): number {
+  const listedEpisodes = parseEpisodes(episodeLabel);
+  if (!seasonNumber || seasonNumber <= 1 || listedEpisodes.includes(episodeNumber)) return episodeNumber;
+  if (!listedEpisodes.length || episodeNumber < 1 || episodeNumber > listedEpisodes.length) return episodeNumber;
+  const first = listedEpisodes[0];
+  const contiguous = listedEpisodes.every((episode, index) => episode === first + index);
+  return contiguous && first > 1 ? listedEpisodes[episodeNumber - 1] : episodeNumber;
+}
+
 // 5. Decode text buffer with encoding fallback (UTF-8, UTF-16, CP949, EUC-KR)
 export function decodeSubtitleBuffer(buf: Buffer): string {
   // UTF-16 BOM or null-byte pattern
@@ -518,7 +527,8 @@ export function extractSubtitleFromBuffer(
   buffer: Buffer,
   episodeNumber: number,
   urlPath: string,
-  strictEpisode = false
+  strictEpisode = false,
+  targetSeason: number | null = null
 ): { filename: string; orig_filename: string; content: string; format: "ASS" | "VTT"; is_ass: boolean } | null {
   const isZip =
     buffer.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04])) ||
@@ -555,6 +565,8 @@ export function extractSubtitleFromBuffer(
       let matchedDecName = "";
 
       const candidates: Array<{ priority: number; entry: AdmZip.IZipEntry; decName: string }> = [];
+      const numberedEntries = new Map<number, { priority: number; entry: AdmZip.IZipEntry; decName: string }>();
+      let matchingSeasonEntryFound = false;
 
       for (const entry of subEntries) {
         let decName = entry.entryName;
@@ -568,7 +580,25 @@ export function extractSubtitleFromBuffer(
         }
 
         for (const nameToCheck of [decName, entry.entryName]) {
+          const seasonEpisode = nameToCheck.match(/(?:^|[^a-z\d])s\s*0*(\d{1,2})\s*e\s*0*(\d{1,3})(?!\d)/i);
+          if (seasonEpisode) {
+            const fileSeason = Number(seasonEpisode[1]);
+            const fileEpisode = Number(seasonEpisode[2]);
+            if ((!targetSeason || targetSeason === fileSeason) && fileEpisode === episodeNumber) {
+              const ext = "." + (entry.name.split(".").pop() || "").toLowerCase();
+              candidates.push({ priority: extPriority[ext] || 99, entry, decName });
+              matchingSeasonEntryFound = true;
+            }
+            break;
+          }
           const epNums = parseEpisodes(nameToCheck);
+          if (epNums.length === 1) {
+            const ext = "." + (entry.name.split(".").pop() || "").toLowerCase();
+            const prior = numberedEntries.get(epNums[0]);
+            if (!prior || (extPriority[ext] || 99) < prior.priority) {
+              numberedEntries.set(epNums[0], { priority: extPriority[ext] || 99, entry, decName });
+            }
+          }
           if (epNums.includes(episodeNumber)) {
             const ext = "." + (entry.name.split(".").pop() || "").toLowerCase();
             candidates.push({
@@ -577,6 +607,41 @@ export function extractSubtitleFromBuffer(
               decName,
             });
             break;
+          }
+        }
+      }
+
+      if (!matchingSeasonEntryFound && targetSeason && targetSeason > 1 && numberedEntries.size) {
+        const episodeKeys = [...numberedEntries.keys()].sort((a, b) => a - b);
+        const first = episodeKeys[0];
+        const isContiguous = episodeKeys.every((episode, index) => episode === first + index);
+        if (isContiguous) {
+          let sourceEpisode: number | null = null;
+          if (first > 1) {
+            sourceEpisode = episodeKeys.includes(episodeNumber)
+              ? episodeNumber
+              : episodeNumber >= 1 && episodeNumber <= episodeKeys.length ? episodeKeys[episodeNumber - 1] : null;
+          } else if (episodeKeys.length > 12) {
+            if (episodeKeys.length % targetSeason === 0) {
+              const seasonLength = episodeKeys.length / targetSeason;
+              sourceEpisode = episodeNumber <= seasonLength
+                ? episodeKeys[(targetSeason - 1) * seasonLength + episodeNumber - 1]
+                : episodeKeys.includes(episodeNumber) ? episodeNumber : null;
+            } else if (!episodeKeys.includes(episodeNumber)) {
+              sourceEpisode = null;
+            }
+          } else if (episodeKeys.includes(episodeNumber)) {
+            sourceEpisode = episodeNumber;
+          }
+
+          if (sourceEpisode !== null) {
+            candidates.length = 0;
+            const mapped = numberedEntries.get(sourceEpisode);
+            if (mapped) candidates.push(mapped);
+          } else if (first === 1 && episodeKeys.length > 12 && episodeNumber <= episodeKeys.length) {
+            // A combined multi-season archive is ambiguous without a reliable block boundary.
+            // Do not silently return season 1 for a later-season local episode.
+            candidates.length = 0;
           }
         }
       }
@@ -1022,7 +1087,7 @@ export async function fetchCreatorSubtitle(
     const targetSeason = parseSeason(resolvedTitle) || parseSeason(animeTitle);
 
     // 단일 페이지에서 자막 파일(첨부파일/구글드라이브/다운로드링크) 추출 헬퍼 함수
-    const tryExtractFromPage = async (targetUrl: string, providedHtml?: string): Promise<SubtitleResult | null> => {
+    const tryExtractFromPage = async (targetUrl: string, providedHtml?: string, strictEpisode = false): Promise<SubtitleResult | null> => {
       try {
         let postUrl = targetUrl;
         const reqHeaders: Record<string, string> = { ...HEADERS };
@@ -1059,7 +1124,7 @@ export async function fetchCreatorSubtitle(
           for (const dlUrl of links) {
             const buf = await downloadFileWithTimeout(dlUrl, postUrl, Math.max(timeoutMs + 1000, 12000));
             if (buf && buf.length > 50) {
-              const extracted = extractSubtitleFromBuffer(buf, episodeNumber, dlUrl);
+              const extracted = extractSubtitleFromBuffer(buf, episodeNumber, dlUrl, strictEpisode, targetSeason);
               if (extracted) {
                 return {
                   name: creatorName,
@@ -1085,7 +1150,7 @@ export async function fetchCreatorSubtitle(
           for (const dlUrl of links) {
             const buf = await downloadFileWithTimeout(dlUrl, "https://blog.naver.com/", timeoutMs + 1000);
             if (buf && buf.length > 50) {
-              const extracted = extractSubtitleFromBuffer(buf, episodeNumber, dlUrl);
+              const extracted = extractSubtitleFromBuffer(buf, episodeNumber, dlUrl, strictEpisode, targetSeason);
               if (extracted) {
                 return {
                   name: creatorName,
@@ -1152,7 +1217,7 @@ export async function fetchCreatorSubtitle(
           const buf = await downloadFileWithTimeout(item.url, postUrl, Math.max(timeoutMs + 1500, 20000));
           if (buf && buf.length > 50) {
             const extracted = extractSubtitleFromBuffer(buf, episodeNumber, item.url,
-              !item.exactEpisode && !postIsCurrentEpisode);
+              strictEpisode || (!item.exactEpisode && !postIsCurrentEpisode), targetSeason);
             if (extracted) {
               return {
                 name: creatorName,
@@ -1193,7 +1258,7 @@ export async function fetchCreatorSubtitle(
         for (const fUrl of fileLinks) {
           const buf = await downloadFileWithTimeout(fUrl, postUrl, timeoutMs + 1000);
           if (buf && buf.length > 50) {
-            const extracted = extractSubtitleFromBuffer(buf, episodeNumber, fUrl);
+            const extracted = extractSubtitleFromBuffer(buf, episodeNumber, fUrl, strictEpisode, targetSeason);
             if (extracted) {
               return {
                 name: creatorName,
@@ -1285,6 +1350,12 @@ export async function fetchCreatorSubtitle(
               }
             }
           }
+
+          // AniAll often keeps an entire season ZIP on the matched work post,
+          // even when the post title itself does not contain an episode number.
+          // In strict mode only a ZIP entry that can be tied to this episode is accepted.
+          const postArchiveSubtitle = await tryExtractFromPage(website, initialPageHtml, true);
+          if (postArchiveSubtitle) return postArchiveSubtitle;
         }
       }
     } catch {}
@@ -1536,10 +1607,13 @@ export async function getAnissiaCreators(
           if (seenNames.has(name)) return [];
           seenNames.add(name);
           const epStr = String(c.episode || "");
+          const providedEpisodes = parseEpisodes(epStr);
+          const targetSeason = parseSeason(referenceTitle) || parseSeason(title) || parseSeason(anime.subject);
+          const sourceEpisode = mapProviderEpisodeNumber(epStr, episodeNumber, targetSeason);
           return [{ name, episode: epStr,
             update_date: String(c.updDt || "").replace("T", " ").slice(0, 16),
             website: String(c.website || "").trim(),
-            is_current_ep: epStr.includes(String(episodeNumber)),
+            is_current_ep: providedEpisodes.includes(sourceEpisode),
             matchedTitle: anime.subject, matchScore: anime.matchScore,
             verifiedMatch: anime.verifiedMatch }];
         });
@@ -1621,7 +1695,9 @@ export async function searchAllSubtitlesParallel(
 
     // 3. Parallel fetch creator subtitles with individual 3.5s timeouts
     const creatorSubPromises = topCreators.map(async (c) => {
-      const subtitle = await fetchCreatorSubtitle(c.name, c.website, c.matchedTitle || targetTitle, episodeNumber, 10000);
+      const targetSeason = parseSeason(c.matchedTitle || targetTitle) || parseSeason(targetTitle);
+      const sourceEpisode = mapProviderEpisodeNumber(c.episode, episodeNumber, targetSeason);
+      const subtitle = await fetchCreatorSubtitle(c.name, c.website, c.matchedTitle || targetTitle, sourceEpisode, 10000);
       return subtitle ? { ...subtitle, matchScore: c.matchScore,
         matchedTitle: c.matchedTitle, verifiedMatch: c.verifiedMatch,
         sourceCreatorWebsite: c.website, sourceMatchedTitle: c.matchedTitle,
