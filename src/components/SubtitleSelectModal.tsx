@@ -47,6 +47,16 @@ export interface SubtitleOption {
 }
 
 const creatorKey = (creator: CreatorInfo) => `${creator.website}\n${creator.matchedTitle || ""}`;
+type RejectedSource = { provider: string; sourceKey: string };
+const rejectionId = (provider: string, sourceKey: string) => JSON.stringify([provider, sourceKey]);
+const creatorSource = (creator: CreatorInfo): RejectedSource => ({
+  provider: creator.website ? creator.sourceProvider || "anissia" : "local",
+  sourceKey: creator.website || creator.name,
+});
+const subtitleSource = (subtitle: SubtitleOption): RejectedSource => ({
+  provider: subtitle.sourceCreatorWebsite ? subtitle.sourceProvider || "anissia" : "local",
+  sourceKey: subtitle.sourceCreatorWebsite || (subtitle.localArchive ? subtitle.name : subtitle.url || subtitle.name),
+});
 
 interface SubtitleSelectModalProps {
   isOpen: boolean;
@@ -89,6 +99,8 @@ export default function SubtitleSelectModal({
   // Creator download states
   const [loadingCreator, setLoadingCreator] = useState<string | null>(null);
   const [creatorError, setCreatorError] = useState<string | null>(null);
+  const [rejectedSources, setRejectedSources] = useState<RejectedSource[]>([]);
+  const [savingRejection, setSavingRejection] = useState("");
   const [startEpisodeInput, setStartEpisodeInput] = useState("");
   const [savedStartEpisode, setSavedStartEpisode] = useState<number | null>(null);
   const [savingStartEpisode, setSavingStartEpisode] = useState(false);
@@ -137,6 +149,46 @@ export default function SubtitleSelectModal({
       });
     return () => { cancelled = true; };
   }, [isOpen, animeId]);
+
+  useEffect(() => {
+    if (!isOpen || !animeId) return;
+    let cancelled = false;
+    setRejectedSources([]);
+    fetch(`/api/anime/subtitle-rejections?animeId=${encodeURIComponent(animeId)}`, { cache: "no-store" })
+      .then((response) => response.json())
+      .then((data) => { if (!cancelled && data.success) setRejectedSources(data.rejections || []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [isOpen, animeId]);
+
+  const isRejected = ({ provider, sourceKey }: RejectedSource) =>
+    rejectedSources.some((entry) => rejectionId(entry.provider, entry.sourceKey) === rejectionId(provider, sourceKey));
+  const visibleCreators = creators.filter((creator) => !isRejected(creatorSource(creator)));
+  const visibleLocalArchiveOptions = localArchiveOptions.filter((option) => !isRejected(subtitleSource(option)));
+  const visibleSearchResults = searchResults.filter((option) => !isRejected(subtitleSource(option)));
+
+  const changeRejection = async (source: RejectedSource, reject: boolean) => {
+    const key = rejectionId(source.provider, source.sourceKey);
+    if (savingRejection) return;
+    setSavingRejection(key);
+    setCreatorError(null);
+    try {
+      const response = await fetch("/api/anime/subtitle-rejections", {
+        method: reject ? "POST" : "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ animeId, ...source }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.message || "선택을 저장하지 못했습니다.");
+      setRejectedSources((old) => reject
+        ? [...old.filter((entry) => rejectionId(entry.provider, entry.sourceKey) !== key), source]
+        : old.filter((entry) => rejectionId(entry.provider, entry.sourceKey) !== key));
+    } catch (error) {
+      setCreatorError(error instanceof Error ? error.message : "선택을 저장하지 못했습니다.");
+    } finally {
+      setSavingRejection("");
+    }
+  };
 
   useEffect(() => {
     if (!isOpen) {
@@ -467,7 +519,7 @@ export default function SubtitleSelectModal({
             }`}
           >
             <Users className="h-4 w-4" />
-            제작자 선택 ({creators.length}명)
+            제작자 선택 ({visibleCreators.length}명)
           </button>
 
           <button
@@ -505,15 +557,20 @@ export default function SubtitleSelectModal({
                   <h3 className="text-sm font-bold text-emerald-200">Pi 로컬 자막</h3>
                   {isLoadingLocalArchives && <span className="text-xs text-emerald-300">검색 중…</span>}
                 </div>
-                {localArchiveOptions.length ? (
+                {visibleLocalArchiveOptions.length ? (
                   <div className="space-y-2">
-                    {localArchiveOptions.map((subtitle, index) => (
-                      <button key={`${subtitle.name}-${index}`} type="button"
-                        onClick={() => { onSelectSubtitle(subtitle); onClose(); }}
-                        className="flex w-full flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-500/20 bg-slate-900/70 px-3 py-2 text-left hover:border-emerald-400/50 hover:bg-slate-900">
-                        <span className="min-w-0 truncate text-sm font-semibold text-white">{subtitle.name}</span>
-                        <span className="shrink-0 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-bold text-emerald-300">Pi 로컬 적용</span>
-                      </button>
+                    {visibleLocalArchiveOptions.map((subtitle, index) => (
+                      <div key={`${subtitle.name}-${index}`} className="flex items-center gap-2">
+                        <button type="button"
+                          onClick={() => { onSelectSubtitle(subtitle); onClose(); }}
+                          className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-500/20 bg-slate-900/70 px-3 py-2 text-left hover:border-emerald-400/50 hover:bg-slate-900">
+                          <span className="min-w-0 truncate text-sm font-semibold text-white">{subtitle.name}</span>
+                          <span className="shrink-0 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-bold text-emerald-300">Pi 로컬 적용</span>
+                        </button>
+                        <button type="button" onClick={() => changeRejection(subtitleSource(subtitle), true)}
+                          disabled={Boolean(savingRejection)}
+                          className="shrink-0 rounded-lg px-2 py-2 text-[11px] text-slate-400 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50">이 자막은 아니야</button>
+                      </div>
                     ))}
                   </div>
                 ) : !isLoadingLocalArchives ? (
@@ -526,6 +583,22 @@ export default function SubtitleSelectModal({
                   <AlertCircle className="h-4 w-4 shrink-0" />
                   <span>{creatorError}</span>
                 </div>
+              )}
+
+              {rejectedSources.length > 0 && (
+                <details className="rounded-xl border border-slate-700/60 p-3 text-xs text-slate-400">
+                  <summary className="cursor-pointer">숨긴 자막 {rejectedSources.length}개 · 다시 표시</summary>
+                  <div className="mt-2 space-y-2">
+                    {rejectedSources.map((entry) => (
+                      <div key={rejectionId(entry.provider, entry.sourceKey)} className="flex items-center justify-between gap-2">
+                        <span className="min-w-0 truncate">{entry.provider}: {entry.sourceKey}</span>
+                        <button type="button" disabled={Boolean(savingRejection)}
+                          onClick={() => changeRejection(entry, false)}
+                          className="shrink-0 rounded-lg px-2 py-1 text-purple-300 hover:bg-purple-500/10 disabled:opacity-50">되돌리기</button>
+                      </div>
+                    ))}
+                  </div>
+                </details>
               )}
 
               <section className="rounded-2xl border border-amber-500/25 bg-amber-950/10 p-4">
@@ -561,7 +634,7 @@ export default function SubtitleSelectModal({
                 {startEpisodeNotice && <p className="mt-1 text-[11px] text-amber-200">{startEpisodeNotice}</p>}
               </section>
 
-              {creators.length === 0 ? (
+              {visibleCreators.length === 0 ? (
                 <div className="py-12 text-center text-slate-400">
                   <p className="text-sm font-semibold">등록된 공식 자막 제작자가 없습니다.</p>
                   <p className="mt-1 text-xs text-slate-500">
@@ -571,7 +644,7 @@ export default function SubtitleSelectModal({
               ) : (
                 <div className="space-y-2.5">
                   <p className="text-[11px] text-slate-400">제목 매칭 점수순 · 점수는 작품 제목과 시즌 비교 기준이며 자막 싱크를 뜻하지 않습니다.</p>
-                  {creators.map((c, idx) => {
+                  {visibleCreators.map((c, idx) => {
                     // Creator names can repeat for several anime entries. A name
                     // match alone made every row appear applied; only mark the
                     // exact blog + matched work selected in this player.
@@ -633,6 +706,10 @@ export default function SubtitleSelectModal({
                           </div>
                         </div>
 
+                        <div className="flex items-center gap-2">
+                        <button type="button" onClick={() => changeRejection(creatorSource(c), true)}
+                          disabled={Boolean(savingRejection)}
+                          className="rounded-lg px-2 py-2 text-[11px] text-slate-400 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50">이 자막은 아니야</button>
                         <button
                           onClick={() => handleSelectCreator(c)}
                           disabled={isLoading || isCurrent}
@@ -655,6 +732,7 @@ export default function SubtitleSelectModal({
                             c.localArchive ? "Pi 로컬 자막 적용" : "이 제작자 자막 적용"
                           )}
                         </button>
+                        </div>
                       </div>
                     );
                   })}
@@ -708,7 +786,7 @@ export default function SubtitleSelectModal({
 
               {/* Search Results */}
               <div className="space-y-2">
-                {searchResults.map((sub, idx) => (
+                {visibleSearchResults.map((sub, idx) => (
                   <div
                     key={idx}
                     className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-slate-900/60 p-4 hover:border-purple-500/40 transition"
@@ -738,6 +816,10 @@ export default function SubtitleSelectModal({
                       </p>
                     </div>
 
+                    <div className="flex shrink-0 items-center gap-2">
+                    <button type="button" onClick={() => changeRejection(subtitleSource(sub), true)}
+                      disabled={Boolean(savingRejection)}
+                      className="rounded-lg px-2 py-2 text-[11px] text-slate-400 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50">이 자막은 아니야</button>
                     <button
                       onClick={() => {
                         onSelectSubtitle(sub);
@@ -747,6 +829,7 @@ export default function SubtitleSelectModal({
                     >
                       선택
                     </button>
+                    </div>
                   </div>
                 ))}
               </div>

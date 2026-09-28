@@ -1,4 +1,5 @@
 import postgres from "postgres";
+import { createHash } from "node:crypto";
 
 let dbClient: ReturnType<typeof postgres> | null = null;
 
@@ -454,6 +455,45 @@ export interface AniAllMatch {
   evidence: string;
 }
 
+/** A rejected source is scoped to one anime, not the whole creator or blog. */
+export async function getSubtitleRejections(animeId: string): Promise<Array<{ provider: string; sourceKey: string }>> {
+  const sql = getDb();
+  if (!sql || !animeId) return [];
+  try {
+    const rows = await sql`SELECT provider, source_key FROM anime_subtitle_rejections WHERE anime_id=${animeId}`;
+    return rows.map((row) => ({ provider: String(row.provider), sourceKey: String(row.source_key) }));
+  } catch {
+    return [];
+  }
+}
+
+export async function updateSubtitleRejection(animeId: string, provider: string, sourceKey: string,
+  reject: boolean): Promise<boolean> {
+  const sql = getDb();
+  if (!sql) return false;
+  const hash = createHash("sha256").update(sourceKey).digest("hex");
+  try {
+    await sql`CREATE TABLE IF NOT EXISTS anime_subtitle_rejections (
+      anime_id TEXT NOT NULL, provider TEXT NOT NULL,
+      source_key_hash TEXT NOT NULL, source_key TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (anime_id, provider, source_key_hash)
+    )`;
+    if (reject) {
+      await sql`INSERT INTO anime_subtitle_rejections (anime_id,provider,source_key_hash,source_key)
+        VALUES (${animeId},${provider},${hash},${sourceKey})
+        ON CONFLICT (anime_id,provider,source_key_hash) DO UPDATE SET source_key=EXCLUDED.source_key`;
+    } else {
+      await sql`DELETE FROM anime_subtitle_rejections
+        WHERE anime_id=${animeId} AND provider=${provider} AND source_key_hash=${hash}`;
+    }
+    return true;
+  } catch (error) {
+    console.warn("[updateSubtitleRejection warning]:", error);
+    return false;
+  }
+}
+
 function aniAllSeason(value: string): number | null {
   const text = value.normalize("NFKC");
   const match = text.match(/(?:season\s*|시즌\s*|파트\s*|part\s*|第\s*)(\d{1,2})|(?:\b|^)(\d{1,2})\s*기|\bS(\d{1,2})(?:\b|$)/i);
@@ -564,6 +604,39 @@ export async function getAniAllMatches(title: string, animeId = "", includeOther
     return exactMatches.sort((a, b) => seasonRank(a) - seasonRank(b) || b.confidence - a.confidence);
   } catch (e) {
     console.warn("[getAniAllMatches warning]:", e);
+    return [];
+  }
+}
+
+/** Scored monthly AniAll suggestions stay separate from confirmed subtitle links. */
+export async function getAniAllCandidates(title: string, animeId = ""): Promise<AniAllMatch[]> {
+  const sql = getDb();
+  if (!sql || !title.trim()) return [];
+  try {
+    await initDb();
+    const alias = await sql`SELECT korean_title FROM anime_title_aliases
+      WHERE normalized_title = ${normalizeAnimeTitleKey(title)} LIMIT 1`;
+    const related = animeId.startsWith("re_")
+      ? await sql`SELECT korean_title FROM anime_reanime_matches
+          WHERE reanime_id = ${animeId.slice(3)} LIMIT 1`
+      : [];
+    const names = [...new Set([title, alias[0]?.korean_title, related[0]?.korean_title]
+      .map((value) => String(value || "").trim()).filter(Boolean))];
+    const bases = names.map(aniAllTitleBase).filter((base) => base.length >= 3);
+    if (!bases.length) return [];
+    const rows = await sql`
+      SELECT c.post_id, c.canonical_title, c.blog_title, c.post_url,
+             c.confidence, 'candidate' AS review_status, c.evidence
+      FROM anime_aniall_candidates c
+      WHERE NOT EXISTS (SELECT 1 FROM anime_aniall_matches m WHERE m.post_id = c.post_id)
+        AND (${sql.array(names)}::text[] @> ARRAY[c.canonical_title]
+          OR EXISTS (SELECT 1 FROM unnest(${sql.array(bases)}::text[]) AS b(base)
+            WHERE b.base = regexp_replace(lower(c.canonical_title), '[^[:alnum:]가-힣]', '', 'g')))
+      ORDER BY c.confidence DESC, c.post_id DESC LIMIT 20
+    `;
+    return rows.map(toAniAllMatch);
+  } catch {
+    // An older Pi database may not have imported the candidates table yet.
     return [];
   }
 }
