@@ -97,7 +97,7 @@ export interface AnimeProvider {
     sort?: string;
     day?: number | string;
   }): Promise<AnimeListResponse>;
-  searchAnime(keyword: string, page?: number): Promise<AnimeListResponse>;
+  searchAnime(keyword: string, page?: number, options?: { year?: string; sort?: string }): Promise<AnimeListResponse>;
   getAnimeDetail(animeId: string): Promise<AnimeDetail | null>;
   getEpisodeStream(watchUrl: string): Promise<EpisodeStreamInfo | null>;
 }

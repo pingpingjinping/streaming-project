@@ -42,6 +42,7 @@ interface SearchParams {
   page?: string;
   genre?: string;
   year?: string;
+  sort?: string;
   type?: string;
   period?: "day" | "week" | "month" | "all";
   day?: string;
@@ -89,6 +90,7 @@ export default async function HomePage({
   const page = parseInt(params.page || "1", 10) || 1;
   const genre = params.genre || "";
   const year = params.year || "";
+  const sort = params.sort || "year_desc";
   const typeLang = params.type || "";
   const period = params.period || "day";
   const day = params.day !== undefined ? parseInt(params.day, 10) : new Date().getDay();
@@ -243,7 +245,7 @@ export default async function HomePage({
       has_next = res.has_next;
       total_pages = res.total_pages;
     } else if (tab === "list") {
-      const res = await provider.getAnimeList({ genre: genre || undefined, page });
+      const res = await provider.searchAnime("*", page, { year, sort });
       items = res.items;
       has_next = res.has_next;
       total_pages = res.total_pages;
@@ -301,6 +303,7 @@ export default async function HomePage({
     if (q && searchScope === "all") p.set("scope", "all");
     if (genre) p.set("genre", genre);
     if (year) p.set("year", year);
+    if (sort) p.set("sort", sort);
     if (typeLang) p.set("type", typeLang);
     if (period) p.set("period", period);
     if (params.day !== undefined) p.set("day", String(day));
@@ -778,6 +781,32 @@ export default async function HomePage({
                     </div>
                   )}
                 </div>
+
+                <form method="get" action="/" className="flex flex-wrap items-end gap-2 border-t border-white/5 pt-3">
+                  <input type="hidden" name="tab" value="list" />
+                  <input type="hidden" name="genre" value={genre} />
+                  <input type="hidden" name="page" value="1" />
+                  <label className="flex flex-col gap-1 text-[11px] font-semibold text-slate-400">
+                    연도
+                    <select name="year" defaultValue={year} className="rounded-lg border border-purple-500/25 bg-slate-950 px-3 py-2 text-xs text-white">
+                      <option value="">전체 연도</option>
+                      {Array.from({ length: new Date().getFullYear() - 1959 }, (_, index) => new Date().getFullYear() - index).map((value) => (
+                        <option key={value} value={value}>{value}년</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-1 text-[11px] font-semibold text-slate-400">
+                    정렬
+                    <select name="sort" defaultValue={sort} className="rounded-lg border border-purple-500/25 bg-slate-950 px-3 py-2 text-xs text-white">
+                      <option value="year_desc">최신 연도순</option>
+                      <option value="year_asc">오래된 연도순</option>
+                    </select>
+                  </label>
+                  <button type="submit" className="rounded-lg bg-purple-600 px-4 py-2 text-xs font-bold text-white hover:bg-purple-500">적용</button>
+                  {(year || sort !== "year_desc") && (
+                    <Link href={buildUrl({ year: "", sort: "year_desc", page: 1 })} className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800">초기화</Link>
+                  )}
+                </form>
 
                 {/* 테마 퀵 필터 */}
                 <div className="flex flex-wrap items-center gap-2 text-xs">

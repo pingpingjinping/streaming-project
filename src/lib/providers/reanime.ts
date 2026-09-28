@@ -229,6 +229,7 @@ export async function getAnimeList(params: {
   genre?: string;
   period?: "day" | "week" | "month" | "all";
   sort?: string;
+  year?: string;
 }): Promise<AnimeListResponse> {
   const page = params.page || 1;
   const rawCat = params.category;
@@ -241,7 +242,7 @@ export async function getAnimeList(params: {
         ([k, v]) => k === params.genre || v.toLowerCase() === params.genre?.toLowerCase()
       );
       const queryGenre = match ? match[1] : params.genre;
-      return await searchAnime(queryGenre, page);
+      return await searchAnime(queryGenre, page, { year: params.year, sort: params.sort });
     }
 
     // 2. 카테고리별 분기
@@ -390,10 +391,11 @@ export async function getAnimeListFiltered(params: AnimeListFilterParams): Promi
     genre: params.genre,
     period: params.period,
     sort: params.sort,
+    year: params.year,
   });
 }
 
-export async function searchAnime(keyword: string, page = 1): Promise<AnimeListResponse> {
+export async function searchAnime(keyword: string, page = 1, options: { year?: string; sort?: string } = {}): Promise<AnimeListResponse> {
   const trimmed = keyword?.trim();
   if (!trimmed) {
     return { items: [], page: 1, has_next: false, total_pages: 1 };
@@ -401,6 +403,9 @@ export async function searchAnime(keyword: string, page = 1): Promise<AnimeListR
 
   const limit = 20;
   const offset = Math.max(0, (page - 1) * limit);
+  const filterParams = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+  if (options.year && /^\d{4}$/.test(options.year)) filterParams.set("year", options.year);
+  if (options.sort === "year_asc" || options.sort === "year_desc") filterParams.set("sort", options.sort);
 
   const searchTerms: string[] = [];
   const catalogSearchTerms = [...new Set([
@@ -454,7 +459,7 @@ export async function searchAnime(keyword: string, page = 1): Promise<AnimeListR
     const mappedResponses = await Promise.all(catalogSearchTerms.slice(0, 6).map(async (term) => {
       try {
         const json = await fetchReanimeJson<any>(
-          `${baseUrl}/api/v1/search?q=${encodeURIComponent(term)}&offset=${offset}&limit=${limit}`,
+          `${baseUrl}/api/v1/search?q=${encodeURIComponent(term)}&${filterParams.toString()}`,
           headers
         );
         return json && Array.isArray(json.results) ? json : null;
@@ -470,6 +475,7 @@ export async function searchAnime(keyword: string, page = 1): Promise<AnimeListR
       total = Math.max(total, Number(response.total || 0));
       for (const result of response.results) {
         const id = String(result.anime_id || "");
+        if (options.year && String(result.season_year || "") !== options.year) continue;
         if (!id || seenIds.has(id)) continue;
         seenIds.add(id);
         mergedResults.push(result);
@@ -492,12 +498,13 @@ export async function searchAnime(keyword: string, page = 1): Promise<AnimeListR
     try {
       const queryParam = term === "*" ? "*" : encodeURIComponent(term);
       const json = await fetchReanimeJson<any>(
-        `${baseUrl}/api/v1/search?q=${queryParam}&offset=${offset}&limit=${limit}`,
+        `${baseUrl}/api/v1/search?q=${queryParam}&${filterParams.toString()}`,
         headers
       );
       if (!json) continue;
 
-      const results = Array.isArray(json.results) ? json.results : [];
+      const rawResults = Array.isArray(json.results) ? json.results : [];
+      const results = options.year ? rawResults.filter((item: any) => String(item.season_year || "") === options.year) : rawResults;
       if (results.length > 0) {
         const items = results.map(mapRawItemToAnimeListItem);
         const total = Number(json.total || results.length || 0);
