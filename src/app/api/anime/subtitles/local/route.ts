@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
-import { getAniAllMatches, searchAniAllMatchesByTitleFragment, getSubtitleEpisodeStart } from "@/lib/db";
+import { getAniAllMatches, searchAniAllMatchesByTitleFragment, getSubtitleEpisodeStart, getSubtitleRejections } from "@/lib/db";
 import { getAniAllArchiveSubtitle } from "@/lib/subtitleStorage";
 import { parseSeason, resolveKoreanTitle } from "@/lib/subtitles";
 
@@ -18,6 +18,9 @@ export async function GET(request: NextRequest) {
 
   try {
     const sourceEpisodeStart = animeId ? await getSubtitleEpisodeStart(user.username, animeId) : null;
+    const rejected = await getSubtitleRejections(animeId);
+    const isRejected = (provider: string, sourceKey: string) =>
+      rejected.some((entry) => entry.provider === provider && entry.sourceKey === sourceKey);
     const resolvedTitle = await resolveKoreanTitle(title) || title;
     const exactMatches = (await getAniAllMatches(resolvedTitle, animeId)).sort((a, b) => b.confidence - a.confidence);
     const partialMatches = await searchAniAllMatchesByTitleFragment(resolvedTitle);
@@ -42,9 +45,11 @@ export async function GET(request: NextRequest) {
     for (const candidate of [...candidates.values()].slice(0, 20)) {
       const subtitle = await getAniAllArchiveSubtitle(candidate.blogTitle, episode, parseSeason(candidate.canonicalTitle), sourceEpisodeStart);
       if (!subtitle) continue;
+      const displayName = `[로컬 AniAll · ${candidate.blogTitle}] ${subtitle.orig_filename}`;
+      if (isRejected(candidate.postUrl ? "aniall" : "local", candidate.postUrl || displayName)) continue;
       subtitles.push({
         ...subtitle,
-        name: `[로컬 AniAll · ${candidate.blogTitle}] ${subtitle.orig_filename}`,
+        name: displayName,
         episode, sourceProvider: "aniall", sourceCreatorWebsite: candidate.postUrl,
         sourceMatchedTitle: candidate.canonicalTitle, matchScore: candidate.confidence,
         verifiedMatch: candidate.confidence >= 90, localArchive: true,
