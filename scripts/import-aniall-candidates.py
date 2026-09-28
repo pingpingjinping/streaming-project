@@ -15,7 +15,7 @@ if not isinstance(candidates, list):
 if not candidates:
     print("No AniAll review candidates this month.")
     raise SystemExit(0)
-if any(row.get("reviewStatus") != "auto_candidate" or not 85 <= int(row.get("confidence", 0)) <= 100
+if any(row.get("reviewStatus") != "auto_candidate" or not 61 <= int(row.get("confidence", 0)) <= 100
        for row in candidates):
     raise SystemExit("Invalid AniAll candidate score or status")
 
