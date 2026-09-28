@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-MIN_REVIEW_SCORE = 85
+MIN_REVIEW_SCORE = 61
 
 
 def export(audit, reviewed):
