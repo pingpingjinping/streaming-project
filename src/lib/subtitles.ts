@@ -1690,7 +1690,7 @@ export async function searchAllSubtitlesParallel(
       ...anissiaCreators.map((creator) => ({ ...creator, sourceProvider: "anissia" as const })),
       ...aniallCreators,
       ...aniallReviewCreators,
-    ].filter((creator) => !isRejected(creator.sourceProvider, creator.website || creator.name));
+    ].filter((creator) => !isRejected(creator.sourceProvider || "anissia", creator.website || creator.name));
 
     const collectedSubs: SubtitleResult[] = [];
     if (kairanSub && !isRejected("anissia", kairanSub.sourceCreatorWebsite || kairanSub.url || kairanSub.name)) {
