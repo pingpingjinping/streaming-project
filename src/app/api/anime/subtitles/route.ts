@@ -100,7 +100,7 @@ export async function GET(request: NextRequest) {
         }, {
           status: 200,
           headers: {
-            "Cache-Control": "public, s-maxage=86400, stale-while-revalidate=43200",
+            "Cache-Control": "no-store",
             "Access-Control-Allow-Origin": "*",
           },
         });
@@ -166,10 +166,9 @@ export async function GET(request: NextRequest) {
         headers: {
           // 자막이 실제로 있을 때만 Vercel Edge CDN에 24시간 캐싱
           // (검색 타임아웃 등으로 빈 결과가 24시간 캐시되면 재방문 시 자막 검색이 영구 실패함)
-          "Cache-Control":
-            validSubtitles.length > 0
-              ? "public, s-maxage=86400, stale-while-revalidate=43200"
-              : "no-store",
+          // Results include work-specific user feedback; never serve an old
+          // public cache entry after a source has been rejected.
+          "Cache-Control": "no-store",
           "Access-Control-Allow-Origin": "*",
         },
       }
