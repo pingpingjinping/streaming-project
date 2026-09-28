@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
-import { getAniAllMatches } from "@/lib/db";
+import { getAniAllMatches, searchAniAllMatchesByTitleFragment } from "@/lib/db";
 import { getAniAllArchiveSubtitle } from "@/lib/subtitleStorage";
 import { parseSeason, resolveKoreanTitle } from "@/lib/subtitles";
 
@@ -18,7 +18,15 @@ export async function GET(request: NextRequest) {
 
   try {
     const resolvedTitle = await resolveKoreanTitle(title) || title;
-    const matches = (await getAniAllMatches(resolvedTitle, animeId)).sort((a, b) => b.confidence - a.confidence);
+    const exactMatches = (await getAniAllMatches(resolvedTitle, animeId)).sort((a, b) => b.confidence - a.confidence);
+    const partialMatches = await searchAniAllMatchesByTitleFragment(resolvedTitle);
+    const seenMatches = new Set<string>();
+    const matches = [...exactMatches, ...partialMatches].filter((match) => {
+      const key = `${match.postId}\n${match.canonicalTitle}`;
+      if (seenMatches.has(key)) return false;
+      seenMatches.add(key);
+      return true;
+    });
     const candidates = new Map<string, { blogTitle: string; canonicalTitle: string; postUrl: string; confidence: number }>();
     for (const match of matches) {
       if (!candidates.has(match.blogTitle)) candidates.set(match.blogTitle, {

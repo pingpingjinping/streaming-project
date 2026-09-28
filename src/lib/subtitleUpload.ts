@@ -18,6 +18,8 @@ export function seasonFromSubtitleFilename(filename: string): number | null {
 
 export function episodeFromSubtitleFilename(filename: string): number | null {
   const base = filename.split(/[\\/]/).pop()?.replace(EXTENSION, "") || "";
+  // A range such as "01-12화" describes a bundle, not episode 12.
+  if (/(?:^|[^\d])\d{1,3}\s*[-~]\s*\d{1,3}\s*(?:화|회|편|話)?(?:$|[^\d])/u.test(base)) return null;
   const matches = [
     ...base.matchAll(/(?:^|[^a-z\d])(?:episode|ep|e|#)\s*0*(\d{1,3})(?!\d)/gi),
     ...base.matchAll(/(?:^|[^a-z\d])(?:s\d{1,2}\s*e)\s*0*(\d{1,3})(?!\d)/gi),

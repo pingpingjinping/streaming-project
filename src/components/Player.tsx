@@ -1914,18 +1914,29 @@ export default function Player(props: PlayerProps) {
       form.set("animeId", animeId);
       form.set("ep", String(currentEp));
       form.set("file", file);
+      const isZip = file.name.toLowerCase().endsWith(".zip");
+      if (isZip) form.set("mode", "open");
       const response = await fetch("/api/anime/uploaded-subtitle", { method: "POST", body: form });
       const data = await response.json();
-      if (!response.ok || !data.subtitle) throw new Error(data.message || "업로드에 실패했습니다.");
-      const uploaded: SubtitleItem = data.subtitle;
-      setSubs((previous) => {
-        const next = [uploaded, ...previous.filter((sub) => !sub.name.startsWith("Pi 저장:"))];
-        setSelectedSubIndex(0);
-        applySubtitle(uploaded, currentSyncOffset);
-        setTimeout(() => refreshSubtitleSettings(next, 0), 100);
-        return next;
-      });
-      if (artRef.current) artRef.current.notice.show = `Pi에 자막 저장 완료: ${file.name}`;
+      if (!response.ok || (!isZip && !data.subtitle)) throw new Error(data.message || "업로드에 실패했습니다.");
+      if (data.subtitle) {
+        const uploaded: SubtitleItem = data.subtitle;
+        setSubs((previous) => {
+          const next = [uploaded, ...previous.filter((sub) => !sub.name.startsWith("Pi 저장:"))];
+          setSelectedSubIndex(0);
+          applySubtitle(uploaded, currentSyncOffset);
+          setTimeout(() => refreshSubtitleSettings(next, 0), 100);
+          return next;
+        });
+      }
+      if (artRef.current) {
+        const saved = Array.isArray(data.saved) ? data.saved : [];
+        artRef.current.notice.show = isZip
+          ? data.subtitle
+            ? `Pi에 ${saved.length}개 회차 저장 · ${currentEp}화 자막 적용 완료`
+            : `Pi에 ${saved.length}개 회차 저장 · 현재 ${currentEp}화 자막은 ZIP에 없음`
+          : `Pi에 자막 저장 완료: ${file.name}`;
+      }
     } catch (error) {
       if (artRef.current) artRef.current.notice.show = error instanceof Error ? error.message : "자막 업로드에 실패했습니다.";
     } finally {
