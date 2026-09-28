@@ -842,6 +842,8 @@ def main():
     ap.add_argument("db", help="anime_four_sources_multilingual_prepared.db")
     ap.add_argument("--delay", type=float, default=0.12, help="delay between category page requests")
     ap.add_argument("--max-pages", type=int, default=0, help="0 = auto-detect/all")
+    ap.add_argument("--since-post-id", type=int, default=0,
+                    help="Only inspect posts newer than this previously observed AniAll post ID")
     ap.add_argument("--out-dir", default="tmp/aniall-audit")
     args = ap.parse_args()
 
@@ -874,9 +876,17 @@ def main():
 
     posts = {}
     empty_streak = 0
+    baseline_reached = False
+    latest_seen = args.since_post_id
     for page in range(1, pages + 1):
         body = first if page == 1 else fetch(f"{CATEGORY_URL}?page={page}")
         rows = extract_page_posts(body)
+        if page == 1 and not rows:
+            raise RuntimeError("AniAll first category page contained no posts; refusing to advance baseline")
+        latest_seen = max(latest_seen, *(int(row["post_id"]) for row in rows))
+        if args.since_post_id:
+            baseline_reached = baseline_reached or any(int(row["post_id"]) <= args.since_post_id for row in rows)
+            rows = [row for row in rows if int(row["post_id"]) > args.since_post_id]
         before = len(posts)
         for row in rows:
             posts[row["post_id"]] = row
@@ -884,6 +894,9 @@ def main():
 
         if page == 1 or page % 20 == 0 or page == pages:
             print(f"      page {page}/{pages}: unique posts={len(posts):,} (+{added})")
+
+        if baseline_reached:
+            break
 
         if not rows or added == 0:
             empty_streak += 1
@@ -893,6 +906,11 @@ def main():
             break
         if args.delay and page < pages:
             time.sleep(args.delay)
+
+    if args.since_post_id and not baseline_reached:
+        raise RuntimeError("AniAll baseline post was not reached; refusing partial monthly report")
+    (out_dir / "aniall-crawl-state.json").write_text(
+        json.dumps({"latest_post_id": latest_seen, "site_count": expected}, indent=2), encoding="utf-8")
 
     ordered = sorted(posts.values(), key=lambda x: int(x["post_id"]), reverse=True)
     raw_path.write_text(json.dumps(ordered, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -942,6 +960,8 @@ def main():
     print()
     print("=== aniall subtitle match audit ===")
     print(f"crawled posts : {total:,}" + (f" / expected {expected:,}" if expected else ""))
+    if args.since_post_id:
+        print(f"baseline reached : yes (post ID {args.since_post_id})")
     print(f"exact              : {counts['exact']:,} ({counts['exact']/total*100:.1f}%)" if total else "exact              : 0")
     print(f"title exact review : {counts['title_exact_review']:,} ({counts['title_exact_review']/total*100:.1f}%)" if total else "title exact review : 0")
     print(f"fuzzy high         : {counts['fuzzy_high']:,} ({counts['fuzzy_high']/total*100:.1f}%)" if total else "fuzzy high         : 0")
@@ -952,7 +972,7 @@ def main():
     print(f"strong mapped      : {strong:,} ({strong/total*100:.1f}%)" if total else "strong mapped      : 0")
     print(f"review candidates  : {review_total:,} ({review_total/total*100:.1f}%)" if total else "review candidates  : 0")
     print(f"unique mapped : {len(unique_matched):,} Korean titles")
-    if expected and total != expected:
+    if expected and not args.since_post_id and total != expected:
         print(f"WARNING: crawl count differs from site's reported count by {total-expected:+,}.")
         print("         Inspect aniall_posts.json before using this as a production source.")
     print(f"raw index     : {raw_path}")
