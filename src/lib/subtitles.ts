@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 17021)
-Total output lines: 1755
-
 import * as cheerio from "cheerio";
 import iconv from "iconv-lite";
 import AdmZip from "adm-zip";
@@ -795,7 +792,231 @@ export async function findKairanSubtitle(
     const targetEp = episodeNumber;
 
     let cleanBase = resolvedTitle.replace(/[\(\[\{<~].*?[\]\)\}>~]/g, "").trim();
-    cleanBase = cleanBase.replace(/\s…2021 tokens truncated…    }
+    cleanBase = cleanBase.replace(/\s+\d+기$/g, "").trim();
+    cleanBase = cleanBase.replace(/\b\d+(?:st|nd|rd|th)\b/gi, "").trim();
+    cleanBase = cleanBase.replace(/season\s*\d+/gi, "").trim();
+    cleanBase = cleanTitle(cleanBase);
+
+    const words = cleanBase
+      .split(/\s+/)
+      .filter((w) => !["시즌", "더빙", "자막", "극장판", "애니"].includes(w));
+    const searchTerm = words.length >= 2 ? words.slice(0, 2).join(" ") : words[0] || cleanBase;
+    if (!searchTerm) return null;
+
+    const queries: string[] = [];
+    if (targetSeason) {
+      queries.push(`${searchTerm} ${targetSeason}th ${targetEp}`);
+      queries.push(`${searchTerm} ${targetSeason}기 ${targetEp}`);
+      queries.push(`${searchTerm} ${targetSeason}th`);
+      queries.push(`${searchTerm} ${targetSeason}기`);
+    }
+    queries.push(`${searchTerm} ${targetEp}화`);
+    queries.push(`${searchTerm} ${targetEp}`);
+    queries.push(`${searchTerm}`);
+
+    for (const q of queries) {
+      const searchUrl = `https://kairan03.blogspot.com/search?q=${encodeURIComponent(q)}`;
+      const res = await fetch(searchUrl, {
+        headers: HEADERS,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+
+      if (!res.ok) continue;
+      const html = await res.text();
+      const $ = cheerio.load(html);
+
+      let matchedPostUrl = "";
+      $(".post, .date-outer, .entry").each((_, p) => {
+        if (matchedPostUrl) return;
+        const titleEl = $(p).find(".post-title a, h3 a, .entry-title a").first();
+        if (!titleEl.length) return;
+
+        const postTitle = titleEl.text().trim();
+        const postUrl = titleEl.attr("href")?.trim() || "";
+        if (!postUrl || postUrl.includes("report-abuse")) return;
+        if (!postTitle.includes(words[0])) return;
+
+        const postSeason = parseSeason(postTitle);
+        const postEps = parseEpisodes(postTitle);
+
+        if (targetSeason !== null && postSeason !== null && targetSeason !== postSeason) {
+          return;
+        }
+
+        if (postEps.includes(targetEp)) {
+          matchedPostUrl = postUrl;
+        }
+      });
+
+      if (matchedPostUrl) {
+        // Download post page to find attachment link
+        const postRes = await fetch(matchedPostUrl, {
+          headers: HEADERS,
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (!postRes.ok) continue;
+
+        const postHtml = await postRes.text();
+        const $p = cheerio.load(postHtml);
+
+        let subDownloadUrl = "";
+        $p("a[href]").each((_, a) => {
+          if (subDownloadUrl) return;
+          const href = $p(a).attr("href")?.trim() || "";
+          const text = $p(a).text().trim().toLowerCase();
+          if (
+            extractGdriveId(href) ||
+            href.includes("drive.google.com") ||
+            href.includes("docs.google.com") ||
+            href.endsWith(".zip") ||
+            href.endsWith(".ass") ||
+            href.endsWith(".smi") ||
+            href.endsWith(".srt") ||
+            text.includes("자막") ||
+            text.includes("다운로드")
+          ) {
+            subDownloadUrl = href;
+          }
+        });
+
+        // Fallback: search postHtml for Google Drive link
+        if (!subDownloadUrl) {
+          const driveMatch = postHtml.match(
+            /https?:\/\/(?:drive|docs)\.google\.com\/(?:file\/d\/|uc\?[^"'\s<>]*?id=|open\?id=)([a-zA-Z0-9_-]{25,})/i
+          );
+          if (driveMatch) {
+            subDownloadUrl = driveMatch[0];
+          }
+        }
+
+        if (subDownloadUrl) {
+          const buf = await downloadFileWithTimeout(subDownloadUrl, matchedPostUrl, timeoutMs + 1500);
+          if (buf && buf.length > 100) {
+            const extracted = extractSubtitleFromBuffer(buf, targetEp, subDownloadUrl);
+            if (extracted) {
+              return {
+                name: "카이란",
+                episode: targetEp,
+                orig_filename:
+                  extracted.orig_filename.startsWith("view?") || extracted.orig_filename.startsWith("subtitle")
+                    ? `${cleanBase} ${targetEp}화.${extracted.format.toLowerCase()}`
+                    : extracted.orig_filename,
+                format: extracted.format,
+                is_ass: extracted.is_ass,
+                content: extracted.content,
+              };
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error("[Kairan Subtitle] error:", e);
+  }
+  return null;
+}
+
+// 10. Creator blog search (Tistory, Naver Blog, Blogspot)
+export async function searchBlogForEpisode(
+  domain: string,
+  website: string,
+  animeTitle: string,
+  episodeNumber: number,
+  timeoutMs = 5000
+): Promise<string | null> {
+  const resolvedTitle = await resolveKoreanTitle(animeTitle);
+  const targetSeason = parseSeason(resolvedTitle) || parseSeason(animeTitle);
+  const targetEp = episodeNumber;
+
+  let cleanBase = resolvedTitle.replace(/[\(\[\{<~].*?[\]\)\}>~]/g, "").trim();
+  cleanBase = cleanBase.replace(/\s+\d+기$/g, "").trim();
+  cleanBase = cleanBase.replace(/\b\d+(?:st|nd|rd|th)\b/gi, "").trim();
+  cleanBase = cleanBase.replace(/season\s*\d+/gi, "").trim();
+  cleanBase = cleanTitle(cleanBase);
+
+  const words = cleanBase
+    .split(/\s+/)
+    .filter((w) => !["시즌", "더빙", "자막", "극장판", "애니"].includes(w));
+  const searchTerm = words.length >= 2 ? words.slice(0, 2).join(" ") : words[0] || cleanBase;
+
+  const queries: string[] = [];
+  if (targetSeason) {
+    queries.push(`${searchTerm} ${targetSeason}기 ${targetEp}화`);
+    queries.push(`${searchTerm} ${targetSeason}기`);
+  }
+  queries.push(`${searchTerm} ${targetEp}화`);
+  queries.push(`${searchTerm} ${String(targetEp).padStart(2, "0")}`);
+  queries.push(`${searchTerm}`);
+
+  try {
+    // 1. Google Blogger (blogspot.com)
+    if (domain.includes("blogspot.com")) {
+      for (const q of queries) {
+        const searchUrl = `https://${domain}/search?q=${encodeURIComponent(q)}`;
+        const res = await fetch(searchUrl, {
+          headers: HEADERS,
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (!res.ok) continue;
+
+        const html = await res.text();
+        const $ = cheerio.load(html);
+
+        let foundUrl = "";
+        $(".post-title a, h3 a, .entry-title a").each((_, a) => {
+          if (foundUrl) return;
+          const title = $(a).text().trim();
+          const href = $(a).attr("href")?.trim() || "";
+          if (!href || href.includes("report-abuse")) return;
+
+          const postSeason = parseSeason(title);
+          const postEps = parseEpisodes(title);
+
+          if (targetSeason !== null && postSeason !== null && targetSeason !== postSeason) {
+            return;
+          }
+
+          if (postEps.includes(targetEp)) {
+            foundUrl = href;
+          }
+        });
+
+        if (foundUrl) return foundUrl;
+      }
+    }
+    // 2. Tistory
+    else if (domain.includes("tistory.com")) {
+      for (const q of queries) {
+        const searchUrl = `https://${domain}/search/${encodeURIComponent(q)}`;
+        const res = await fetch(searchUrl, {
+          headers: HEADERS,
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (!res.ok) continue;
+
+        const html = await res.text();
+        const $ = cheerio.load(html);
+
+        let foundUrl = "";
+        $(".link-article, .link_article, .post-item a, .title a, a[href*='/entry/'], article a, .article-content a, .entry-content a").each((_, a) => {
+          if (foundUrl) return;
+          let title = $(a).text().trim();
+          if (!title) {
+            title = $(a).attr("title") || $(a).closest("article, .post-item, .article-content, li").text().trim();
+          }
+          const href = $(a).attr("href")?.trim() || "";
+          if (!href || href.startsWith("#") || href.includes("category")) return;
+
+          const postSeason = parseSeason(title);
+          const postEps = parseEpisodes(title);
+
+          if (targetSeason !== null && postSeason !== null && targetSeason !== postSeason) {
+            return;
+          }
+
+          if (postEps.includes(targetEp)) {
+            foundUrl = new URL(href, website).toString();
+          }
         });
 
         if (foundUrl) return foundUrl;
