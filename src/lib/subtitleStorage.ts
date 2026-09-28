@@ -127,7 +127,9 @@ export async function getAniAllArchiveSubtitle(blogTitle: string, episode: numbe
       if (!info.isFile() || info.size === 0 || info.size > 100 * 1024 * 1024) continue;
       const { zip, entries } = inspectSubtitleArchive(await readFile(filePath));
       const targetSeason = seasonNumber || 1;
-      let selected = entries.filter((entry) => entry.episode === episode && entry.season === targetSeason);
+      let selected = (!startEpisodeOverride || targetSeason > 1)
+        ? entries.filter((entry) => entry.episode === episode && entry.season === targetSeason)
+        : [];
       let ambiguousSeasonMapping = false;
       if (!selected.length && startEpisodeOverride && startEpisodeOverride > 0) {
         const sourceEpisode = startEpisodeOverride + episode - 1;
