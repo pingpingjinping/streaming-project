@@ -113,10 +113,10 @@ export async function GET(request: NextRequest) {
         parseSeason(comparisonTitle) || parseSeason(searchTarget),
       );
       const local = localSubtitles.find((subtitle) =>
-        !isRejected("anissia", subtitle.website || `[Pi 로컬 · Anissia] ${subtitle.creator} · ${subtitle.orig_filename}`)
+        !isRejected("anissia", `[로컬 Anissia · ${subtitle.creator}] ${subtitle.archiveFilename} · ${subtitle.orig_filename}`)
       );
       if (!local) return null;
-      const displayName = `[Pi 로컬 · Anissia] ${local.creator} · ${local.orig_filename}`;
+      const displayName = `[로컬 Anissia · ${local.creator}] ${local.archiveFilename} · ${local.orig_filename}`;
       return NextResponse.json({
         success: true,
         anime_title: title,
@@ -270,7 +270,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (animeId && website) {
+    if (animeId && website && !localArchive) {
       const rejected = await getSubtitleRejections(animeId);
       if (rejected.some((entry) => entry.provider === (sourceProvider === "aniall" ? "aniall" : "anissia")
         && entry.sourceKey === website)) {
