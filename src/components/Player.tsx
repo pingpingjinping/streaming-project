@@ -1860,6 +1860,23 @@ export default function Player(props: PlayerProps) {
   }, [refreshSubtitleSettings]);
 
   // Open a local subtitle or ZIP, store it on Pi, and apply the current episode's subtitle.
+  const addUploadedSubtitleOptions = (options: SubtitleItem[], autoApplySingle: boolean) => {
+    if (!options.length) return;
+    setSubs((previous) => {
+      const selectedName = selectedSubIndex >= 0 ? previous[selectedSubIndex]?.name : null;
+      const names = new Set(options.map((option) => option.name));
+      const next = [...options, ...previous.filter((sub) => !names.has(sub.name))];
+      if (autoApplySingle && options.length === 1) {
+        setSelectedSubIndex(0);
+        applySubtitle(options[0], currentSyncOffset);
+        setTimeout(() => refreshSubtitleSettings(next, 0), 100);
+      } else {
+        setSelectedSubIndex(selectedName ? next.findIndex((sub) => sub.name === selectedName) : -1);
+      }
+      return next;
+    });
+  };
+
   const handleLocalSubFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1875,22 +1892,18 @@ export default function Player(props: PlayerProps) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || "자막 파일을 Pi에 저장하지 못했습니다.");
 
-      if (data.subtitle) {
-        const localSub: SubtitleItem = data.subtitle;
-        setSubs((prev) => {
-          const nextSubs = [localSub, ...prev.filter((sub) => sub.name !== localSub.name)];
-          setSelectedSubIndex(0);
-          applySubtitle(localSub, currentSyncOffset);
-          setTimeout(() => refreshSubtitleSettings(nextSubs, 0), 100);
-          return nextSubs;
-        });
-      }
+      const options: SubtitleItem[] = Array.isArray(data.subtitles)
+        ? data.subtitles
+        : data.subtitle ? [data.subtitle] : [];
+      addUploadedSubtitleOptions(options, options.length === 1);
       if (artRef.current) {
         if (isZip) {
           const saved = Array.isArray(data.saved) ? data.saved : [];
-          artRef.current.notice.show = data.subtitle
-            ? `Pi에 ${saved.length}개 회차 저장 · ${currentEp}화 자막 적용 완료`
-            : `Pi에 ${saved.length}개 회차 저장 · 현재 ${currentEp}화 자막은 ZIP에 없음`;
+          artRef.current.notice.show = options.length > 1
+            ? `Pi에 ${saved.length}개 회차 저장 · 현재 ${currentEp}화 후보 ${options.length}개를 자막 목록에 추가했어. 골라서 눌러줘.`
+            : options.length === 1
+              ? `Pi에 ${saved.length}개 회차 저장 · 현재 ${currentEp}화 자막 적용 완료`
+              : `Pi에 ${saved.length}개 회차 저장 · 현재 ${currentEp}화 자막은 ZIP에 없어`;
         } else {
           artRef.current.notice.show = `Pi에 저장하고 자막 적용 완료: ${file.name}`;
         }
@@ -1920,22 +1933,18 @@ export default function Player(props: PlayerProps) {
       const response = await fetch("/api/anime/uploaded-subtitle", { method: "POST", body: form });
       const data = await response.json();
       if (!response.ok || (!isZip && !data.subtitle)) throw new Error(data.message || "업로드에 실패했습니다.");
-      if (data.subtitle) {
-        const uploaded: SubtitleItem = data.subtitle;
-        setSubs((previous) => {
-          const next = [uploaded, ...previous.filter((sub) => !sub.name.startsWith("Pi 저장:"))];
-          setSelectedSubIndex(0);
-          applySubtitle(uploaded, currentSyncOffset);
-          setTimeout(() => refreshSubtitleSettings(next, 0), 100);
-          return next;
-        });
-      }
+      const options: SubtitleItem[] = Array.isArray(data.subtitles)
+        ? data.subtitles
+        : data.subtitle ? [data.subtitle] : [];
+      addUploadedSubtitleOptions(options, options.length === 1);
       if (artRef.current) {
         const saved = Array.isArray(data.saved) ? data.saved : [];
         artRef.current.notice.show = isZip
-          ? data.subtitle
-            ? `Pi에 ${saved.length}개 회차 저장 · ${currentEp}화 자막 적용 완료`
-            : `Pi에 ${saved.length}개 회차 저장 · 현재 ${currentEp}화 자막은 ZIP에 없음`
+          ? options.length > 1
+            ? `Pi에 ${saved.length}개 회차 저장 · 현재 ${currentEp}화 후보 ${options.length}개를 자막 목록에 추가했어. 골라서 눌러줘.`
+            : options.length === 1
+              ? `Pi에 ${saved.length}개 회차 저장 · ${currentEp}화 자막 적용 완료`
+              : `Pi에 ${saved.length}개 회차 저장 · 현재 ${currentEp}화 자막은 ZIP에 없어`
           : `Pi에 자막 저장 완료: ${file.name}`;
       }
     } catch (error) {
