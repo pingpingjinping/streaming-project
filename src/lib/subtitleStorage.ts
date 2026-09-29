@@ -19,6 +19,16 @@ const formatOf = (format: "ASS" | "VTT") => format === "ASS" ? "ass" : "vtt";
 const normalizeBlogTitle = (value: string) => value.normalize("NFKC").toLocaleLowerCase("ko-KR")
   .replace(/[^\p{L}\p{N}]+/gu, "");
 
+function anissiaFolderParts(finishPath: string) {
+  const relative = path.relative(path.join(root, "anissia_subtitles"), path.dirname(finishPath));
+  const parts = relative.split(path.sep).filter(Boolean);
+  return {
+    title: parts[0] || "",
+    episode: parts[1] || "",
+    creator: parts[2] || "",
+  };
+}
+
 async function atomicWrite(filePath: string, content: string | Buffer) {
   await mkdir(path.dirname(filePath), { recursive: true });
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
@@ -337,7 +347,8 @@ export async function getAnissiaArchiveSubtitles(
 
   for (const entry of index) {
     const recordAnimeNo = recordNumber(entry.record, ["animeNo", "anime_no", "anissiaNo"]);
-    const folderTitle = path.basename(path.dirname(path.dirname(path.dirname(entry.finishPath))));
+    const folderParts = anissiaFolderParts(entry.finishPath);
+    const folderTitle = folderParts.title || path.basename(path.dirname(path.dirname(path.dirname(entry.finishPath)));
     const recordTitle = recordValue(entry.record, ["subject", "animeTitle", "workTitle", "title", "anime_name", "work"]) || folderTitle;
     const exactTitleMatch = [recordTitle, folderTitle].some((value) => wantedTitles.has(normalizeBlogTitle(value)));
     const folderNameMatch = folderNameQuery
@@ -347,14 +358,14 @@ export async function getAnissiaArchiveSubtitles(
 
     const recordEpisode = recordValue(entry.record, ["episode", "episodeNumber", "episode_number", "episodeNo", "ep"]);
     const episodeNumbers = recordEpisode ? parseEpisodes(recordEpisode) : [];
-    const episodeFolder = path.basename(path.dirname(path.dirname(entry.finishPath)));
+    const episodeFolder = folderParts.episode || path.basename(path.dirname(path.dirname(entry.finishPath)));
     const pathEpisodes = parseEpisodes(episodeFolder);
     const hasEpisodeData = episodeNumbers.length > 0 || pathEpisodes.length > 0;
     if (hasEpisodeData && !episodeNumbers.includes(episode) && !pathEpisodes.includes(episode)) continue;
 
     const titleSeason = parseSeason(recordTitle) || parseSeason(folderTitle);
     if (wantedSeason && titleSeason && wantedSeason !== titleSeason) continue;
-    const creator = recordValue(entry.record, ["name", "creator", "creatorName", "captionName"]) || path.basename(path.dirname(entry.finishPath));
+    const creator = recordValue(entry.record, ["name", "creator", "creatorName", "captionName"]) || folderParts.creator || "로컬 파일";
     const website = recordValue(entry.record, ["website", "url", "sourceUrl"]);
     const timestamp = Date.parse(entry.updatedAt) || 0;
     matched.push({ entry, title: recordTitle, creator, website, order: timestamp });
@@ -364,6 +375,7 @@ export async function getAnissiaArchiveSubtitles(
   const results: AnissiaArchiveSubtitle[] = [];
   for (const candidate of matched) {
     const dir = path.dirname(candidate.entry.finishPath);
+    const folderParts = anissiaFolderParts(candidate.entry.finishPath);
     let files: string[] = [];
     try { files = await readdir(dir); } catch { continue; }
     const archives = files.filter((name) => name.toLowerCase().endsWith(".zip"))
@@ -372,7 +384,7 @@ export async function getAnissiaArchiveSubtitles(
     const loose = files.filter((name) => /\.(ass|ssa|smi|srt|vtt)$/i.test(name));
     const recordEpisode = recordValue(candidate.entry.record, ["episode", "episodeNumber", "episode_number", "episodeNo", "ep"]);
     const recordedEpisodes = recordEpisode ? parseEpisodes(recordEpisode) : [];
-    const episodeFolder = path.basename(path.dirname(path.dirname(candidate.entry.finishPath)));
+    const episodeFolder = folderParts.episode || path.basename(path.dirname(path.dirname(candidate.entry.finishPath)));
     const pathEpisodes = parseEpisodes(episodeFolder);
     const recordMatchesEpisode = recordedEpisodes.includes(episode) || pathEpisodes.includes(episode) ||
       (!recordedEpisodes.length && !pathEpisodes.length);
