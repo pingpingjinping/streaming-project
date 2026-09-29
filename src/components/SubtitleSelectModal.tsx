@@ -28,7 +28,6 @@ export interface CreatorInfo {
   verifiedMatch?: boolean;
   sourceProvider?: "aniall" | "anissia";
   localArchive?: boolean;
-  localArchiveTrackKey?: string;
 }
 
 export interface SubtitleOption {
@@ -45,6 +44,7 @@ export interface SubtitleOption {
   sourceProvider?: "aniall" | "anissia";
   isCached?: boolean;
   localArchive?: boolean;
+  localArchiveTrackKey?: string;
 }
 
 const creatorKey = (creator: CreatorInfo) => `${creator.website}\n${creator.matchedTitle || ""}`;
