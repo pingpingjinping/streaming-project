@@ -762,7 +762,7 @@ export default function SubtitleSelectModal({
                   type="text"
                   value={searchKeyword}
                   onChange={(e) => setSearchKeyword(e.target.value)}
-                  placeholder="한국어 작품명 입력 (예: 귀멸의 칼날, 장송의 프리렌)"
+                  placeholder="작품명 또는 Pi 폴더명 일부 입력 (예: 책벌레)"
                   className="flex-1 rounded-xl border border-purple-500/30 bg-slate-900/90 px-4 py-2.5 text-xs text-white placeholder-slate-500 outline-none focus:border-purple-400"
                 />
                 <input
