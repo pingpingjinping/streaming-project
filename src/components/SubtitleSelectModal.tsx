@@ -111,6 +111,7 @@ export default function SubtitleSelectModal({
 
   // File upload states
   const [uploadedSub, setUploadedSub] = useState<SubtitleOption | null>(null);
+  const [uploadedSubOptions, setUploadedSubOptions] = useState<SubtitleOption[]>([]);
   const [fileError, setFileError] = useState<string | null>(null);
   const [fileNotice, setFileNotice] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -408,6 +409,7 @@ export default function SubtitleSelectModal({
     setFileError(null);
     setFileNotice(null);
     setUploadedSub(null);
+    setUploadedSubOptions([]);
     const fileName = file.name;
     const lowerName = fileName.toLowerCase();
 
@@ -424,17 +426,17 @@ export default function SubtitleSelectModal({
           throw new Error(data.message || "ZIP 자막을 Pi에 저장하지 못했습니다.");
         }
         const saved = Array.isArray(data.saved) ? data.saved : [];
-        if (data.subtitle) {
-          setUploadedSub({
-            name: data.subtitle.name || "Pi 저장: " + fileName,
-            format: data.subtitle.is_ass ? "ASS" : "VTT",
-            is_ass: Boolean(data.subtitle.is_ass),
-            content: data.subtitle.content || "",
-          });
-          setFileNotice("Pi에 " + saved.length + "개 회차 저장 · 현재 " + episodeNumber + "화 자막 준비 완료");
-        } else {
-          setFileNotice("Pi에 " + saved.length + "개 회차 저장 · 현재 " + episodeNumber + "화 자막은 ZIP에 없어");
-        }
+        const storedOptions: SubtitleOption[] = (Array.isArray(data.subtitles)
+          ? data.subtitles : data.subtitle ? [data.subtitle] : []).map((subtitle: any) => ({
+            name: subtitle.name || "Pi 저장: " + subtitle.orig_filename || fileName,
+            format: subtitle.format === "ASS" || subtitle.is_ass ? "ASS" : "VTT",
+            is_ass: Boolean(subtitle.is_ass),
+            content: subtitle.content || "",
+          }));
+        setUploadedSubOptions(storedOptions);
+        setFileNotice(storedOptions.length
+          ? "Pi에 " + saved.length + "개 회차 저장 · 현재 " + episodeNumber + "화 후보 " + storedOptions.length + "개 저장 완료. 아래에서 골라 재생해."
+          : "Pi에 " + saved.length + "개 회차 저장 · 현재 " + episodeNumber + "화 자막은 ZIP에 없어");
       } catch (error) {
         setFileError(error instanceof Error ? error.message : "ZIP 자막을 읽지 못했습니다.");
       }
@@ -888,6 +890,28 @@ export default function SubtitleSelectModal({
               {fileNotice && (
                 <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/30 p-3 text-xs text-emerald-300">
                   {fileNotice}
+                </div>
+              )}
+
+              {uploadedSubOptions.length > 0 && (
+                <div className="space-y-2 rounded-2xl border border-emerald-500/30 bg-emerald-950/10 p-4">
+                  <div className="text-xs font-bold text-emerald-300">
+                    Pi에 저장된 현재 {episodeNumber}화 자막 후보 {uploadedSubOptions.length}개
+                  </div>
+                  {uploadedSubOptions.map((option, index) => (
+                    <div key={option.name + index} className="flex items-center justify-between gap-3 rounded-xl bg-slate-900/80 p-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-xs font-semibold text-white">{option.name}</div>
+                        <div className="mt-1 text-[11px] text-emerald-400">형식: {option.format} · Pi에 저장됨</div>
+                      </div>
+                      <button
+                        onClick={() => { onSelectSubtitle(option); onClose(); }}
+                        className="shrink-0 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-emerald-500"
+                      >
+                        이 자막으로 재생
+                      </button>
+                    </div>
+                  ))}
                 </div>
               )}
 
