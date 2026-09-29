@@ -57,7 +57,6 @@ export interface CreatorInfo {
   verifiedMatch?: boolean;
   sourceProvider?: "aniall" | "anissia";
   localArchive?: boolean;
-  localArchiveTrackKey?: string;
 }
 
 const SPEED_CYCLE_RATES = [1.0, 1.3, 1.5, 2.0];
@@ -105,6 +104,7 @@ interface SubtitleItem {
   sourceProvider?: "aniall" | "anissia";
   isCached?: boolean;
   localArchive?: boolean;
+  localArchiveTrackKey?: string;
 }
 
 const creatorIdentity = (creator: CreatorInfo) => `${creator.website}\n${creator.matchedTitle || ""}`;
