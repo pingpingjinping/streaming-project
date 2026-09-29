@@ -871,6 +871,8 @@ export async function findKairanSubtitle(
           if (subDownloadUrl) return;
           const href = $p(a).attr("href")?.trim() || "";
           const text = $p(a).text().trim().toLowerCase();
+          const labelledEpisodes = parseEpisodes(text);
+          if (labelledEpisodes.length && !labelledEpisodes.includes(targetEp)) return;
           if (
             extractGdriveId(href) ||
             href.includes("drive.google.com") ||
@@ -1131,7 +1133,10 @@ export async function fetchCreatorSubtitle(
           const links: string[] = [];
           $('a[href*="tfile"], a[href*="attachment"], a[href*="kakaocdn.net"]').each((_, a) => {
             const href = $(a).attr("href")?.trim();
-            if (href) links.push(new URL(href, postUrl).toString());
+            const labelledEpisodes = parseEpisodes($(a).text().trim());
+            if (href && (!labelledEpisodes.length || labelledEpisodes.includes(episodeNumber))) {
+              links.push(new URL(href, postUrl).toString());
+            }
           });
 
           for (const dlUrl of links) {
@@ -1157,7 +1162,8 @@ export async function fetchCreatorSubtitle(
           const links: string[] = [];
           $('a[href*="download.blog.naver.com"], a[href*="blogfiles.naver.net"], a[href*="attach"]').each((_, a) => {
             const href = $(a).attr("href")?.trim();
-            if (href) links.push(href);
+            const labelledEpisodes = parseEpisodes($(a).text().trim());
+            if (href && (!labelledEpisodes.length || labelledEpisodes.includes(episodeNumber))) links.push(href);
           });
 
           for (const dlUrl of links) {
@@ -1193,11 +1199,11 @@ export async function fetchCreatorSubtitle(
           const href = $(a).attr("href")?.trim() || "";
           const driveId = extractGdriveId(href);
           if (driveId && !seenGdrive.has(driveId)) {
-            seenGdrive.add(driveId);
             const text = $(a).text().trim().toLowerCase();
             const episodes = parseEpisodes(text);
             // For example, 1화 must never match the link labelled 11화.
             if (episodes.length && !episodes.includes(episodeNumber)) return;
+            seenGdrive.add(driveId);
             let score = 0;
             if (episodes.length === 1 && episodes[0] === episodeNumber) score += 60;
             if (episodes.length > 1 || text.includes("전편") || text.includes("통합") || text.includes("완결")) {
@@ -1249,6 +1255,8 @@ export async function fetchCreatorSubtitle(
         $("a[href]").each((_, a) => {
           const href = $(a).attr("href")?.trim() || "";
           const text = $(a).text().trim().toLowerCase();
+          const labelledEpisodes = parseEpisodes(text);
+          if (labelledEpisodes.length && !labelledEpisodes.includes(episodeNumber)) return;
           if (
             href.endsWith(".zip") ||
             href.endsWith(".smi") ||
@@ -1314,7 +1322,7 @@ export async function fetchCreatorSubtitle(
         const postHeading = $init(".post-title, .entry-title").first().text().trim() || pageTitle.split(":").pop()?.trim() || "";
         initialWorkTitle = postHeading.match(/^(.+?)\s*\d+\s*화/)?.[1]?.trim() || "";
         const pSeason = parseSeason(`${pageTitle} ${website}`);
-        const pEps = parseEpisodes(`${pageTitle} ${website}`);
+        const pEps = parseEpisodes(postHeading || pageTitle);
 
         if (targetSeason !== null && pSeason !== null && targetSeason !== pSeason) {
           postSeasonMatch = false;
