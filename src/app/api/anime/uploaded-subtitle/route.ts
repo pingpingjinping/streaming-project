@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
-import { deleteUploadedSubtitle, getUploadedSubtitle, saveUploadedSubtitle, saveUploadedSubtitles } from "@/lib/subtitleStorage";
+import { deleteUploadedSubtitle, getUploadedSubtitle, getUploadedSubtitles, saveUploadedSubtitle, saveUploadedSubtitleCandidates } from "@/lib/subtitleStorage";
 import { convertToVtt, decodeSubtitleBuffer, extractSubtitleFromBuffer } from "@/lib/subtitles";
 
 function parseSubtitleArchiveEntry(buffer: Buffer, episode: number, filename: string) {
@@ -68,12 +68,8 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ entries }, { headers: { "Cache-Control": "no-store" } });
       }
       if (form?.get("mode") === "open") {
-        const counts = new Map<number, number>();
-        for (const entry of entries) {
-          if (entry.episode) counts.set(entry.episode, (counts.get(entry.episode) || 0) + 1);
-        }
         let assignments: Array<{ index: number; episode: number }> = [];
-        const allNamed = entries.every((entry) => entry.episode && counts.get(entry.episode) === 1);
+        const allNamed = entries.every((entry) => entry.episode);
         if (allNamed) {
           assignments = entries.map((entry) => ({ index: entry.index, episode: entry.episode! }));
         } else if (entries.length === 1) {
@@ -100,15 +96,14 @@ export async function POST(request: NextRequest) {
           }
           return { episode, filename: filename.slice(0, 255), content: subtitle.content, format: subtitle.format };
         });
-        await saveUploadedSubtitles(user.username, key.id, subtitles);
-        const current = subtitles.find((subtitle) => subtitle.episode === key.ep);
+        await saveUploadedSubtitleCandidates(user.username, key.id, subtitles);
+        const currentSubtitles = subtitles.some((subtitle) => subtitle.episode === key.ep)
+          ? await getUploadedSubtitles(user.username, key.id, key.ep) : [];
         return NextResponse.json({
           success: true,
-          saved: subtitles.map((subtitle) => subtitle.episode),
-          subtitle: current ? {
-            name: `Pi 저장: ${current.filename}`, content: current.content,
-            format: current.format, is_ass: current.format === "ASS",
-          } : null,
+          saved: [...new Set(subtitles.map((subtitle) => subtitle.episode))],
+          subtitles: currentSubtitles,
+          subtitle: currentSubtitles[0] || null,
         }, { headers: { "Cache-Control": "no-store" } });
       }
       const rawAssignments = form?.get("assignments");
@@ -131,7 +126,11 @@ export async function POST(request: NextRequest) {
           return { episode: row.episode, filename: filename.slice(0, 255), content: subtitle.content, format: subtitle.format };
         });
         await saveUploadedSubtitles(user.username, key.id, subtitles);
-        return NextResponse.json({ success: true, saved: subtitles.map((subtitle) => subtitle.episode) },
+        const currentSubtitles = selected.some((row: { episode: number }) => row.episode === key.ep)
+          ? await getUploadedSubtitles(user.username, key.id, key.ep) : [];
+        return NextResponse.json({ success: true,
+          saved: [...new Set(subtitles.map((subtitle) => subtitle.episode))],
+          subtitles: currentSubtitles, subtitle: currentSubtitles[0] || null },
           { headers: { "Cache-Control": "no-store" } });
       }
       if (entries.length > 1) {
