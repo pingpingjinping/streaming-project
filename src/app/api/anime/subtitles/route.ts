@@ -25,6 +25,7 @@ export async function GET(request: NextRequest) {
   const referenceTitle = searchParams.get("referenceTitle")?.trim();
   const ep = parseInt(searchParams.get("ep") || "1", 10) || 1;
   const animeIdParam = searchParams.get("animeId") || searchParams.get("animeNo") || "";
+  const requestedAnissiaTrackKey = (searchParams.get("anissiaTrack") || "").slice(0, 1000);
   let directAnimeNo: number | null = null;
   if (/^(ani_)?\d+$/.test(animeIdParam)) {
     const parsed = Number(animeIdParam.replace(/^ani_/, ""));
@@ -112,11 +113,14 @@ export async function GET(request: NextRequest) {
         directAnimeNo,
         parseSeason(comparisonTitle) || parseSeason(searchTarget),
       );
-      const local = localSubtitles.find((subtitle) =>
-        !isRejected("anissia", `[로컬 Anissia · ${subtitle.creator}] ${subtitle.archiveFilename} · ${subtitle.orig_filename}`)
+      const availableLocalSubtitles = localSubtitles.filter((subtitle) =>
+        !isRejected("anissia", `[로컬 Anissia · ${subtitle.creator}] ${subtitle.localArchiveTrackLabel} · ${subtitle.archiveFilename} · ${subtitle.orig_filename}`)
       );
+      const local = availableLocalSubtitles.find((subtitle) =>
+        requestedAnissiaTrackKey && subtitle.localArchiveTrackKey === requestedAnissiaTrackKey
+      ) || availableLocalSubtitles[0];
       if (!local) return null;
-      const displayName = `[로컬 Anissia · ${local.creator}] ${local.archiveFilename} · ${local.orig_filename}`;
+      const displayName = `[로컬 Anissia · ${local.creator}] ${local.localArchiveTrackLabel} · ${local.archiveFilename} · ${local.orig_filename}`;
       return NextResponse.json({
         success: true,
         anime_title: title,
@@ -149,9 +153,11 @@ export async function GET(request: NextRequest) {
       }, { headers: { "Cache-Control": "no-store" } });
     };
 
-    const localResolvers = sourcePriority === "aniall"
-      ? [findAniAllLocal, findAnissiaLocal]
-      : [findAnissiaLocal, findAniAllLocal];
+    const localResolvers = requestedAnissiaTrackKey
+      ? [findAnissiaLocal, findAniAllLocal]
+      : sourcePriority === "aniall"
+        ? [findAniAllLocal, findAnissiaLocal]
+        : [findAnissiaLocal, findAniAllLocal];
     for (const resolveLocal of localResolvers) {
       const localResponse = await resolveLocal();
       if (localResponse) return localResponse;
