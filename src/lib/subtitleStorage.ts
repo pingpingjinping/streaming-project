@@ -224,7 +224,7 @@ async function loadAnissiaArchiveIndex(): Promise<AnissiaArchiveIndexEntry[]> {
       if (error?.code === "ENOENT") continue;
       throw error;
     }
-    if (entries.some((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".zip"))) {
+    if (entries.some((entry) => entry.isFile() && /\.(zip|ass|ssa|smi|srt|vtt)$/i.test(entry.name))) {
       archiveDirs.add(current.dir);
     }
     for (const entry of entries) {
@@ -257,7 +257,7 @@ async function loadAnissiaArchiveIndex(): Promise<AnissiaArchiveIndexEntry[]> {
   // from the same title/episode/creator directory layout and ZIP filename.
   const inferred = await Promise.all([...archiveDirs].filter((dir) => !finishDirs.has(dir)).map(async (dir) => {
     try {
-      const files = (await readdir(dir)).filter((name) => name.toLowerCase().endsWith(".zip"));
+      const files = (await readdir(dir)).filter((name) => /\.(zip|ass|ssa|smi|srt|vtt)$/i.test(name));
       const stats = await Promise.all(files.map((name) => stat(path.join(dir, name))));
       const latestModified = Math.max(0, ...stats.map((info) => info.mtimeMs));
       return {
