@@ -1,7 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { deleteUploadedSubtitle, getUploadedSubtitle, saveUploadedSubtitle, saveUploadedSubtitles } from "@/lib/subtitleStorage";
-import { extractSubtitleFromBuffer } from "@/lib/subtitles";
+import { convertToVtt, decodeSubtitleBuffer, extractSubtitleFromBuffer } from "@/lib/subtitles";
+
+function parseSubtitleArchiveEntry(buffer: Buffer, episode: number, filename: string) {
+  if (filename.toLowerCase().endsWith(".smi")) {
+    // Decode SAMI entries explicitly by their known extension. In particular,
+    // bypass archive-level format detection for UTF-16LE files with a BOM.
+    const rawText = buffer[0] === 0xff && buffer[1] === 0xfe
+      ? buffer.subarray(2).toString("utf16le")
+      : decodeSubtitleBuffer(buffer).replace(/^\\uFEFF/, "");
+    const converted = convertToVtt(rawText, ".smi");
+    if (converted.ext === ".vtt" && converted.content.startsWith("WEBVTT") && converted.content.includes("-->")) {
+      return {
+        filename: "sub.vtt",
+        orig_filename: filename,
+        content: converted.content,
+        format: "VTT" as const,
+        is_ass: false,
+      };
+    }
+  }
+  return extractSubtitleFromBuffer(buffer, episode, filename);
+}
 import { inspectSubtitleArchive } from "@/lib/subtitleUpload";
 
 function target(animeId: unknown, episode: unknown) {
@@ -73,7 +94,7 @@ export async function POST(request: NextRequest) {
         const subtitles = assignments.map(({ index, episode }) => {
           const entry = zip.getEntries()[index];
           const filename = entries.find((item) => item.index === index)!.filename;
-          const subtitle = extractSubtitleFromBuffer(entry.getData(), episode, filename);
+          const subtitle = parseSubtitleArchiveEntry(entry.getData(), episode, filename);
           if (!subtitle || Buffer.byteLength(subtitle.content) > 2 * 1024 * 1024) {
             throw new Error(`${filename}: 자막 내용을 읽지 못했습니다.`);
           }
@@ -103,7 +124,7 @@ export async function POST(request: NextRequest) {
         const subtitles = selected.map((row: { index: number; episode: number }) => {
           const entry = zip.getEntries()[row.index];
           const filename = entries.find((item) => item.index === row.index)!.filename;
-          const subtitle = extractSubtitleFromBuffer(entry.getData(), row.episode, filename);
+          const subtitle = parseSubtitleArchiveEntry(entry.getData(), row.episode, filename);
           if (!subtitle || Buffer.byteLength(subtitle.content) > 2 * 1024 * 1024) {
             throw new Error(`${filename}: 자막 내용을 읽지 못했습니다.`);
           }
