@@ -41,6 +41,49 @@ export async function getUploadedSubtitle(userId: string, animeId: string, episo
   }
 }
 
+export async function getUploadedSubtitles(userId: string, animeId: string, episode: number) {
+  const baseDir = path.join(root, "uploads", safeSegment(userId), safeSegment(animeId));
+  const candidatesDir = path.join(baseDir, "candidates", episodeName(episode));
+  let names: string[] = [];
+  try { names = await readdir(candidatesDir); } catch (error: any) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  const candidates = await Promise.all(names.filter((name) => name.endsWith(".json")).map(async (name) => {
+    try {
+      const metadata = JSON.parse(await readFile(path.join(candidatesDir, name), "utf8"));
+      const format = metadata.format === "ASS" ? "ASS" : "VTT";
+      const hash = name.slice(0, -5);
+      const content = await readFile(path.join(candidatesDir, `${hash}.${formatOf(format)}`), "utf8");
+      return {
+        name: `Pi 저장: ${metadata.filename}`,
+        orig_filename: metadata.filename,
+        content,
+        format,
+        is_ass: format === "ASS",
+      };
+    } catch { return null; }
+  }));
+  const legacy = await getUploadedSubtitle(userId, animeId, episode);
+  const all = [...candidates.filter((item): item is NonNullable<typeof item> => Boolean(item)), ...(legacy ? [legacy] : [])];
+  return all.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+}
+
+export async function saveUploadedSubtitleCandidates(userId: string, animeId: string,
+  subtitles: Array<{ episode: number; filename: string; content: string; format: "ASS" | "VTT" }>) {
+  const animeSegment = safeSegment(animeId);
+  const userSegment = safeSegment(userId);
+  for (const subtitle of subtitles) {
+    const baseDir = path.join(root, "uploads", userSegment, animeSegment, "candidates", episodeName(subtitle.episode));
+    const id = createHash("sha256")
+      .update(subtitle.filename).update("\\0").update(subtitle.format).update("\\0").update(subtitle.content).digest("hex");
+    const format = formatOf(subtitle.format);
+    await atomicWrite(path.join(baseDir, `${id}.${format}`), subtitle.content);
+    await atomicWrite(path.join(baseDir, `${id}.json`), JSON.stringify({
+      filename: subtitle.filename, format: subtitle.format, updatedAt: new Date().toISOString(),
+    }));
+  }
+}
+
 export async function saveUploadedSubtitle(userId: string, animeId: string, episode: number,
   filename: string, content: string, format: "ASS" | "VTT") {
   const dir = path.join(root, "uploads", safeSegment(userId), safeSegment(animeId));
@@ -66,7 +109,10 @@ export async function saveUploadedSubtitles(userId: string, animeId: string,
 export async function deleteUploadedSubtitle(userId: string, animeId: string, episode: number) {
   const dir = path.join(root, "uploads", safeSegment(userId), safeSegment(animeId));
   const base = episodeName(episode);
-  await Promise.all(["json", "ass", "vtt"].map((ext) => rm(path.join(dir, `${base}.${ext}`), { force: true })));
+  await Promise.all([
+    ...["json", "ass", "vtt"].map((ext) => rm(path.join(dir, `${base}.${ext}`), { force: true })),
+    rm(path.join(dir, "candidates", base), { recursive: true, force: true }),
+  ]);
   await deleteLegacyUploadedSubtitle(userId, animeId, episode);
 }
 
