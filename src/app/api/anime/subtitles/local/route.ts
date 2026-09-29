@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
       parseSeason(resolvedTitle) || parseSeason(title),
     );
     const anissiaSubtitles = anissiaArchives
-      .filter((subtitle) => !isRejected("anissia", subtitle.website || `[로컬 Anissia · ${subtitle.creator}] ${subtitle.archiveFilename} · ${subtitle.orig_filename}`))
+      .filter((subtitle) => !isRejected("anissia", `[로컬 Anissia · ${subtitle.creator}] ${subtitle.archiveFilename} · ${subtitle.orig_filename}`))
       .map((subtitle) => ({
         ...subtitle,
         name: `[로컬 Anissia · ${subtitle.creator}] ${subtitle.archiveFilename} · ${subtitle.orig_filename}`,
