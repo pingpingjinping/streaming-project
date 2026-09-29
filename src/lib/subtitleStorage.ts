@@ -123,6 +123,7 @@ export interface AnissiaArchiveSubtitle {
   matchedTitle: string;
   updatedAt: string;
   animeNo: number | null;
+  archiveFilename: string;
 }
 
 interface AnissiaArchiveIndexEntry {
