@@ -801,7 +801,7 @@ export async function findKairanSubtitle(
     const words = cleanBase
       .split(/\s+/)
       .filter((w) => !["시즌", "더빙", "자막", "극장판", "애니"].includes(w));
-    const searchTerm = words.length >= 2 ? words.slice(0, 2).join(" ") : words[0] || cleanBase;
+    const searchTerm = cleanBase || words[0];
     if (!searchTerm) return null;
 
     const queries: string[] = [];
@@ -835,7 +835,7 @@ export async function findKairanSubtitle(
         const postTitle = titleEl.text().trim();
         const postUrl = titleEl.attr("href")?.trim() || "";
         if (!postUrl || postUrl.includes("report-abuse")) return;
-        if (!postTitle.includes(words[0])) return;
+        if (!cleanTitle(postTitle).includes(cleanBase)) return;
 
         const postSeason = parseSeason(postTitle);
         const postEps = parseEpisodes(postTitle);
@@ -923,7 +923,8 @@ export async function searchBlogForEpisode(
   website: string,
   animeTitle: string,
   episodeNumber: number,
-  timeoutMs = 5000
+  timeoutMs = 5000,
+  workTitleHint = ""
 ): Promise<string | null> {
   const resolvedTitle = await resolveKoreanTitle(animeTitle);
   const targetSeason = parseSeason(resolvedTitle) || parseSeason(animeTitle);
@@ -939,8 +940,10 @@ export async function searchBlogForEpisode(
     .split(/\s+/)
     .filter((w) => !["시즌", "더빙", "자막", "극장판", "애니"].includes(w));
   const searchTerm = words.length >= 2 ? words.slice(0, 2).join(" ") : words[0] || cleanBase;
+  const expectedWork = cleanTitle(workTitleHint);
 
   const queries: string[] = [];
+  if (expectedWork) queries.push(`${expectedWork} ${targetEp}화`);
   if (targetSeason) {
     queries.push(`${searchTerm} ${targetSeason}기 ${targetEp}화`);
     queries.push(`${searchTerm} ${targetSeason}기`);
@@ -977,6 +980,7 @@ export async function searchBlogForEpisode(
             return;
           }
 
+          if (expectedWork && !cleanTitle(title).includes(expectedWork)) return;
           if (postEps.includes(targetEp)) {
             foundUrl = href;
           }
@@ -1015,7 +1019,7 @@ export async function searchBlogForEpisode(
             return;
           }
 
-          if (cleanTitle(title).includes(cleanTitle(searchTerm)) && postEps.includes(targetEp)) {
+          if (cleanTitle(title).includes(expectedWork || cleanTitle(searchTerm)) && postEps.includes(targetEp)) {
             foundUrl = new URL(href, website).toString();
           }
         });
@@ -1053,6 +1057,7 @@ export async function searchBlogForEpisode(
               return;
             }
 
+            if (expectedWork && !cleanTitle(title).includes(expectedWork)) return;
             if (postEps.includes(targetEp)) {
               foundUrl = href;
             }
@@ -1287,6 +1292,7 @@ export async function fetchCreatorSubtitle(
     let isInitialUrlCurrentEp = false;
     let postSeasonMatch = true;
     let initialPageHtml = "";
+    let initialWorkTitle = "";
 
     try {
       const initRes = await fetch(website, {
@@ -1298,6 +1304,8 @@ export async function fetchCreatorSubtitle(
         initialPageHtml = initHtml;
         const $init = cheerio.load(initHtml);
         const pageTitle = $init("title").text().trim() || "";
+        const postHeading = $init(".post-title, .entry-title").first().text().trim() || pageTitle.split(":").pop()?.trim() || "";
+        initialWorkTitle = postHeading.match(/^(.+?)\s*\d+\s*화/)?.[1]?.trim() || "";
         const pSeason = parseSeason(`${pageTitle} ${website}`);
         const pEps = parseEpisodes(`${pageTitle} ${website}`);
 
@@ -1375,7 +1383,7 @@ export async function fetchCreatorSubtitle(
     }
 
     // 🌟 2단계: 초기 URL이 해당 회차가 아니거나 추출 실패 시, 블로그 전체에서 현재 회차 포스트 자동 탐색
-    const matchedPostUrl = await searchBlogForEpisode(domain, website, animeTitle, episodeNumber, timeoutMs);
+    const matchedPostUrl = await searchBlogForEpisode(domain, website, animeTitle, episodeNumber, timeoutMs, initialWorkTitle);
     if (matchedPostUrl) {
       const searchExtracted = await tryExtractFromPage(matchedPostUrl);
       if (searchExtracted) return searchExtracted;
