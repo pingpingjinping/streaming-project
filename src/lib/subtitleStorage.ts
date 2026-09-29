@@ -257,7 +257,8 @@ function anissiaTrackIdentity(creator: string, archiveFilename: string, entryFil
   const rangePattern = /(?:^|[^\d])\d{1,3}\s*[-~]\s*\d{1,3}(?!\d)/;
   const archiveBase = path.basename(archiveFilename).replace(/\.(zip)$/i, "").replace(rangePattern, "{range}");
   const normalizedArchive = normalizeAnissiaTrackFilename(archiveBase, episode);
-  const normalizedEntry = normalizeAnissiaTrackFilename(entryFilename, episode);
+  const entryEpisode = episodeFromSubtitleFilename(entryFilename);
+  const normalizedEntry = entryEpisode === episode ? normalizeAnissiaTrackFilename(entryFilename, episode) : "";
   const trackKey = [normalizeBlogTitle(creator), normalizeBlogTitle(normalizedArchive), normalizeBlogTitle(normalizedEntry)].join("|");
   const entryTrack = normalizedEntry.match(/\{ep\}([a-z][a-z0-9._-]*)$/i)?.[1] || "";
   const archiveTrack = normalizedArchive.match(/(?:\{ep\}|\{range\})([a-z][a-z0-9._-]*)$/i)?.[1] || "";
