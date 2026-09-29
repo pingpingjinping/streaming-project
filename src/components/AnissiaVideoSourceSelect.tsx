@@ -3,9 +3,9 @@
 import Link from "next/link";
 
 const SOURCES = [
-  { id: "rean", label: "ReAnime", hint: "기본" },
-  { id: "linkkf", label: "Linkkf", hint: "대체" },
-  { id: "ohli24", label: "Ohli24", hint: "대체" },
+  { id: "rean", label: "ReAnime", hint: "고화질" },
+  { id: "linkkf", label: "Linkkf", hint: "자체자막" },
+  { id: "ohli24", label: "Ohli24", hint: "국내" },
 ] as const;
 
 export default function AnissiaVideoSourceSelect({
@@ -14,24 +14,27 @@ export default function AnissiaVideoSourceSelect({
   selectedSource,
   creator,
   subUrl,
+  isDub = false,
 }: {
   animeId: string;
   episodeNumber: number;
   selectedSource: string;
   creator?: string;
   subUrl?: string;
+  isDub?: boolean;
 }) {
   return (
     <section className="mb-4 rounded-2xl border border-slate-700/70 bg-slate-900/70 p-4">
       <div className="mb-3">
         <h2 className="text-sm font-bold text-white">영상 제공처</h2>
-        <p className="mt-1 text-xs text-slate-400">기본은 ReAnime입니다. 재생이 안 되면 다른 제공처를 선택해 보세요.</p>
+        <p className="mt-1 text-xs text-slate-400">현재 사이트에서 재생이 안 되면 다른 제공처를 선택해 보세요.</p>
       </div>
       <div className="flex flex-wrap gap-2">
         {SOURCES.map((source) => {
           const query = new URLSearchParams({ video_source: source.id });
           if (creator) query.set("creator", creator);
           if (subUrl) query.set("sub_url", subUrl);
+          if (isDub) query.set("dub", "1");
           const active = selectedSource === source.id;
           return (
             <Link

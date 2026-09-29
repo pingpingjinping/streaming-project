@@ -111,10 +111,10 @@ async function findRelatedJapaneseTitles(anissiaId: number, koreanTitle: string)
 }
 
 /**
- * 애니시아 작품 번호와 회차를 바탕으로 최적의 스트리밍 소스(1순위 ReAnime, 2순위 Linkkf, 3순위 Ohli24)를 자동 리졸빙
+ * 작품 제목과 회차를 바탕으로 선택한 스트리밍 제공처를 리졸빙
  */
 export async function resolveAnissiaStream(
-  anissiaId: number,
+  anissiaId: number | null,
   episodeNumber: number,
   title?: string,
   originalTitle?: string,
@@ -127,10 +127,12 @@ export async function resolveAnissiaStream(
   let cachedLinkkfId: string | null = null;
 
   try {
-    const cache = await getAnissiaStreamCache(anissiaId);
-    if (cache) {
-      cachedReanimeId = cache.reanime_id || null;
-      cachedLinkkfId = cache.linkkf_id || null;
+    if (anissiaId !== null) {
+      const cache = await getAnissiaStreamCache(anissiaId);
+      if (cache) {
+        cachedReanimeId = cache.reanime_id || null;
+        cachedLinkkfId = cache.linkkf_id || null;
+      }
     }
   } catch (e) {
     console.warn("[videoResolver] DB cache lookup error:", e);
@@ -140,7 +142,7 @@ export async function resolveAnissiaStream(
   let korTitle = title || "";
   let jpTitle = originalTitle || "";
 
-  if (!korTitle || !jpTitle) {
+  if (anissiaId !== null && (!korTitle || !jpTitle)) {
     try {
       const res = await fetch(`https://api.anissia.net/anime/animeNo/${anissiaId}`, {
         headers: HEADERS,
@@ -158,7 +160,7 @@ export async function resolveAnissiaStream(
 
   // 과거 작품은 Anissia 원제가 비어 있는 경우가 많다. 같은 한국어 제목의
   // OVA/후속 항목에서 공통 일본어 원제를 복구해 ReAnime 매칭에 사용한다.
-  const relatedJapaneseTitles = jpTitle ? [] : await findRelatedJapaneseTitles(anissiaId, korTitle);
+  const relatedJapaneseTitles = jpTitle || anissiaId === null ? [] : await findRelatedJapaneseTitles(anissiaId, korTitle);
   if (!jpTitle && relatedJapaneseTitles.length > 0) jpTitle = relatedJapaneseTitles[0];
 
   const targetSeason = parseSeason(korTitle) || parseSeason(jpTitle);
@@ -249,10 +251,12 @@ export async function resolveAnissiaStream(
             });
 
             // 실제로 유효한 스트림을 획득했을 때만 DB에 영구 캐싱
-            setAnissiaStreamCache({
-              anissia_id: anissiaId,
-              reanime_id: reanimeId,
-            }).catch(() => {});
+            if (anissiaId !== null) {
+              setAnissiaStreamCache({
+                anissia_id: anissiaId,
+                reanime_id: reanimeId,
+              }).catch(() => {});
+            }
 
             return {
               ...stream,
@@ -285,10 +289,7 @@ export async function resolveAnissiaStream(
     if (linkkfId) {
       const detail = await linkkfProvider.getAnimeDetail(linkkfId);
       if (detail && detail.sub_episodes.length > 0) {
-        const epItem =
-          detail.sub_episodes.find((e) => e.number === episodeNumber) ||
-          detail.sub_episodes[episodeNumber - 1] ||
-          detail.sub_episodes[0];
+        const epItem = detail.sub_episodes.find((e) => e.number === episodeNumber);
 
         if (epItem?.watch_url) {
           const stream = await linkkfProvider.getEpisodeStream(epItem.watch_url);
@@ -299,10 +300,12 @@ export async function resolveAnissiaStream(
               id: "linkkf",
             });
 
-            setAnissiaStreamCache({
-              anissia_id: anissiaId,
-              linkkf_id: linkkfId,
-            }).catch(() => {});
+            if (anissiaId !== null) {
+              setAnissiaStreamCache({
+                anissia_id: anissiaId,
+                linkkf_id: linkkfId,
+              }).catch(() => {});
+            }
 
             return {
               ...stream,
@@ -329,10 +332,7 @@ export async function resolveAnissiaStream(
         const ohliId = ohRes.items[0].id;
         const detail = await ohli24Provider.getAnimeDetail(ohliId);
         if (detail && detail.sub_episodes.length > 0) {
-          const epItem =
-            detail.sub_episodes.find((e) => e.number === episodeNumber) ||
-            detail.sub_episodes[episodeNumber - 1] ||
-            detail.sub_episodes[0];
+          const epItem = detail.sub_episodes.find((e) => e.number === episodeNumber);
 
           if (epItem?.watch_url) {
             const stream = await ohli24Provider.getEpisodeStream(epItem.watch_url);
@@ -343,10 +343,12 @@ export async function resolveAnissiaStream(
                 id: "ohli24",
               });
 
-              setAnissiaStreamCache({
-                anissia_id: anissiaId,
-                ohli24_id: ohliId,
-              }).catch(() => {});
+              if (anissiaId !== null) {
+                setAnissiaStreamCache({
+                  anissia_id: anissiaId,
+                  ohli24_id: ohliId,
+                }).catch(() => {});
+              }
 
               return {
                 ...stream,

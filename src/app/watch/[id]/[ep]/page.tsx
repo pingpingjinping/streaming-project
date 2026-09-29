@@ -70,6 +70,7 @@ export default async function WatchPage({
   const isDub = dub === "1";
   const isReanime = id.startsWith("re_");
   const isAnissia = id.startsWith("ani_");
+  const currentProviderSource = isReanime ? "rean" : id.startsWith("ol_") ? "ohli24" : "linkkf";
   const requestedVideoSource = ["rean", "linkkf", "ohli24"].includes(video_source || "")
     ? video_source as "rean" | "linkkf" | "ohli24"
     : undefined;
@@ -185,8 +186,14 @@ export default async function WatchPage({
   const [providerStreamInfo, preloadedSub] = await Promise.all([
     activeManual
       ? Promise.resolve(null)
-      : isAnissia
-        ? resolveAnissiaStream(Number(id.replace(/^ani_/, "")), epNum, anime.title, anime.original_title, requestedVideoSource)
+      : isAnissia || (requestedVideoSource && requestedVideoSource !== currentProviderSource)
+        ? resolveAnissiaStream(
+            isAnissia ? Number(id.replace(/^ani_/, "")) : null,
+            epNum,
+            anime.title,
+            anime.original_title,
+            requestedVideoSource
+          )
         : provider.getEpisodeStream(watchUrl),
     (!isDub && initialSubUrl && initialSubUrl.startsWith("http"))
       ? resolveKoreanTitle(anime.title)
@@ -213,6 +220,7 @@ export default async function WatchPage({
         <div className="min-h-screen bg-[#0b0f19] pb-16">
           <Navbar />
           <main className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">
+            {!activeManual && <AnissiaVideoSourceSelect animeId={id} episodeNumber={epNum} selectedSource={requestedVideoSource || currentProviderSource} creator={initialCreator} subUrl={initialSubUrl} isDub={isDub} />}
             <ManualSourcePanel animeId={id} episodeNumber={epNum} />
           </main>
           <ReanimeWatchFallback id={id} ep={epNum} isDub={isDub} />
@@ -224,6 +232,7 @@ export default async function WatchPage({
         <div className="min-h-screen bg-[#0b0f19] pb-16">
           <Navbar />
           <main className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">
+            {!activeManual && <AnissiaVideoSourceSelect animeId={id} episodeNumber={epNum} selectedSource={requestedVideoSource || "rean"} creator={initialCreator} subUrl={initialSubUrl} isDub={isDub} />}
             <ManualSourcePanel animeId={id} episodeNumber={epNum} />
           </main>
           <AnissiaStreamFallback
@@ -247,6 +256,7 @@ export default async function WatchPage({
       <div className="min-h-screen bg-[#0b0f19]">
         <Navbar />
         <main className="mx-auto max-w-4xl px-4 py-12">
+          {!activeManual && <AnissiaVideoSourceSelect animeId={id} episodeNumber={epNum} selectedSource={requestedVideoSource || currentProviderSource} creator={initialCreator} subUrl={initialSubUrl} isDub={isDub} />}
           <ManualSourcePanel animeId={id} episodeNumber={epNum} />
           <div className="rounded-3xl border border-red-500/20 bg-slate-900/60 p-8 text-center">
             <h2 className="text-xl font-bold text-red-400">스트림 주소를 불러오지 못했습니다.</h2>
@@ -299,13 +309,18 @@ export default async function WatchPage({
       <Navbar />
 
       <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-        {isAnissia && (
+        {!activeManual && (
           <AnissiaVideoSourceSelect
             animeId={id}
             episodeNumber={epNum}
-            selectedSource={providerStreamInfo?.server_sources?.[0]?.id || requestedVideoSource || "rean"}
+            selectedSource={
+              isAnissia
+                ? providerStreamInfo?.server_sources?.[0]?.id || requestedVideoSource || "rean"
+                : requestedVideoSource || currentProviderSource
+            }
             creator={initialCreator}
             subUrl={initialSubUrl}
+            isDub={isDub}
           />
         )}
         <ManualSourcePanel
