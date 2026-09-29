@@ -70,7 +70,7 @@ export async function GET(request: NextRequest) {
       .filter((subtitle) => !isRejected("anissia", `[로컬 Anissia · ${subtitle.creator}] ${subtitle.archiveFilename} · ${subtitle.orig_filename}`))
       .map((subtitle) => ({
         ...subtitle,
-        name: `[로컬 Anissia · ${subtitle.creator}] ${subtitle.localArchiveTrackLabel} · ${subtitle.archiveFilename} · ${subtitle.orig_filename]`,
+        name: `[로컬 Anissia · ${subtitle.creator}] ${subtitle.localArchiveTrackLabel} · ${subtitle.archiveFilename} · ${subtitle.orig_filename}`,
         episode,
         sourceProvider: "anissia",
         sourceCreatorWebsite: subtitle.website || undefined,
