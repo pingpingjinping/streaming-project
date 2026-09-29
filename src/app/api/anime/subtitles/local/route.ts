@@ -63,8 +63,9 @@ export async function GET(request: NextRequest) {
     const anissiaArchives = await getAnissiaArchiveSubtitles(
       [title, resolvedTitle],
       sourceEpisode,
-      anissiaNo,
+      null,
       parseSeason(resolvedTitle) || parseSeason(title),
+      { folderNameQuery: title, maxResults: 50 },
     );
     const anissiaSubtitles = anissiaArchives
       .filter((subtitle) => !isRejected("anissia", `[로컬 Anissia · ${subtitle.creator}] ${subtitle.localArchiveTrackLabel} · ${subtitle.archiveFilename} · ${subtitle.orig_filename}`))
