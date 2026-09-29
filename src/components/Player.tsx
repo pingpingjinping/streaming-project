@@ -3476,7 +3476,7 @@ export default function Player(props: PlayerProps) {
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const fetchedList: SubtitleItem[] = (data.subtitles || []).map((s: any) => ({
-          name: `${s.localArchive ? "[Pi 로컬 · AniAll]" : s.sourceProvider === "aniall" ? "[AniAll]" : "[애니시아]"} ${s.name} (${s.format})`,
+          name: `${s.localArchive ? `[Pi 로컬 · ${s.sourceProvider === "anissia" ? "Anissia" : "AniAll"}]` : s.sourceProvider === "aniall" ? "[AniAll]" : "[애니시아]"} ${s.name} (${s.format})`,
           format: s.format,
           is_ass: s.is_ass,
           content: s.content,
