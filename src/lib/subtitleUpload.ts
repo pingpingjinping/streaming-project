@@ -25,6 +25,9 @@ export function episodeFromSubtitleFilename(filename: string): number | null {
     ...base.matchAll(/(?:^|[^a-z\d])(?:s\d{1,2}\s*e)\s*0*(\d{1,3})(?!\d)/gi),
     ...base.matchAll(/(?:제|第\s*)?0*(\d{1,3})\s*(?:화|회|편|話)(?![가-힣])/g),
     ...base.matchAll(/\[\s*0*(\d{1,3})\s*\]/g),
+    // Release tags can be attached directly to the episode number,
+    // e.g. "Title - 01SubsPlease.smi".
+    ...base.matchAll(/(?:^|[\s_-])0*(\d{1,3})(?=[A-Za-z][A-Za-z0-9._-]*$)/g),
   ].map((match) => Number(match[1]));
   const looksLikeRange = /(?:^|[^\d])\d{1,3}\s*[-~]\s*\d{1,3}(?:$|[^\d])/.test(base);
   if (!looksLikeRange && (/^0*\d{1,3}$/.test(base) || /(?:^|[\s_-])0*\d{1,3}$/.test(base))) {
