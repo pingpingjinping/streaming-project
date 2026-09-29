@@ -434,7 +434,7 @@ export function convertToVtt(rawText: string, origExt: string): { content: strin
 
   // SAMI (.smi) Parser
   if (lowerExt === ".smi" || lowerText.includes("<sync") || lowerText.includes("<sami")) {
-    const syncRegex = /<SYNC\s+Start=(\d+)[^>]*>(?:<P[^>]*>)?([\s\S]*?)(?=<SYNC|\Z)/gi;
+    const syncRegex = /<SYNC\s+Start=(\d+)[^>]*>(?:<P[^>]*>)?([\s\S]*?)(?=<SYNC\s+Start=\d+|$)/gi;
     let m: RegExpExecArray | null;
 
     interface CueItem {
