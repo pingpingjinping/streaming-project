@@ -44,18 +44,21 @@ export interface SubtitleOption {
   sourceProvider?: "aniall" | "anissia";
   isCached?: boolean;
   localArchive?: boolean;
+  localArchiveTrackKey?: string;
 }
 
 const creatorKey = (creator: CreatorInfo) => `${creator.website}\n${creator.matchedTitle || ""}`;
 type RejectedSource = { provider: string; sourceKey: string };
 const rejectionId = (provider: string, sourceKey: string) => JSON.stringify([provider, sourceKey]);
 const creatorSource = (creator: CreatorInfo): RejectedSource => ({
-  provider: creator.website ? creator.sourceProvider || "anissia" : "local",
+  provider: creator.localArchive ? creator.sourceProvider || "local" : creator.website ? creator.sourceProvider || "anissia" : "local",
   sourceKey: creator.website || creator.name,
 });
 const subtitleSource = (subtitle: SubtitleOption): RejectedSource => ({
-  provider: subtitle.sourceCreatorWebsite ? subtitle.sourceProvider || "anissia" : "local",
-  sourceKey: subtitle.sourceCreatorWebsite || (subtitle.localArchive ? subtitle.name : subtitle.url || subtitle.name),
+  provider: subtitle.localArchive ? subtitle.sourceProvider || "local" : subtitle.sourceCreatorWebsite ? subtitle.sourceProvider || "anissia" : "local",
+  sourceKey: subtitle.localArchive && subtitle.sourceProvider === "anissia"
+    ? subtitle.name
+    : subtitle.sourceCreatorWebsite || (subtitle.localArchive ? subtitle.name : subtitle.url || subtitle.name),
 });
 
 interface SubtitleSelectModalProps {
@@ -219,10 +222,11 @@ export default function SubtitleSelectModal({
           matchScore: subtitle.matchScore,
           matchedTitle: subtitle.matchedTitle || subtitle.sourceMatchedTitle,
           verifiedMatch: subtitle.verifiedMatch,
-          sourceProvider: "aniall",
+          sourceProvider: subtitle.sourceProvider || "aniall",
           sourceCreatorWebsite: subtitle.sourceCreatorWebsite,
           sourceMatchedTitle: subtitle.sourceMatchedTitle,
           localArchive: true,
+          localArchiveTrackKey: subtitle.localArchiveTrackKey,
         })));
       })
       .catch((error) => {
@@ -266,7 +270,7 @@ export default function SubtitleSelectModal({
 
   // 1. Download and apply creator's subtitle
   const handleSelectCreator = async (creator: CreatorInfo) => {
-    if (!creator.website || loadingCreator) return;
+    if ((!creator.website && !creator.localArchive) || loadingCreator) return;
     const selectedCreatorKey = creatorKey(creator);
     setLoadingCreator(selectedCreatorKey);
     setCreatorError(null);
@@ -283,6 +287,7 @@ export default function SubtitleSelectModal({
           episodeNumber: episodeNumber,
           creatorEpisode: creator.episode,
           sourceProvider: creator.sourceProvider,
+          localArchive: creator.localArchive,
           animeId,
         }),
       });
@@ -301,6 +306,7 @@ export default function SubtitleSelectModal({
         sourceCreatorWebsite: creator.website,
         sourceMatchedTitle: creator.matchedTitle,
         sourceProvider: creator.sourceProvider,
+        localArchive: Boolean(creator.localArchive),
       };
 
       onSelectSubtitle(newSub);
@@ -346,6 +352,7 @@ export default function SubtitleSelectModal({
         sourceMatchedTitle: s.sourceMatchedTitle,
         isCached: Boolean(s.isCached),
         localArchive: Boolean(s.localArchive),
+        localArchiveTrackKey: s.localArchiveTrackKey,
       }));
 
       // The server has already grouped these in the configured provider order.
@@ -385,6 +392,7 @@ export default function SubtitleSelectModal({
         sourceCreatorWebsite: s.sourceCreatorWebsite,
         sourceMatchedTitle: s.sourceMatchedTitle,
         localArchive: Boolean(s.localArchive),
+        localArchiveTrackKey: s.localArchiveTrackKey,
       }));
       setSearchResults(subs);
       if (subs.length === 0) setSearchError("Pi의 로컬 보관함에서 해당 회차 자막을 찾지 못했어.");
@@ -557,6 +565,9 @@ export default function SubtitleSelectModal({
                   <h3 className="text-sm font-bold text-emerald-200">Pi 로컬 자막</h3>
                   {isLoadingLocalArchives && <span className="text-xs text-emerald-300">검색 중…</span>}
                 </div>
+                <p className="mb-2 text-[11px] leading-relaxed text-slate-400">
+                  스폰서판·논스폰서판처럼 같은 화에 여러 버전이 있으면, 여기서 고른 버전을 다음 화에서도 이어서 사용해.
+                </p>
                 {visibleLocalArchiveOptions.length ? (
                   <div className="space-y-2">
                     {visibleLocalArchiveOptions.map((subtitle, index) => (

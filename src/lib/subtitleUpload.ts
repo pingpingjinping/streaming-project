@@ -19,14 +19,17 @@ export function seasonFromSubtitleFilename(filename: string): number | null {
 export function episodeFromSubtitleFilename(filename: string): number | null {
   const base = filename.split(/[\\/]/).pop()?.replace(EXTENSION, "") || "";
   // A range such as "01-12화" describes a bundle, not episode 12.
-  if (/(?:^|[^\d])\d{1,3}\s*[-~]\s*\d{1,3}\s*(?:화|회|편|話)?(?:$|[^\d])/u.test(base)) return null;
+  if (/(?:^|[^sS\d])\d{1,3}\s*[-~]\s*\d{1,3}\s*(?:화|회|편|話)?(?:$|[^\d])/u.test(base)) return null;
   const matches = [
     ...base.matchAll(/(?:^|[^a-z\d])(?:episode|ep|e|#)\s*0*(\d{1,3})(?!\d)/gi),
     ...base.matchAll(/(?:^|[^a-z\d])(?:s\d{1,2}\s*e)\s*0*(\d{1,3})(?!\d)/gi),
     ...base.matchAll(/(?:제|第\s*)?0*(\d{1,3})\s*(?:화|회|편|話)(?![가-힣])/g),
     ...base.matchAll(/\[\s*0*(\d{1,3})\s*\]/g),
+    // Release tags can be attached directly to the episode number,
+    // e.g. "Title - 01SubsPlease.smi".
+    ...base.matchAll(/(?:^|[\s_-])0*(\d{1,3})(?=[A-Za-z][A-Za-z0-9._-]*$)/g),
   ].map((match) => Number(match[1]));
-  const looksLikeRange = /(?:^|[^\d])\d{1,3}\s*[-~]\s*\d{1,3}(?:$|[^\d])/.test(base);
+  const looksLikeRange = /(?:^|[^sS\d])\d{1,3}\s*[-~]\s*\d{1,3}(?:$|[^\d])/.test(base);
   if (!looksLikeRange && (/^0*\d{1,3}$/.test(base) || /(?:^|[\s_-])0*\d{1,3}$/.test(base))) {
     const end = base.match(/0*(\d{1,3})$/);
     if (end) matches.push(Number(end[1]));

@@ -104,6 +104,7 @@ interface SubtitleItem {
   sourceProvider?: "aniall" | "anissia";
   isCached?: boolean;
   localArchive?: boolean;
+  localArchiveTrackKey?: string;
 }
 
 const creatorIdentity = (creator: CreatorInfo) => `${creator.website}\n${creator.matchedTitle || ""}`;
@@ -2077,7 +2078,17 @@ export default function Player(props: PlayerProps) {
       sourceMatchedTitle: option.sourceMatchedTitle || option.matchedTitle,
       sourceProvider: option.sourceProvider,
       isCached: option.isCached,
+      localArchive: option.localArchive,
+      localArchiveTrackKey: option.localArchiveTrackKey,
     };
+    try {
+      const trackPreferenceKey = `anissia-local-track:${animeId}`;
+      if (option.localArchive && option.sourceProvider === "anissia" && option.localArchiveTrackKey) {
+        window.localStorage.setItem(trackPreferenceKey, option.localArchiveTrackKey);
+      } else {
+        window.localStorage.removeItem(trackPreferenceKey);
+      }
+    } catch {}
     const next = [subtitle, ...subs.filter((item) => item.name !== subtitle.name)];
     setSubs(next);
     setSelectedSubIndex(0);
@@ -3433,7 +3444,16 @@ export default function Player(props: PlayerProps) {
     setIsLoadingSubs(true);
     setNeedsManualSubtitleChoice(false);
 
-    fetch(`/api/anime/subtitles?title=${encodeURIComponent(animeTitle)}&ep=${currentEp}&animeId=${encodeURIComponent(animeId)}`)
+    const subtitleParams = new URLSearchParams({
+      title: animeTitle,
+      ep: String(currentEp),
+      animeId,
+    });
+    try {
+      const savedTrack = window.localStorage.getItem(`anissia-local-track:${animeId}`);
+      if (savedTrack) subtitleParams.set("anissiaTrack", savedTrack);
+    } catch {}
+    fetch(`/api/anime/subtitles?${subtitleParams.toString()}`)
       .then((r) => r.json())
       .then((data) => {
         if (isCancelled || !data.success) return;
@@ -3456,7 +3476,7 @@ export default function Player(props: PlayerProps) {
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const fetchedList: SubtitleItem[] = (data.subtitles || []).map((s: any) => ({
-          name: `${s.localArchive ? "[Pi 로컬 · AniAll]" : s.sourceProvider === "aniall" ? "[AniAll]" : "[애니시아]"} ${s.name} (${s.format})`,
+          name: `${s.localArchive ? `[Pi 로컬 · ${s.sourceProvider === "anissia" ? "Anissia" : "AniAll"}]` : s.sourceProvider === "aniall" ? "[AniAll]" : "[애니시아]"} ${s.name} (${s.format})`,
           format: s.format,
           is_ass: s.is_ass,
           content: s.content,
@@ -3465,6 +3485,7 @@ export default function Player(props: PlayerProps) {
           sourceProvider: s.sourceProvider,
           isCached: Boolean(s.isCached),
           localArchive: Boolean(s.localArchive),
+          localArchiveTrackKey: s.localArchiveTrackKey,
         }));
 
         const combined = [...fetchedList, ...newSubs];
