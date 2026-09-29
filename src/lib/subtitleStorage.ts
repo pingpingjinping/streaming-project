@@ -325,9 +325,12 @@ export async function getAnissiaArchiveSubtitles(
   episode: number,
   animeNo?: number | null,
   seasonNumber?: number | null,
+  options: { folderNameQuery?: string; maxResults?: number } = {},
 ): Promise<AnissiaArchiveSubtitle[]> {
   if (!Number.isSafeInteger(episode) || episode < 1) return [];
   const wantedTitles = new Set(titles.map(normalizeBlogTitle).filter((value) => value.length >= 2));
+  const folderNameQuery = normalizeBlogTitle(options.folderNameQuery || "");
+  const resultLimit = options.maxResults || (folderNameQuery ? 50 : 12);
   const wantedSeason = seasonNumber || titles.map(parseSeason).find((value) => value !== null) || null;
   const index = await getAnissiaArchiveIndex();
   const matched: Array<{ entry: AnissiaArchiveIndexEntry; title: string; creator: string; website: string; order: number }> = [];
@@ -337,7 +340,10 @@ export async function getAnissiaArchiveSubtitles(
     const folderTitle = path.basename(path.dirname(path.dirname(path.dirname(entry.finishPath))));
     const recordTitle = recordValue(entry.record, ["subject", "animeTitle", "workTitle", "title", "anime_name", "work"]) || folderTitle;
     const exactTitleMatch = [recordTitle, folderTitle].some((value) => wantedTitles.has(normalizeBlogTitle(value)));
-    if (!(animeNo && recordAnimeNo === animeNo) && !exactTitleMatch) continue;
+    const folderNameMatch = folderNameQuery
+      ? normalizeBlogTitle(folderTitle).includes(folderNameQuery)
+      : Boolean(animeNo && recordAnimeNo === animeNo) || exactTitleMatch;
+    if (!folderNameMatch) continue;
 
     const recordEpisode = recordValue(entry.record, ["episode", "episodeNumber", "episode_number", "episodeNo", "ep"]);
     const episodeNumbers = recordEpisode ? parseEpisodes(recordEpisode) : [];
@@ -418,15 +424,15 @@ export async function getAnissiaArchiveSubtitles(
             try {
               addSubtitle(extractSubtitleFromBuffer(zip.getEntries()[item.index].getData(), episode, item.filename));
             } catch {}
-            if (results.length >= 12) break;
+            if (results.length >= resultLimit) break;
           }
         } else if (recordMatchesEpisode) {
           addSubtitle(extractSubtitleFromBuffer(await readFile(filePath), episode, filename));
         }
       } catch {}
-      if (results.length >= 12) break;
+      if (results.length >= resultLimit) break;
     }
-    if (results.length >= 12) break;
+    if (results.length >= resultLimit) break;
   }
   return results;
 }
