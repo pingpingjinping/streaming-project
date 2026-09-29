@@ -27,10 +27,8 @@ export function episodeFromSubtitleFilename(filename: string): number | null {
     ...base.matchAll(/\[\s*0*(\d{1,3})\s*\]/g),
     // Episode numbers may be followed by release metadata in parentheses,
     ...base.matchAll(/(?:^|[\s_-])0*(\d{1,3})(?=\s*(?:END\s*)?(?:\([^)]*\)|\[[^\]]*\]|$))/gi),
-    ...base.matchAll(/(?:^|[\\s_-])0*(\\d{1,3})(?=\\s*(?:END\\s*)?(?:\\([^)]*\\)|\\[[^\\]]*\\]|$))/gi),
     // Release tags can be attached directly to the episode number,
     ...base.matchAll(/(?:^|[\s_-])0*(\d{1,3})(?=[A-Za-z][A-Za-z0-9._-]*$)/g),
-    ...base.matchAll(/(?:^|[\\s_-])0*(\\d{1,3})(?=[A-Za-z][A-Za-z0-9._-]*$)/g),
   ].map((match) => Number(match[1]));
   const looksLikeRange = /(?:^|[^sS\d])\d{1,3}\s*[-~]\s*\d{1,3}(?:$|[^\d])/.test(base);
   if (!looksLikeRange && (/^0*\d{1,3}$/.test(base) || /(?:^|[\s_-])0*\d{1,3}$/.test(base))) {
