@@ -248,8 +248,11 @@ function normalizeAnissiaTrackFilename(filename: string, episode: number): strin
     new RegExp("(^|[\\s_-])0*" + episode + "$"),
   ];
   for (const pattern of patterns) {
-    if (pattern.test(base)) {
-      return base.replace(pattern, (_match, prefix = "", suffix = "") => `${prefix}{ep}${suffix}`);
+    const match = base.match(pattern);
+    if (match) {
+      const prefix = match[1] || "";
+      const suffix = match[2] || "";
+      return base.replace(pattern, `${prefix}{ep}${suffix}`);
     }
   }
   return base;
