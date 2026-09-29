@@ -781,6 +781,12 @@ export async function downloadFileWithTimeout(
   }
 }
 
+// Compare work identities across punctuation and spacing differences, while
+// keeping distinguishing subtitles such as ~사서가 되기 위해서라면 뭐든지 할 수 있어~.
+function normalizeWorkTitle(text: string): string {
+  return cleanTitle(text).toLocaleLowerCase("ko-KR").replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
 // 9. Kairan blog subtitle searcher
 export async function findKairanSubtitle(
   title: string,
@@ -792,7 +798,7 @@ export async function findKairanSubtitle(
     const targetSeason = parseSeason(resolvedTitle) || parseSeason(title);
     const targetEp = episodeNumber;
 
-    let cleanBase = resolvedTitle.replace(/[\(\[\{<~].*?[\]\)\}>~]/g, "").trim();
+    let cleanBase = resolvedTitle.replace(/[\(\[\{<].*?[\]\)\}>]/g, "").replace(/~/g, " ").trim();
     cleanBase = cleanBase.replace(/\s+\d+기$/g, "").trim();
     cleanBase = cleanBase.replace(/\b\d+(?:st|nd|rd|th)\b/gi, "").trim();
     cleanBase = cleanBase.replace(/season\s*\d+/gi, "").trim();
@@ -835,7 +841,7 @@ export async function findKairanSubtitle(
         const postTitle = titleEl.text().trim();
         const postUrl = titleEl.attr("href")?.trim() || "";
         if (!postUrl || postUrl.includes("report-abuse")) return;
-        if (!cleanTitle(postTitle).includes(cleanBase)) return;
+        if (!normalizeWorkTitle(postTitle).includes(normalizeWorkTitle(cleanBase))) return;
 
         const postSeason = parseSeason(postTitle);
         const postEps = parseEpisodes(postTitle);
@@ -930,7 +936,7 @@ export async function searchBlogForEpisode(
   const targetSeason = parseSeason(resolvedTitle) || parseSeason(animeTitle);
   const targetEp = episodeNumber;
 
-  let cleanBase = resolvedTitle.replace(/[\(\[\{<~].*?[\]\)\}>~]/g, "").trim();
+  let cleanBase = resolvedTitle.replace(/[\(\[\{<].*?[\]\)\}>]/g, "").replace(/~/g, " ").trim();
   cleanBase = cleanBase.replace(/\s+\d+기$/g, "").trim();
   cleanBase = cleanBase.replace(/\b\d+(?:st|nd|rd|th)\b/gi, "").trim();
   cleanBase = cleanBase.replace(/season\s*\d+/gi, "").trim();
@@ -940,7 +946,8 @@ export async function searchBlogForEpisode(
     .split(/\s+/)
     .filter((w) => !["시즌", "더빙", "자막", "극장판", "애니"].includes(w));
   const searchTerm = words.length >= 2 ? words.slice(0, 2).join(" ") : words[0] || cleanBase;
-  const expectedWork = cleanTitle(workTitleHint);
+  const expectedWork = cleanTitle(workTitleHint || cleanBase);
+  const normalizedExpectedWork = normalizeWorkTitle(expectedWork);
 
   const queries: string[] = [];
   if (expectedWork) queries.push(`${expectedWork} ${targetEp}화`);
@@ -980,7 +987,7 @@ export async function searchBlogForEpisode(
             return;
           }
 
-          if (expectedWork && !cleanTitle(title).includes(expectedWork)) return;
+          if (normalizedExpectedWork && !normalizeWorkTitle(title).includes(normalizedExpectedWork)) return;
           if (postEps.includes(targetEp)) {
             foundUrl = href;
           }
@@ -1019,7 +1026,7 @@ export async function searchBlogForEpisode(
             return;
           }
 
-          if (cleanTitle(title).includes(expectedWork || cleanTitle(searchTerm)) && postEps.includes(targetEp)) {
+          if (normalizeWorkTitle(title).includes(normalizedExpectedWork) && postEps.includes(targetEp)) {
             foundUrl = new URL(href, website).toString();
           }
         });
