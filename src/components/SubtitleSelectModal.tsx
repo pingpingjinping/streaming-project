@@ -28,6 +28,7 @@ export interface CreatorInfo {
   verifiedMatch?: boolean;
   sourceProvider?: "aniall" | "anissia";
   localArchive?: boolean;
+  localArchiveTrackKey?: string;
 }
 
 export interface SubtitleOption {
@@ -225,6 +226,7 @@ export default function SubtitleSelectModal({
           sourceCreatorWebsite: subtitle.sourceCreatorWebsite,
           sourceMatchedTitle: subtitle.sourceMatchedTitle,
           localArchive: true,
+          localArchiveTrackKey: subtitle.localArchiveTrackKey,
         })));
       })
       .catch((error) => {
@@ -350,6 +352,7 @@ export default function SubtitleSelectModal({
         sourceMatchedTitle: s.sourceMatchedTitle,
         isCached: Boolean(s.isCached),
         localArchive: Boolean(s.localArchive),
+        localArchiveTrackKey: s.localArchiveTrackKey,
       }));
 
       // The server has already grouped these in the configured provider order.
