@@ -1,5 +1,6 @@
 import AdmZip from "adm-zip";
 import iconv from "iconv-lite";
+import { readEpisodeEvidence, selectEpisodeEntries } from "@/lib/subtitleEpisodes";
 
 export interface SubtitleArchiveEntry {
   index: number;
@@ -11,32 +12,31 @@ export interface SubtitleArchiveEntry {
 const EXTENSION = /\.(ass|ssa|smi|srt|vtt)$/i;
 
 export function seasonFromSubtitleFilename(filename: string): number | null {
-  const base = filename.split(/[\\/]/).pop()?.replace(EXTENSION, "") || "";
-  const match = base.match(/(?:^|[^a-z\d])s\s*0*(\d{1,2})\s*e\s*0*\d{1,3}(?!\d)/i);
-  return match ? Number(match[1]) : null;
+  const evidence = readEpisodeEvidence(filename, true);
+  return evidence.multipleSeasons ? null : evidence.season;
 }
 
 export function episodeFromSubtitleFilename(filename: string): number | null {
-  const base = filename.split(/[\\/]/).pop()?.replace(EXTENSION, "") || "";
-  // A range such as "01-12화" describes a bundle, not episode 12.
-  if (/(?:^|[^sS\d])\d{1,3}\s*[-~]\s*\d{1,3}\s*(?:화|회|편|話)?(?:$|[^\d])/u.test(base)) return null;
-  const matches = [
-    ...base.matchAll(/(?:^|[^a-z\d])(?:episode|ep|e|#)\s*0*(\d{1,3})(?!\d)/gi),
-    ...base.matchAll(/(?:^|[^a-z\d])(?:s\d{1,2}\s*e)\s*0*(\d{1,3})(?!\d)/gi),
-    ...base.matchAll(/(?:제|第\s*)?0*(\d{1,3})\s*(?:화|회|편|話)(?![가-힣])/g),
-    ...base.matchAll(/\[\s*0*(\d{1,3})\s*\]/g),
-    // Episode numbers may be followed by release metadata in parentheses,
-    ...base.matchAll(/(?:^|[\s_-])0*(\d{1,3})(?=\s*(?:END\s*)?(?:\([^)]*\)|\[[^\]]*\]|$))/gi),
-    // Release tags can be attached directly to the episode number,
-    ...base.matchAll(/(?:^|[\s_-])0*(\d{1,3})(?=[A-Za-z][A-Za-z0-9._-]*$)/g),
-  ].map((match) => Number(match[1]));
-  const looksLikeRange = /(?:^|[^sS\d])\d{1,3}\s*[-~]\s*\d{1,3}(?:$|[^\d])/.test(base);
-  if (!looksLikeRange && (/^0*\d{1,3}$/.test(base) || /(?:^|[\s_-])0*\d{1,3}$/.test(base))) {
-    const end = base.match(/0*(\d{1,3})$/);
-    if (end) matches.push(Number(end[1]));
+  const evidence = readEpisodeEvidence(filename, true);
+  return !evidence.conflict && !evidence.range && evidence.episodes.length === 1 ? evidence.episodes[0] : null;
+}
+
+/** Automatic upload uses the same identities as online/local selection. No alphabetical guessing. */
+export function automaticArchiveAssignments(entries: SubtitleArchiveEntry[], filename: string,
+  season: number | null, startEpisode: number | null) {
+  const outer = [readEpisodeEvidence(filename, true)];
+  const assignments: Array<{ index: number; episode: number }> = [];
+  for (const entry of entries) {
+    if (entry.episode === null) continue;
+    const episode = readEpisodeEvidence(entry.filename, true).seasonEpisodePair
+      ? entry.episode : entry.episode - ((startEpisode || 1) - 1);
+    if (episode < 1) continue;
+    const request = { episode, sourceEpisode: (startEpisode || 1) + episode - 1, season: season ?? 1 };
+    if (selectEpisodeEntries(entries, request, outer).some(item => item.index === entry.index)) {
+      assignments.push({ index: entry.index, episode });
+    }
   }
-  const unique = [...new Set(matches.filter((ep) => ep > 0 && ep <= 200))];
-  return unique.length === 1 ? unique[0] : null;
+  return assignments;
 }
 
 export function inspectSubtitleArchive(buffer: Buffer): {
@@ -54,7 +54,7 @@ export function inspectSubtitleArchive(buffer: Buffer): {
     totalSize += entry.header.size;
     if (totalSize > 20 * 1024 * 1024 || entries.length >= 200) throw new Error("자막 묶음이 너무 큽니다.");
     let filename = entry.entryName;
-    if (!/[가-힣]/.test(filename)) {
+    if (!(entry.header.flags & 0x800) && !/[가-힣]/.test(filename)) {
       const decoded = iconv.decode(entry.rawEntryName, "cp949");
       if (/[가-힣]/.test(decoded)) filename = decoded;
     }

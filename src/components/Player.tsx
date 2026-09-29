@@ -1885,6 +1885,7 @@ export default function Player(props: PlayerProps) {
     try {
       const form = new FormData();
       form.set("animeId", animeId);
+      form.set("title", animeTitle);
       form.set("ep", String(currentEp));
       form.set("file", file);
       if (isZip) form.set("mode", "open");
@@ -1926,6 +1927,7 @@ export default function Player(props: PlayerProps) {
     try {
       const form = new FormData();
       form.set("animeId", animeId);
+      form.set("title", animeTitle);
       form.set("ep", String(currentEp));
       form.set("file", file);
       const isZip = file.name.toLowerCase().endsWith(".zip");

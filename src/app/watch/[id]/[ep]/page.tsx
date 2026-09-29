@@ -203,7 +203,8 @@ export default async function WatchPage({
               initialSubUrl,
               resolved || anime.title,
               sourceEpisode,
-              4000
+              4000,
+              epNum
             )
           )
           .catch(() => null)

@@ -128,6 +128,7 @@ export async function GET(request: NextRequest) {
         sourceEpisode,
         directAnimeNo,
         parseSeason(comparisonTitle) || parseSeason(searchTarget),
+        { localEpisode: ep },
       );
       const availableLocalSubtitles = localSubtitles.filter((subtitle) =>
         !isRejected("anissia", `[로컬 Anissia · ${subtitle.creator}] ${subtitle.localArchiveTrackLabel} · ${subtitle.archiveFilename} · ${subtitle.orig_filename}`)
@@ -189,7 +190,7 @@ export async function GET(request: NextRequest) {
     // 직접 저장한 웹 링크와 AniAll/Anissia 링크는 모든 Pi 로컬 보관함을 확인한 뒤 사용한다.
     const savedUrl = animeIdParam ? await getManualSubtitleLink(user.username, animeIdParam, ep) : null;
     if (savedUrl && !isRejected("anissia", savedUrl)) {
-      const manual = await fetchCreatorSubtitle("직접 자막", savedUrl, title, sourceEpisode, 12000);
+      const manual = await fetchCreatorSubtitle("직접 자막", savedUrl, title, sourceEpisode, 12000, ep);
       if (manual?.content) {
         return NextResponse.json({ success: true, anime_title: title, episode: ep, count: 1, subtitles: [manual], creators: [] }, { headers: { "Cache-Control": "no-store" } });
       }
@@ -197,7 +198,7 @@ export async function GET(request: NextRequest) {
 
     if (website && website.startsWith("http") && sourcePriority !== "aniall"
       && !isRejected("anissia", website)) {
-      const directSub = await fetchCreatorSubtitle(creatorName || "제작자", website, searchTarget, sourceEpisode, 5000);
+      const directSub = await fetchCreatorSubtitle(creatorName || "제작자", website, searchTarget, sourceEpisode, 5000, ep);
       if (directSub && directSub.content) {
         return NextResponse.json({
           success: true,
@@ -342,6 +343,7 @@ export async function POST(request: NextRequest) {
         sourceEpisode,
         animeNo,
         targetSeason,
+        { localEpisode: ep },
       );
       const requestedCreator = String(creatorName).replace(/^Anissia\s*[·|]\s*/i, "").trim();
       const local = archives.find((item) =>
@@ -360,13 +362,13 @@ export async function POST(request: NextRequest) {
         };
       }
     } else if (creatorName.includes("카이란") || (website && website.toLowerCase().includes("kairan"))) {
-      sub = await findKairanSubtitle(targetTitle, sourceEpisode, 5000);
+      sub = await findKairanSubtitle(targetTitle, sourceEpisode, 5000, ep);
     } else if (website) {
       if (sourceProvider === "aniall") {
         const blogTitle = String(creatorName).replace(/^AniAll\s*[·|]\s*/i, "").trim();
         sub = await getAniAllArchiveSubtitle(blogTitle, ep, targetSeason, sourceEpisodeStart);
       }
-      if (!sub) sub = await fetchCreatorSubtitle(creatorName, website, targetTitle, sourceEpisode, 5000);
+      if (!sub) sub = await fetchCreatorSubtitle(creatorName, website, targetTitle, sourceEpisode, 5000, ep);
     }
 
     if (!sub || !sub.content) {
