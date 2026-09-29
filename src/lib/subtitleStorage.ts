@@ -293,7 +293,25 @@ export async function getAnissiaArchiveSubtitles(
         const filePath = path.join(dir, filename);
         const info = await stat(filePath);
         if (!info.isFile() || info.size <= 0 || info.size > 100 * 1024 * 1024) continue;
-        let subtitle = null;
+
+        const addSubtitle = (subtitle: ReturnType<typeof extractSubtitleFromBuffer>) => {
+          if (!subtitle?.content) return;
+          results.push({
+            name: subtitle.filename,
+            orig_filename: subtitle.orig_filename,
+            content: subtitle.content,
+            format: subtitle.format,
+            is_ass: subtitle.is_ass,
+            episode,
+            creator: candidate.creator,
+            website: candidate.website,
+            matchedTitle: candidate.title,
+            updatedAt: candidate.entry.updatedAt,
+            animeNo: recordNumber(candidate.entry.record, ["animeNo", "anime_no", "anissiaNo"]),
+            archiveFilename: filename,
+          });
+        };
+
         if (filename.toLowerCase().endsWith(".zip")) {
           const { zip, entries } = inspectSubtitleArchive(await readFile(filePath));
           const archiveRange = filename.match(/(?:^|[^\\d])(\\d{1,3})\\s*[-~]\\s*(\\d{1,3})(?!\\d)/);
@@ -302,37 +320,27 @@ export async function getAnissiaArchiveSubtitles(
           if (archiveRange && (archiveStart < 1 || archiveEnd < archiveStart || episode < archiveStart || episode > archiveEnd)) continue;
 
           const exactEntries = entries.filter((entry) => entry.episode === episode);
-          let selected = exactEntries.length ? exactEntries : [];
-          if (!selected.length && archiveRange && archiveEnd - archiveStart + 1 === entries.length) {
+          let selectedEntries = exactEntries;
+          if (!selectedEntries.length && archiveRange && archiveEnd - archiveStart + 1 === entries.length) {
             const orderedEntries = [...entries].sort((a, b) =>
               a.filename.localeCompare(b.filename, undefined, { numeric: true }));
-            selected = orderedEntries.filter((_, index) => archiveStart + index === episode);
+            selectedEntries = orderedEntries.filter((_, index) => archiveStart + index === episode);
           }
-          if (!selected.length && !archiveRange && entries.length === 1 && recordMatchesEpisode) {
-            selected = entries;
+          if (!selectedEntries.length && !archiveRange && entries.length === 1 && recordMatchesEpisode) {
+            selectedEntries = entries;
           }
-          if (selected.length !== 1) continue;
-          const item = selected[0];
-          subtitle = extractSubtitleFromBuffer(zip.getEntries()[item.index].getData(), episode, item.filename);
+
+          for (const item of selectedEntries) {
+            try {
+              addSubtitle(extractSubtitleFromBuffer(zip.getEntries()[item.index].getData(), episode, item.filename));
+            } catch {}
+            if (results.length >= 12) break;
+          }
         } else if (recordMatchesEpisode) {
-          subtitle = extractSubtitleFromBuffer(await readFile(filePath), episode, filename);
+          addSubtitle(extractSubtitleFromBuffer(await readFile(filePath), episode, filename));
         }
-        if (!subtitle?.content) continue;
-        results.push({
-          name: subtitle.filename,
-          orig_filename: subtitle.orig_filename,
-          content: subtitle.content,
-          format: subtitle.format,
-          is_ass: subtitle.is_ass,
-          episode,
-          creator: candidate.creator,
-          website: candidate.website,
-          matchedTitle: candidate.title,
-          updatedAt: candidate.entry.updatedAt,
-          animeNo: recordNumber(candidate.entry.record, ["animeNo", "anime_no", "anissiaNo"]),
-        });
-        break;
       } catch {}
+      if (results.length >= 12) break;
     }
     if (results.length >= 12) break;
   }
