@@ -1,6 +1,7 @@
 import * as cheerio from "cheerio";
 import iconv from "iconv-lite";
-import AdmZip from "adm-zip";
+import { inspectSubtitleArchive } from "@/lib/subtitleUpload";
+import { EpisodeEvidence, EpisodeRequest, readEpisodeEvidence, evidenceAgrees, selectEpisodeEntries, subtitleFilenameFromUrl } from "@/lib/subtitleEpisodes";
 import { getCachedKoreanAnimeTitle, saveKoreanAnimeTitleMapping, getAniAllMatches, getAniAllCandidates, getSubtitleSourcePriority, getSubtitleRejections } from "@/lib/db";
 import { getMonthlyAnissiaCandidates } from "@/lib/reanimeMatches";
 
@@ -524,192 +525,81 @@ export function convertToVtt(rawText: string, origExt: string): { content: strin
 }
 
 // 7. In-memory ZIP extractor & subtitle reader
-export function extractSubtitleFromBuffer(
-  buffer: Buffer,
-  episodeNumber: number,
-  urlPath: string,
-  strictEpisode = false,
-  targetSeason: number | null = null
-): { filename: string; orig_filename: string; content: string; format: "ASS" | "VTT"; is_ass: boolean } | null {
-  const isZip =
-    buffer.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04])) ||
-    buffer.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x05, 0x06])) ||
-    urlPath.toLowerCase().endsWith(".zip");
+export interface SubtitleExtractionContext {
+  localEpisode?: number;
+  evidence?: EpisodeEvidence[];
+}
 
+export function extractSubtitleFromBuffer(
+  buffer: Buffer, episodeNumber: number, urlPath: string, strictEpisode = false,
+  targetSeason: number | null = null, context: SubtitleExtractionContext = {},
+): ReturnType<typeof decodeSubtitleFile> {
+  const request: EpisodeRequest = { episode: context.localEpisode ?? episodeNumber,
+    sourceEpisode: episodeNumber, season: targetSeason ?? 1 };
+  const filename = subtitleFilenameFromUrl(urlPath);
+  const evidence = [...(context.evidence || []), readEpisodeEvidence(filename, true)];
+  if (evidence.some(item => !evidenceAgrees(item, request))) return null;
+  const isZip = buffer.subarray(0, 2).equals(Buffer.from("PK"));
   if (isZip) {
     try {
-      const zip = new AdmZip(buffer);
-      const zipEntries = zip.getEntries();
-      const subEntries = zipEntries.filter((entry) => {
-        const name = entry.entryName.toLowerCase();
-        return (
-          !name.startsWith("__macosx") &&
-          (name.endsWith(".ass") ||
-            name.endsWith(".ssa") ||
-            name.endsWith(".smi") ||
-            name.endsWith(".srt") ||
-            name.endsWith(".vtt"))
-        );
-      });
-
-      if (subEntries.length === 0) return null;
-
-      const extPriority: Record<string, number> = {
-        ".ass": 1,
-        ".ssa": 2,
-        ".smi": 3,
-        ".srt": 4,
-        ".vtt": 5,
-      };
-
-      let matchedEntry: AdmZip.IZipEntry | null = null;
-      let matchedDecName = "";
-
-      const candidates: Array<{ priority: number; entry: AdmZip.IZipEntry; decName: string }> = [];
-      const numberedEntries = new Map<number, { priority: number; entry: AdmZip.IZipEntry; decName: string }>();
-      let matchingSeasonEntryFound = false;
-
-      for (const entry of subEntries) {
-        let decName = entry.entryName;
-        if (!/[가-힣]/.test(decName)) {
-          try {
-            const cp949 = iconv.decode(entry.rawEntryName, "cp949");
-            if (/[가-힣]/.test(cp949)) {
-              decName = cp949;
-            }
-          } catch {}
-        }
-
-        for (const nameToCheck of [decName, entry.entryName]) {
-          const seasonEpisode = nameToCheck.match(/(?:^|[^a-z\d])s\s*0*(\d{1,2})\s*e\s*0*(\d{1,3})(?!\d)/i);
-          if (seasonEpisode) {
-            const fileSeason = Number(seasonEpisode[1]);
-            const fileEpisode = Number(seasonEpisode[2]);
-            if ((!targetSeason || targetSeason === fileSeason) && fileEpisode === episodeNumber) {
-              const ext = "." + (entry.name.split(".").pop() || "").toLowerCase();
-              candidates.push({ priority: extPriority[ext] || 99, entry, decName });
-              matchingSeasonEntryFound = true;
-            }
-            break;
-          }
-          const epNums = parseEpisodes(nameToCheck);
-          if (epNums.length === 1) {
-            const ext = "." + (entry.name.split(".").pop() || "").toLowerCase();
-            const prior = numberedEntries.get(epNums[0]);
-            if (!prior || (extPriority[ext] || 99) < prior.priority) {
-              numberedEntries.set(epNums[0], { priority: extPriority[ext] || 99, entry, decName });
-            }
-          }
-          if (epNums.includes(episodeNumber)) {
-            const ext = "." + (entry.name.split(".").pop() || "").toLowerCase();
-            candidates.push({
-              priority: extPriority[ext] || 99,
-              entry,
-              decName,
-            });
-            break;
-          }
-        }
+      const { zip, entries } = inspectSubtitleArchive(buffer);
+      const selected = selectEpisodeEntries(entries, request, evidence, !strictEpisode);
+      const priority: Record<string, number> = { ass: 1, ssa: 2, smi: 3, srt: 4, vtt: 5 };
+      selected.sort((a, b) => (priority[a.filename.split('.').pop()!.toLowerCase()] || 9)
+        - (priority[b.filename.split('.').pop()!.toLowerCase()] || 9));
+      // Multiple release variants of the same identified episode remain valid.
+      // Different numbering interpretations must not be resolved by file order.
+      const identities = new Set(selected.map(e => `${e.season}:${e.episode}`));
+      if (identities.size > 1) return null;
+      for (const entry of selected) {
+        const result = decodeSubtitleFile(zip.getEntries()[entry.index].getData(), entry.filename);
+        if (result) return result;
       }
+    } catch (error) { console.warn("[Zip Extractor error]", error); }
+    return null;
+  }
+  const selected = selectEpisodeEntries([{ filename }], request, evidence, !strictEpisode);
+  return selected.length ? decodeSubtitleFile(buffer, filename || urlPath) : null;
+}
 
-      if (!matchingSeasonEntryFound && targetSeason && targetSeason > 1 && numberedEntries.size) {
-        const episodeKeys = [...numberedEntries.keys()].sort((a, b) => a - b);
-        const first = episodeKeys[0];
-        const isContiguous = episodeKeys.every((episode, index) => episode === first + index);
-        if (isContiguous) {
-          let sourceEpisode: number | null = null;
-          if (first > 1) {
-            sourceEpisode = episodeKeys.includes(episodeNumber)
-              ? episodeNumber
-              : episodeNumber >= 1 && episodeNumber <= episodeKeys.length ? episodeKeys[episodeNumber - 1] : null;
-          } else if (episodeKeys.length > 12) {
-            if (episodeKeys.length % targetSeason === 0) {
-              const seasonLength = episodeKeys.length / targetSeason;
-              sourceEpisode = episodeNumber <= seasonLength
-                ? episodeKeys[(targetSeason - 1) * seasonLength + episodeNumber - 1]
-                : episodeKeys.includes(episodeNumber) ? episodeNumber : null;
-            } else if (!episodeKeys.includes(episodeNumber)) {
-              sourceEpisode = null;
-            }
-          } else if (episodeKeys.includes(episodeNumber)) {
-            sourceEpisode = episodeNumber;
-          }
+/** Decode a file after its identity is checked, or after an explicit manual assignment. */
+export function decodeSubtitleFile(buffer: Buffer, urlPath: string): {
+  filename: string; orig_filename: string; content: string; format: "ASS" | "VTT"; is_ass: boolean;
+} | null {
+  const rawText = decodeSubtitleBuffer(buffer);
+  const textLower = rawText.slice(0, 500).toLowerCase();
 
-          if (sourceEpisode !== null) {
-            candidates.length = 0;
-            const mapped = numberedEntries.get(sourceEpisode);
-            if (mapped) candidates.push(mapped);
-          } else if (first === 1 && episodeKeys.length > 12 && episodeNumber <= episodeKeys.length) {
-            // A combined multi-season archive is ambiguous without a reliable block boundary.
-            // Do not silently return season 1 for a later-season local episode.
-            candidates.length = 0;
-          }
-        }
-      }
+  const isSmi = textLower.includes("<sami") || textLower.includes("<sync");
 
-      if (candidates.length > 0) {
-        candidates.sort((a, b) => a.priority - b.priority);
-        matchedEntry = candidates[0].entry;
-        matchedDecName = candidates[0].decName;
-      } else if (subEntries.length === 1 && !strictEpisode && parseEpisodes(subEntries[0].entryName).length === 0) {
-        matchedEntry = subEntries[0];
-        matchedDecName = matchedEntry.name;
-      }
+  // Reject HTML content completely (e.g. Google Drive web viewer/login pages)
+  if (
+    textLower.includes("<!doctype html") ||
+    textLower.includes("<html") ||
+    (textLower.includes("<head>") && !isSmi)
+  ) {
+    return null;
+  }
 
-      if (matchedEntry) {
-        const rawBuf = matchedEntry.getData();
-        const rawText = decodeSubtitleBuffer(rawBuf);
-        const origExt = "." + (matchedEntry.name.split(".").pop() || "").toLowerCase();
-        const { content, ext } = convertToVtt(rawText, origExt);
-        const isAss = ext === ".ass" || ext === ".ssa";
+  const isAss = textLower.includes("[script info]") || textLower.includes("dialogue:");
+  const isVtt = /^\uFEFF?WEBVTT\b/.test(rawText);
+  const isSrt = /^\s*\d+\s*[\r\n]+\d{2}:\d{2}/.test(rawText.slice(0, 100)) || rawText.includes("-->");
 
-        return {
-          filename: `sub${ext}`,
-          orig_filename: matchedDecName || matchedEntry.name,
-          content,
-          format: isAss ? "ASS" : "VTT",
-          is_ass: isAss,
-        };
-      }
-    } catch (e) {
-      console.error("[Zip Extractor error]:", e);
-    }
-  } else {
-    if (strictEpisode) return null;
-    const rawText = decodeSubtitleBuffer(buffer);
-    const textLower = rawText.slice(0, 500).toLowerCase();
-
-    // Reject HTML content completely (e.g. Google Drive web viewer/login pages)
-    if (
-      textLower.includes("<!doctype html") ||
-      textLower.includes("<html") ||
-      textLower.includes("<head>")
-    ) {
-      return null;
+  if (isAss || isSmi || isSrt || isVtt) {
+    const origExt = isAss ? ".ass" : isSmi ? ".smi" : isVtt ? ".vtt" : ".srt";
+    const { content, ext } = isVtt ? { content: rawText.replace(/^\uFEFF/, ""), ext: ".vtt" } : convertToVtt(rawText, origExt);
+    const isAssResult = ext === ".ass" || ext === ".ssa";
+    let displayFn = urlPath.split("/").pop() || `subtitle${origExt}`;
+    if (displayFn.includes("?") || displayFn.length > 60) {
+      displayFn = `subtitle${origExt}`;
     }
 
-    const isAss = textLower.includes("[script info]") || textLower.includes("dialogue:");
-    const isSmi = textLower.includes("<sami") || textLower.includes("<sync");
-    const isVtt = /^\uFEFF?WEBVTT\b/.test(rawText);
-    const isSrt = /^\s*\d+\s*[\r\n]+\d{2}:\d{2}/.test(rawText.slice(0, 100)) || rawText.includes("-->");
-
-    if (isAss || isSmi || isSrt || isVtt) {
-      const origExt = isAss ? ".ass" : isSmi ? ".smi" : isVtt ? ".vtt" : ".srt";
-      const { content, ext } = isVtt ? { content: rawText.replace(/^\uFEFF/, ""), ext: ".vtt" } : convertToVtt(rawText, origExt);
-      const isAssResult = ext === ".ass" || ext === ".ssa";
-      let displayFn = urlPath.split("/").pop() || `subtitle${origExt}`;
-      if (displayFn.includes("?") || displayFn.length > 60) {
-        displayFn = `subtitle${origExt}`;
-      }
-
-      return {
-        filename: `sub${ext}`,
-        orig_filename: displayFn,
-        content,
-        format: isAssResult ? "ASS" : "VTT",
-        is_ass: isAssResult,
-      };
-    }
+    return {
+      filename: `sub${ext}`,
+      orig_filename: displayFn,
+      content,
+      format: isAssResult ? "ASS" : "VTT",
+      is_ass: isAssResult,
+    };
   }
 
   return null;
@@ -733,11 +623,11 @@ export function convertToDirectDownloadUrl(url: string): string {
 }
 
 // 9. Download file helper with timeout & Google Drive support
-export async function downloadFileWithTimeout(
+async function downloadFileWithMetadata(
   url: string,
   referer?: string,
   timeoutMs = 4500
-): Promise<Buffer | null> {
+): Promise<{ buffer: Buffer; filename: string } | null> {
   try {
     const headers: Record<string, string> = { ...HEADERS };
     if (referer) headers["Referer"] = referer;
@@ -775,10 +665,78 @@ export async function downloadFileWithTimeout(
       }
     }
 
-    return buf;
+    const disposition = res.headers.get("content-disposition") || "";
+    const encodedName = disposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i)?.[1];
+    const plainName = disposition.match(/filename\s*=\s*(?:"([^"]+)"|([^;]+))/i);
+    let filename = plainName?.[1] || plainName?.[2]?.trim() || "";
+    if (encodedName) { try { filename = decodeURIComponent(encodedName.trim()); } catch {} }
+    return { buffer: buf, filename };
   } catch {
     return null;
   }
+}
+
+export async function downloadFileWithTimeout(url: string, referer?: string, timeoutMs = 4500): Promise<Buffer | null> {
+  return (await downloadFileWithMetadata(url, referer, timeoutMs))?.buffer || null;
+}
+
+function subtitlePostTitle($: cheerio.CheerioAPI): string {
+  return $(".post-title, .entry-title, .title_post, .tit_post, .se-title-text").first().text().trim()
+    || $('meta[property="og:title"]').attr("content")?.trim() || $("title").text().trim();
+}
+
+/** All blog adapters feed the same evidence check; rejected links cannot re-enter via another scan. */
+export async function extractSubtitleFromBlogPage(
+  html: string, postUrl: string, creatorName: string, episodeNumber: number,
+  targetSeason: number | null, timeoutMs = 5000, localEpisode = episodeNumber,
+): Promise<SubtitleResult | null> {
+  const $ = cheerio.load(html);
+  const request = { episode: localEpisode, sourceEpisode: episodeNumber, season: targetSeason ?? 1 };
+  const postEvidence = readEpisodeEvidence(subtitlePostTitle($));
+  if (!evidenceAgrees(postEvidence, request)) return null;
+  const content = $(".tt_article_useless_p_margin, .post-body, .entry-content, .se-main-container, #postViewArea").first();
+  const scope = content.length ? content : $("body");
+  scope.find("nav, aside, header, footer, .related-articles, .another_category, script, style").remove();
+  const links = new Map<string, { url: string; evidence: EpisodeEvidence[]; filename: string }>();
+  const add = (url: string, evidence: EpisodeEvidence[], filename = "") => {
+    const identity = extractGdriveId(url) || url;
+    const prior = links.get(identity);
+    if (prior) { prior.evidence.push(...evidence); return; }
+    links.set(identity, { url, evidence, filename });
+  };
+  scope.find("a[href]").each((_, anchor) => {
+    if ($(anchor).closest("nav, aside, header, footer, .related-articles, .another_category").length) return;
+    const raw = $(anchor).attr("href")?.trim() || "";
+    let url: string;
+    try { url = new URL(raw, postUrl).toString(); } catch { return; }
+    if (!/^https?:/i.test(url)) return;
+    const filename = subtitleFilenameFromUrl(url);
+    const label = $(anchor).text().trim();
+    if (!extractGdriveId(url) && !filename && !/tfile|attachment|kakaocdn\.net|download\.blog|blogfiles\.naver|attach/i.test(url)
+        && !/\.(zip|ass|ssa|srt|smi|vtt)\b|자막\s*다운/i.test(label)) return;
+    if (/\.(?:png|jpe?g|gif|webp)(?:[?#]|$)/i.test(url)) return;
+    const labels = [label, $(anchor).attr("download") || "", $(anchor).attr("title") || "",
+      ...$(anchor).find("img").toArray().flatMap(img => [$(img).attr("alt") || "", $(img).attr("title") || ""])];
+    add(url, [...labels.filter(Boolean).map(value => readEpisodeEvidence(value, true, false)),
+      readEpisodeEvidence(filename, true)], filename);
+  });
+  // Only links absent from anchor discovery may use this fallback. A conflicting
+  // anchor stays in the map and can never be resurrected as an unlabelled URL.
+  for (const match of (scope.html() || "").matchAll(/https?:\/\/(?:drive|docs)\.google\.com\/(?:file\/d\/|uc\?[^"'\s<>]*?id=|open\?id=)([a-zA-Z0-9_-]{25,})/gi)) {
+    if (!links.has(match[1])) add(match[0], []);
+  }
+  for (const item of links.values()) {
+    const outer = [postEvidence, ...item.evidence, readEpisodeEvidence(item.filename, true)];
+    if (outer.some(e => !evidenceAgrees(e, request))) continue;
+    const downloaded = await downloadFileWithMetadata(item.url, postUrl, Math.max(timeoutMs + 1500, 12000));
+    if (!downloaded) continue;
+    const extracted = extractSubtitleFromBuffer(downloaded.buffer, episodeNumber,
+      downloaded.filename || item.filename || item.url, true, targetSeason,
+      { localEpisode, evidence: outer });
+    if (extracted) return { name: creatorName, episode: localEpisode, ...extracted,
+      url: postUrl, sourceCreatorWebsite: postUrl };
+  }
+  return null;
 }
 
 // Compare work identities across punctuation and spacing differences, while
@@ -791,7 +749,8 @@ function normalizeWorkTitle(text: string): string {
 export async function findKairanSubtitle(
   title: string,
   episodeNumber: number,
-  timeoutMs = 3500
+  timeoutMs = 3500,
+  localEpisode = episodeNumber
 ): Promise<SubtitleResult | null> {
   try {
     const resolvedTitle = await resolveKoreanTitle(title);
@@ -844,7 +803,7 @@ export async function findKairanSubtitle(
         if (!normalizeWorkTitle(postTitle).includes(normalizeWorkTitle(cleanBase))) return;
 
         const postSeason = parseSeason(postTitle);
-        const postEps = parseEpisodes(postTitle);
+        const postEps = readEpisodeEvidence(postTitle).episodes;
 
         if (targetSeason !== null && postSeason !== null && targetSeason !== postSeason) {
           return;
@@ -864,59 +823,9 @@ export async function findKairanSubtitle(
         if (!postRes.ok) continue;
 
         const postHtml = await postRes.text();
-        const $p = cheerio.load(postHtml);
-
-        let subDownloadUrl = "";
-        $p("a[href]").each((_, a) => {
-          if (subDownloadUrl) return;
-          const href = $p(a).attr("href")?.trim() || "";
-          const text = $p(a).text().trim().toLowerCase();
-          const labelledEpisodes = parseEpisodes(text);
-          if (labelledEpisodes.length && !labelledEpisodes.includes(targetEp)) return;
-          if (
-            extractGdriveId(href) ||
-            href.includes("drive.google.com") ||
-            href.includes("docs.google.com") ||
-            href.endsWith(".zip") ||
-            href.endsWith(".ass") ||
-            href.endsWith(".smi") ||
-            href.endsWith(".srt") ||
-            text.includes("자막") ||
-            text.includes("다운로드")
-          ) {
-            subDownloadUrl = href;
-          }
-        });
-
-        // Fallback: search postHtml for Google Drive link
-        if (!subDownloadUrl) {
-          const driveMatch = postHtml.match(
-            /https?:\/\/(?:drive|docs)\.google\.com\/(?:file\/d\/|uc\?[^"'\s<>]*?id=|open\?id=)([a-zA-Z0-9_-]{25,})/i
-          );
-          if (driveMatch) {
-            subDownloadUrl = driveMatch[0];
-          }
-        }
-
-        if (subDownloadUrl) {
-          const buf = await downloadFileWithTimeout(subDownloadUrl, matchedPostUrl, timeoutMs + 1500);
-          if (buf && buf.length > 100) {
-            const extracted = extractSubtitleFromBuffer(buf, targetEp, subDownloadUrl);
-            if (extracted) {
-              return {
-                name: "카이란",
-                episode: targetEp,
-                orig_filename:
-                  extracted.orig_filename.startsWith("view?") || extracted.orig_filename.startsWith("subtitle")
-                    ? `${cleanBase} ${targetEp}화.${extracted.format.toLowerCase()}`
-                    : extracted.orig_filename,
-                format: extracted.format,
-                is_ass: extracted.is_ass,
-                content: extracted.content,
-              };
-            }
-          }
-        }
+        const subtitle = await extractSubtitleFromBlogPage(postHtml, matchedPostUrl,
+          "카이란", targetEp, targetSeason, timeoutMs, localEpisode);
+        if (subtitle) return subtitle;
       }
     }
   } catch (e) {
@@ -983,7 +892,7 @@ export async function searchBlogForEpisode(
           if (!href || href.includes("report-abuse")) return;
 
           const postSeason = parseSeason(title);
-          const postEps = parseEpisodes(title);
+          const postEps = readEpisodeEvidence(title).episodes;
 
           if (targetSeason !== null && postSeason !== null && targetSeason !== postSeason) {
             return;
@@ -1022,7 +931,7 @@ export async function searchBlogForEpisode(
           if (!href || href.startsWith("#") || href.includes("category")) return;
 
           const postSeason = parseSeason(title);
-          const postEps = parseEpisodes(title);
+          const postEps = readEpisodeEvidence(title).episodes;
 
           if (targetSeason !== null && postSeason !== null && targetSeason !== postSeason) {
             return;
@@ -1060,7 +969,7 @@ export async function searchBlogForEpisode(
             if (!href) return;
 
             const postSeason = parseSeason(title);
-            const postEps = parseEpisodes(title);
+            const postEps = readEpisodeEvidence(title).episodes;
 
             if (targetSeason !== null && postSeason !== null && targetSeason !== postSeason) {
               return;
@@ -1082,13 +991,14 @@ export async function searchBlogForEpisode(
   return null;
 }
 
-// 11. Fetch creator subtitle from their blog post (jcore와 100% 동일한 강력한 추출 엔진)
+// 11. Fetch creator subtitle with shared episode evidence checks
 export async function fetchCreatorSubtitle(
   creatorName: string,
   website: string,
   animeTitle: string,
   episodeNumber: number,
-  timeoutMs = 5000
+  timeoutMs = 5000,
+  localEpisode = episodeNumber
 ): Promise<SubtitleResult | null> {
   if (!website) return null;
   try {
@@ -1102,207 +1012,29 @@ export async function fetchCreatorSubtitle(
     const targetSeason = parseSeason(resolvedTitle) || parseSeason(animeTitle);
 
     // 단일 페이지에서 자막 파일(첨부파일/구글드라이브/다운로드링크) 추출 헬퍼 함수
-    const tryExtractFromPage = async (targetUrl: string, providedHtml?: string, strictEpisode = false): Promise<SubtitleResult | null> => {
+    const tryExtractFromPage = async (targetUrl: string, providedHtml?: string): Promise<SubtitleResult | null> => {
       try {
         let postUrl = targetUrl;
-        const reqHeaders: Record<string, string> = { ...HEADERS };
-
-        // 네이버 블로그: 프레임셋 우회용 PostView.naver URL로 자동 변환
         if (domain.includes("blog.naver.com")) {
-          const m = targetUrl.match(/blog\.naver\.com\/([^/?&]+)\/(\d+)/) ||
-                    targetUrl.match(/blog\.naver\.com\/([^/?&]+).*?[?&]logNo=(\d+)/);
-          if (m) {
-            postUrl = `https://blog.naver.com/PostView.naver?blogId=${m[1]}&logNo=${m[2]}`;
-          }
-          reqHeaders["Referer"] = "https://blog.naver.com/";
+          const match = targetUrl.match(/blog\.naver\.com\/([^/?&]+)\/(\d+)/);
+          if (match) postUrl = `https://blog.naver.com/PostView.naver?blogId=${match[1]}&logNo=${match[2]}`;
         }
-
-        let html = providedHtml;
+        let html = postUrl === targetUrl ? providedHtml : undefined;
         if (!html) {
-          const res = await fetch(postUrl, {
-            headers: reqHeaders,
-            signal: AbortSignal.timeout(timeoutMs),
-          });
-          if (!res.ok) return null;
-          html = await res.text();
+          const response = await fetch(postUrl, { headers: HEADERS, signal: AbortSignal.timeout(timeoutMs) });
+          if (!response.ok) return null;
+          html = await response.text();
         }
-        const $ = cheerio.load(html);
-
-        // 1) 티스토리 첨부파일 (tfile, attachment, kakaocdn.net)
-        if (domain.includes("tistory.com")) {
-          const links: string[] = [];
-          $('a[href*="tfile"], a[href*="attachment"], a[href*="kakaocdn.net"]').each((_, a) => {
-            const href = $(a).attr("href")?.trim();
-            const labelledEpisodes = parseEpisodes($(a).text().trim());
-            if (href && (!labelledEpisodes.length || labelledEpisodes.includes(episodeNumber))) {
-              links.push(new URL(href, postUrl).toString());
-            }
-          });
-
-          for (const dlUrl of links) {
-            const buf = await downloadFileWithTimeout(dlUrl, postUrl, Math.max(timeoutMs + 1000, 12000));
-            if (buf && buf.length > 50) {
-              const extracted = extractSubtitleFromBuffer(buf, episodeNumber, dlUrl, strictEpisode, targetSeason);
-              if (extracted) {
-                return {
-                  name: creatorName,
-                  episode: episodeNumber,
-                  orig_filename: extracted.orig_filename,
-                  format: extracted.format,
-                  is_ass: extracted.is_ass,
-                  content: extracted.content,
-                };
-              }
-            }
-          }
-        }
-
-        // 2) 네이버 블로그 첨부파일 (download.blog.naver.com, blogfiles.naver.net, attach)
-        else if (domain.includes("blog.naver.com")) {
-          const links: string[] = [];
-          $('a[href*="download.blog.naver.com"], a[href*="blogfiles.naver.net"], a[href*="attach"]').each((_, a) => {
-            const href = $(a).attr("href")?.trim();
-            const labelledEpisodes = parseEpisodes($(a).text().trim());
-            if (href && (!labelledEpisodes.length || labelledEpisodes.includes(episodeNumber))) links.push(href);
-          });
-
-          for (const dlUrl of links) {
-            const buf = await downloadFileWithTimeout(dlUrl, "https://blog.naver.com/", timeoutMs + 1000);
-            if (buf && buf.length > 50) {
-              const extracted = extractSubtitleFromBuffer(buf, episodeNumber, dlUrl, strictEpisode, targetSeason);
-              if (extracted) {
-                return {
-                  name: creatorName,
-                  episode: episodeNumber,
-                  orig_filename: extracted.orig_filename,
-                  format: extracted.format,
-                  is_ass: extracted.is_ass,
-                  content: extracted.content,
-                };
-              }
-            }
-          }
-        }
-
-        // 3) 구글 블로거 / 구글 드라이브 첨부 링크
-        interface ScoredLink {
-          url: string;
-          score: number;
-          exactEpisode: boolean;
-        }
-        const gdriveMatches: ScoredLink[] = [];
-        const seenGdrive = new Set<string>();
-        const postTitleEpisodes = parseEpisodes($("title").text());
-        const postIsCurrentEpisode = postTitleEpisodes.length === 1 && postTitleEpisodes[0] === episodeNumber;
-
-        $("a[href]").each((_, a) => {
-          const href = $(a).attr("href")?.trim() || "";
-          const driveId = extractGdriveId(href);
-          if (driveId && !seenGdrive.has(driveId)) {
-            const text = $(a).text().trim().toLowerCase();
-            const episodes = parseEpisodes(text);
-            // For example, 1화 must never match the link labelled 11화.
-            if (episodes.length && !episodes.includes(episodeNumber)) return;
-            seenGdrive.add(driveId);
-            let score = 0;
-            if (episodes.length === 1 && episodes[0] === episodeNumber) score += 60;
-            if (episodes.length > 1 || text.includes("전편") || text.includes("통합") || text.includes("완결")) {
-              score += 20;
-            }
-            if (episodes.length === 0 && (text.includes("폰트") || text.includes("font") || text.includes("op") || text.includes("ed"))) {
-              score -= 60;
-            }
-            gdriveMatches.push({ url: href, score, exactEpisode: episodes.length === 1 && episodes[0] === episodeNumber });
-          }
-        });
-
-        const bodyMatches = html.match(
-          /https?:\/\/(?:drive|docs)\.google\.com\/(?:file\/d\/|uc\?[^"'\s<>]*?id=|open\?id=)([a-zA-Z0-9_-]{25,})/gi
-        );
-        if (bodyMatches) {
-          for (const bm of bodyMatches) {
-            const driveId = extractGdriveId(bm);
-            if (driveId && !seenGdrive.has(driveId)) {
-              seenGdrive.add(driveId);
-              gdriveMatches.push({ url: bm, score: 0, exactEpisode: false });
-            }
-          }
-        }
-
-        // 일치도 점수가 높은 링크부터 우선 다운로드
-        gdriveMatches.sort((a, b) => b.score - a.score);
-
-        for (const item of gdriveMatches) {
-          const buf = await downloadFileWithTimeout(item.url, postUrl, Math.max(timeoutMs + 1500, 20000));
-          if (buf && buf.length > 50) {
-            const extracted = extractSubtitleFromBuffer(buf, episodeNumber, item.url,
-              strictEpisode || (!item.exactEpisode && !postIsCurrentEpisode), targetSeason);
-            if (extracted) {
-              return {
-                name: creatorName,
-                episode: episodeNumber,
-                orig_filename: extracted.orig_filename,
-                format: extracted.format,
-                is_ass: extracted.is_ass,
-                content: extracted.content,
-              };
-            }
-          }
-        }
-
-        // 4) 일반 링크 (.zip, .smi, .srt, .ass, .vtt)
-        const fileLinks: string[] = [];
-        $("a[href]").each((_, a) => {
-          const href = $(a).attr("href")?.trim() || "";
-          const text = $(a).text().trim().toLowerCase();
-          const labelledEpisodes = parseEpisodes(text);
-          if (labelledEpisodes.length && !labelledEpisodes.includes(episodeNumber)) return;
-          if (
-            href.endsWith(".zip") ||
-            href.endsWith(".smi") ||
-            href.endsWith(".srt") ||
-            href.endsWith(".ass") ||
-            href.endsWith(".ssa") ||
-            href.endsWith(".vtt") ||
-            text.includes(".zip") ||
-            text.includes(".smi") ||
-            text.includes(".ass") ||
-            text.includes(".srt") ||
-            text.includes("자막 다운")
-          ) {
-            try {
-              fileLinks.push(new URL(href, postUrl).toString());
-            } catch {}
-          }
-        });
-
-        for (const fUrl of fileLinks) {
-          const buf = await downloadFileWithTimeout(fUrl, postUrl, timeoutMs + 1000);
-          if (buf && buf.length > 50) {
-            const extracted = extractSubtitleFromBuffer(buf, episodeNumber, fUrl, strictEpisode, targetSeason);
-            if (extracted) {
-              return {
-                name: creatorName,
-                episode: episodeNumber,
-                orig_filename: extracted.orig_filename,
-                format: extracted.format,
-                is_ass: extracted.is_ass,
-                content: extracted.content,
-              };
-            }
-          }
-        }
-      } catch (err) {
-        console.warn(`[tryExtractFromPage error] ${targetUrl}:`, err);
-      }
-      return null;
+        return await extractSubtitleFromBlogPage(html, postUrl, creatorName, episodeNumber,
+          targetSeason, timeoutMs, localEpisode);
+      } catch (error) { console.warn("[tryExtractFromPage error]", error); return null; }
     };
 
     // 🌟 1단계: 초기 등록 링크(website) 자체가 포스트/회차 글인지 확인 후 직접 추출 시도
     const isSpecificPost =
       /\.(?:html|htm)$/i.test(website) ||
       /\/(?:\d+|entry\/[^\/]+)$/i.test(website) ||
-      website.includes("blog-post_");
+      website.includes("blog-post_") || /[?&]logNo=\d+/.test(website);
 
     let isInitialUrlCurrentEp = false;
     let postSeasonMatch = true;
@@ -1318,11 +1050,11 @@ export async function fetchCreatorSubtitle(
         const initHtml = await initRes.text();
         initialPageHtml = initHtml;
         const $init = cheerio.load(initHtml);
-        const pageTitle = $init("title").text().trim() || "";
-        const postHeading = $init(".post-title, .entry-title").first().text().trim() || pageTitle.split(":").pop()?.trim() || "";
+        const pageTitle = subtitlePostTitle($init);
+        const postHeading = pageTitle;
         initialWorkTitle = postHeading.match(/^(.+?)\s*\d+\s*화/)?.[1]?.trim() || "";
-        const pSeason = parseSeason(`${pageTitle} ${website}`);
-        const pEps = parseEpisodes(postHeading || pageTitle);
+        const pSeason = readEpisodeEvidence(pageTitle).season;
+        const pEps = readEpisodeEvidence(postHeading || pageTitle).episodes;
 
         if (targetSeason !== null && pSeason !== null && targetSeason !== pSeason) {
           postSeasonMatch = false;
@@ -1337,7 +1069,7 @@ export async function fetchCreatorSubtitle(
         if (domain.includes("blogspot.com") && isSpecificPost && postSeasonMatch && !isInitialUrlCurrentEp) {
           isInitialUrlCurrentEp = $init("a[href]").toArray().some((a) => {
             const href = $init(a).attr("href") || "";
-            return Boolean(extractGdriveId(href)) && parseEpisodes($init(a).text()).includes(episodeNumber);
+            return Boolean(extractGdriveId(href)) && readEpisodeEvidence($init(a).text()).episodes.includes(episodeNumber);
           });
         }
 
@@ -1371,7 +1103,7 @@ export async function fetchCreatorSubtitle(
                 const href = $category(a).attr("href") || "";
                 if (!matchingPost && /\d+\s*화/.test(heading) &&
                     cleanTitle(heading).includes(normalizedWorkTitle) &&
-                    parseEpisodes(heading).includes(episodeNumber) &&
+                    readEpisodeEvidence(heading).episodes.includes(episodeNumber) &&
                     /^\/\d+(?:\?|$)/.test(href)) {
                   matchingPost = new URL(href, categoryUrl).toString();
                 }
@@ -1383,16 +1115,12 @@ export async function fetchCreatorSubtitle(
             }
           }
 
-          // AniAll often keeps an entire season ZIP on the matched work post,
-          // even when the post title itself does not contain an episode number.
-          // In strict mode only a ZIP entry that can be tied to this episode is accepted.
-          const postArchiveSubtitle = await tryExtractFromPage(website, initialPageHtml, true);
-          if (postArchiveSubtitle) return postArchiveSubtitle;
+
         }
       }
     } catch {}
 
-    if (isInitialUrlCurrentEp) {
+    if (isSpecificPost && postSeasonMatch) {
       const initExtracted = await tryExtractFromPage(website, initialPageHtml);
       if (initExtracted) return initExtracted;
     }
@@ -1703,7 +1431,7 @@ export async function searchAllSubtitlesParallel(
       getAnissiaCreators(targetTitle, episodeNumber, 3500, directAnimeNo, referenceTitle, animeId, broadSearch),
       getAniAllMatches(targetTitle, animeId, true),
       getAniAllCandidates(targetTitle, animeId),
-      includeKairan ? findKairanSubtitle(targetTitle, configuredSourceEpisode, 3500) : Promise.resolve(null),
+      includeKairan ? findKairanSubtitle(targetTitle, configuredSourceEpisode, 3500, episodeNumber) : Promise.resolve(null),
       getSubtitleSourcePriority(),
       getSubtitleRejections(animeId),
     ]);
@@ -1759,7 +1487,7 @@ export async function searchAllSubtitlesParallel(
       const sourceEpisode = sourceEpisodeStart && sourceEpisodeStart > 0
         ? sourceEpisodeStart + episodeNumber - 1
         : mapProviderEpisodeNumber(c.episode, episodeNumber, targetSeason);
-      const subtitle = await fetchCreatorSubtitle(c.name, c.website, c.matchedTitle || targetTitle, sourceEpisode, 10000);
+      const subtitle = await fetchCreatorSubtitle(c.name, c.website, c.matchedTitle || targetTitle, sourceEpisode, 10000, episodeNumber);
       return subtitle ? { ...subtitle, matchScore: c.matchScore,
         matchedTitle: c.matchedTitle, verifiedMatch: c.verifiedMatch,
         sourceCreatorWebsite: c.website, sourceMatchedTitle: c.matchedTitle,

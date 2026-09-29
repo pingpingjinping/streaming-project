@@ -2,9 +2,10 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { deleteUploadedSubtitle as deleteLegacyUploadedSubtitle, getUploadedSubtitle as getLegacyUploadedSubtitle } from "@/lib/db";
-import { extractSubtitleFromBuffer } from "@/lib/subtitles";
+import { extractSubtitleFromBuffer, decodeSubtitleFile } from "@/lib/subtitles";
 import { episodeFromSubtitleFilename, inspectSubtitleArchive } from "@/lib/subtitleUpload";
-import { parseEpisodes, parseSeason } from "@/lib/subtitles";
+import { parseSeason } from "@/lib/subtitles";
+import { readEpisodeEvidence, evidenceAgrees, selectEpisodeEntries } from "@/lib/subtitleEpisodes";
 
 const root = process.env.SUBTITLE_STORAGE_DIR || path.join(process.cwd(), "data", "subtitles");
 const safeSegment = (value: string) => {
@@ -360,13 +361,14 @@ export async function getAnissiaArchiveSubtitles(
   episode: number,
   animeNo?: number | null,
   seasonNumber?: number | null,
-  options: { folderNameQuery?: string; maxResults?: number } = {},
+  options: { folderNameQuery?: string; maxResults?: number; localEpisode?: number } = {},
 ): Promise<AnissiaArchiveSubtitle[]> {
   if (!Number.isSafeInteger(episode) || episode < 1) return [];
   const wantedTitles = new Set(titles.map(normalizeBlogTitle).filter((value) => value.length >= 2));
   const folderNameQuery = normalizeBlogTitle(options.folderNameQuery || "");
   const resultLimit = options.maxResults || (folderNameQuery ? 50 : 12);
   const wantedSeason = seasonNumber || titles.map(parseSeason).find((value) => value !== null) || null;
+  const request = { episode: options.localEpisode ?? episode, sourceEpisode: episode, season: wantedSeason ?? 1 };
   const index = await getAnissiaArchiveIndex();
   const matched: Array<{ entry: AnissiaArchiveIndexEntry; title: string; creator: string; website: string; order: number }> = [];
 
@@ -382,11 +384,8 @@ export async function getAnissiaArchiveSubtitles(
     if (!folderNameMatch) continue;
 
     const recordEpisode = recordValue(entry.record, ["episode", "episodeNumber", "episode_number", "episodeNo", "ep"]);
-    const episodeNumbers = recordEpisode ? parseEpisodes(recordEpisode) : [];
     const episodeFolder = folderParts.episode || path.basename(path.dirname(path.dirname(entry.finishPath)));
-    const pathEpisodes = parseEpisodes(episodeFolder);
-    const hasEpisodeData = episodeNumbers.length > 0 || pathEpisodes.length > 0;
-    if (hasEpisodeData && !episodeNumbers.includes(episode) && !pathEpisodes.includes(episode)) continue;
+    if ([readEpisodeEvidence(recordEpisode), readEpisodeEvidence(episodeFolder)].some(e => !evidenceAgrees(e, request))) continue;
 
     const titleSeason = parseSeason(recordTitle) || parseSeason(folderTitle);
     if (wantedSeason && titleSeason && wantedSeason !== titleSeason) continue;
@@ -408,11 +407,8 @@ export async function getAnissiaArchiveSubtitles(
         a.localeCompare(b, undefined, { numeric: true }));
     const loose = files.filter((name) => /\.(ass|ssa|smi|srt|vtt)$/i.test(name));
     const recordEpisode = recordValue(candidate.entry.record, ["episode", "episodeNumber", "episode_number", "episodeNo", "ep"]);
-    const recordedEpisodes = recordEpisode ? parseEpisodes(recordEpisode) : [];
     const episodeFolder = folderParts.episode || path.basename(path.dirname(path.dirname(candidate.entry.finishPath)));
-    const pathEpisodes = parseEpisodes(episodeFolder);
-    const recordMatchesEpisode = recordedEpisodes.includes(episode) || pathEpisodes.includes(episode) ||
-      (!recordedEpisodes.length && !pathEpisodes.length);
+    const outer = [readEpisodeEvidence(candidate.title), readEpisodeEvidence(recordEpisode), readEpisodeEvidence(episodeFolder)];
 
     for (const filename of [...archives, ...loose]) {
       try {
@@ -441,30 +437,18 @@ export async function getAnissiaArchiveSubtitles(
 
         if (filename.toLowerCase().endsWith(".zip")) {
           const { zip, entries } = inspectSubtitleArchive(await readFile(filePath));
-          const archiveRange = filename.match(/(?:^|[^\\d])(\\d{1,3})\\s*[-~]\\s*(\\d{1,3})(?!\\d)/);
-          const archiveStart = archiveRange ? Number(archiveRange[1]) : 0;
-          const archiveEnd = archiveRange ? Number(archiveRange[2]) : 0;
-          if (archiveRange && (archiveStart < 1 || archiveEnd < archiveStart || episode < archiveStart || episode > archiveEnd)) continue;
-
-          const exactEntries = entries.filter((entry) => entry.episode === episode);
-          let selectedEntries = exactEntries;
-          if (!selectedEntries.length && archiveRange && archiveEnd - archiveStart + 1 === entries.length) {
-            const orderedEntries = [...entries].sort((a, b) =>
-              a.filename.localeCompare(b.filename, undefined, { numeric: true }));
-            selectedEntries = orderedEntries.filter((_, index) => archiveStart + index === episode);
-          }
-          if (!selectedEntries.length && !archiveRange && entries.length === 1 && recordMatchesEpisode) {
-            selectedEntries = entries;
-          }
+          const selectedEntries = selectEpisodeEntries(entries, request,
+            [...outer, readEpisodeEvidence(filename, true)]);
 
           for (const item of selectedEntries) {
             try {
-              addSubtitle(extractSubtitleFromBuffer(zip.getEntries()[item.index].getData(), episode, item.filename));
+              addSubtitle(decodeSubtitleFile(zip.getEntries()[item.index].getData(), item.filename));
             } catch {}
             if (results.length >= resultLimit) break;
           }
-        } else if (recordMatchesEpisode) {
-          addSubtitle(extractSubtitleFromBuffer(await readFile(filePath), episode, filename));
+        } else {
+          addSubtitle(extractSubtitleFromBuffer(await readFile(filePath), episode, filename, true, wantedSeason,
+            { localEpisode: request.episode, evidence: outer }));
         }
       } catch {}
       if (results.length >= resultLimit) break;
@@ -492,58 +476,12 @@ export async function getAniAllArchiveSubtitle(blogTitle: string, episode: numbe
       const info = await stat(filePath);
       if (!info.isFile() || info.size === 0 || info.size > 100 * 1024 * 1024) continue;
       const { zip, entries } = inspectSubtitleArchive(await readFile(filePath));
-      const targetSeason = seasonNumber || 1;
-      let selected = (!startEpisodeOverride || targetSeason > 1)
-        ? entries.filter((entry) => entry.episode === episode && entry.season === targetSeason)
-        : [];
-      let ambiguousSeasonMapping = false;
-      if (!selected.length && startEpisodeOverride && startEpisodeOverride > 0) {
-        const sourceEpisode = startEpisodeOverride + episode - 1;
-        selected = entries.filter((entry) => entry.season === null && entry.episode === sourceEpisode);
-      }
-      if (!selected.length) {
-        const unseasoned = entries.filter((entry) => entry.season === null && entry.episode !== null);
-        const available = [...new Set(unseasoned.map((entry) => entry.episode as number))].sort((a, b) => a - b);
-        const first = available[0];
-        const contiguous = Boolean(first && available.every((value, index) => value === first + index));
-        let sourceEpisode: number | null = null;
-        if (targetSeason > 1 && contiguous) {
-          if (first > 1) {
-            sourceEpisode = available.includes(episode)
-              ? episode
-              : episode >= 1 && episode <= available.length ? available[episode - 1] : null;
-          } else if (available.length > 12 && available.length % targetSeason === 0) {
-            const seasonLength = available.length / targetSeason;
-            sourceEpisode = episode <= seasonLength
-              ? available[(targetSeason - 1) * seasonLength + episode - 1]
-              : available.includes(episode) ? episode : null;
-          } else if (available.length > 12) {
-            sourceEpisode = available.includes(episode) ? episode : null;
-            ambiguousSeasonMapping = sourceEpisode === null;
-          } else if (available.includes(episode)) {
-            sourceEpisode = available[episode - 1];
-          }
-        } else if (targetSeason <= 1 && available.includes(episode)) {
-          sourceEpisode = episode;
-        }
-        if (sourceEpisode !== null) selected = unseasoned.filter((entry) => entry.episode === sourceEpisode);
-      }
-      if (!selected.length && !ambiguousSeasonMapping) {
-        const range = filename.match(/(?:^|[^\d])(\d{1,3})\s*[-~]\s*(\d{1,3})(?!\d)/);
-        const start = range ? Number(range[1]) : 0;
-        const end = range ? Number(range[2]) : 0;
-        const sourceEpisode = startEpisodeOverride && startEpisodeOverride > 0
-          ? startEpisodeOverride + episode - 1
-          : seasonNumber && seasonNumber > 1 && episode >= 1 && episode <= end - start + 1
-            ? start + episode - 1 : episode;
-        if (start > 0 && end >= start && end - start + 1 === entries.length && sourceEpisode >= start && sourceEpisode <= end) {
-          selected = [...entries].sort((a, b) => a.filename.localeCompare(b.filename, undefined, { numeric: true }))
-            .filter((_, index) => start + index === sourceEpisode);
-        }
-      }
+      const request = { episode, sourceEpisode: (startEpisodeOverride || 1) + episode - 1, season: seasonNumber ?? 1 };
+      const selected = selectEpisodeEntries(entries, request,
+        [readEpisodeEvidence(folder), readEpisodeEvidence(filename, true)]);
       if (selected.length !== 1) continue;
       const entry = selected[0];
-      const subtitle = extractSubtitleFromBuffer(zip.getEntries()[entry.index].getData(), episode, entry.filename);
+      const subtitle = decodeSubtitleFile(zip.getEntries()[entry.index].getData(), entry.filename);
       if (subtitle?.content) {
         return { blogTitle: folder, name: subtitle.filename, orig_filename: subtitle.orig_filename, content: subtitle.content,
           format: subtitle.format, is_ass: subtitle.is_ass };

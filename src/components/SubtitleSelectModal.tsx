@@ -440,6 +440,7 @@ export default function SubtitleSelectModal({
       try {
         const form = new FormData();
         form.set("animeId", animeId);
+        form.set("title", animeTitle);
         form.set("ep", String(episodeNumber || 1));
         form.set("file", file);
         form.set("mode", "open");

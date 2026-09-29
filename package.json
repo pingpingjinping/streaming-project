@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:subtitles": "node --test scripts/test-subtitle-episodes.cjs"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",

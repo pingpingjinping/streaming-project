@@ -1,29 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { deleteUploadedSubtitle, getUploadedSubtitle, getUploadedSubtitles, saveUploadedSubtitle, saveUploadedSubtitleCandidates } from "@/lib/subtitleStorage";
-import { convertToVtt, decodeSubtitleBuffer, extractSubtitleFromBuffer } from "@/lib/subtitles";
+import { decodeSubtitleFile, parseSeason } from "@/lib/subtitles";
+import { getSubtitleEpisodeStart } from "@/lib/db";
+import { getReanimeMatch } from "@/lib/reanimeMatches";
+import { readEpisodeEvidence } from "@/lib/subtitleEpisodes";
 
-function parseSubtitleArchiveEntry(buffer: Buffer, episode: number, filename: string) {
-  if (filename.toLowerCase().endsWith(".smi")) {
-    // Decode SAMI entries explicitly by their known extension. In particular,
-    // bypass archive-level format detection for UTF-16LE files with a BOM.
-    const rawText = buffer[0] === 0xff && buffer[1] === 0xfe
-      ? buffer.subarray(2).toString("utf16le")
-      : decodeSubtitleBuffer(buffer);
-    const converted = convertToVtt(rawText, ".smi");
-    if (converted.ext === ".vtt" && converted.content.startsWith("WEBVTT") && converted.content.includes("-->")) {
-      return {
-        filename: "sub.vtt",
-        orig_filename: filename,
-        content: converted.content,
-        format: "VTT" as const,
-        is_ass: false,
-      };
-    }
-  }
-  return extractSubtitleFromBuffer(buffer, episode, filename);
-}
-import { inspectSubtitleArchive } from "@/lib/subtitleUpload";
+import { inspectSubtitleArchive, automaticArchiveAssignments } from "@/lib/subtitleUpload";
 
 function target(animeId: unknown, episode: unknown) {
   const id = typeof animeId === "string" ? animeId.trim() : "";
@@ -68,29 +51,27 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ entries }, { headers: { "Cache-Control": "no-store" } });
       }
       if (form?.get("mode") === "open") {
-        let assignments: Array<{ index: number; episode: number }> = [];
-        const allNamed = entries.every((entry) => entry.episode);
-        if (allNamed) {
-          assignments = entries.map((entry) => ({ index: entry.index, episode: entry.episode! }));
-        } else if (entries.length === 1) {
+        const startEpisode = await getSubtitleEpisodeStart(user.username, key.id);
+        const matched = await getReanimeMatch(key.id);
+        const title = String(form?.get("title") || "").trim() || matched?.koreanTitle || "";
+        const season = parseSeason(title);
+        let assignments = automaticArchiveAssignments(entries, file.name, season, startEpisode);
+        const only = entries.length === 1 ? readEpisodeEvidence(entries[0].filename, true) : null;
+        const archive = readEpisodeEvidence(file.name, true);
+        // Uploading one genuinely unnumbered file is an explicit assignment to this episode.
+        if (!assignments.length && only && !only.episodes.length && !only.conflict && !only.multipleSeasons
+            && !archive.episodes.length && !archive.multipleSeasons && !archive.conflict
+            && (!archive.season || archive.season === (season ?? 1))
+            && (!only.season || only.season === (season ?? 1))) {
           assignments = [{ index: entries[0].index, episode: key.ep }];
-        } else {
-          const range = file.name.match(/(?:^|[^\d])(\d{1,3})\s*[-~]\s*(\d{1,3})(?!\d)/);
-          const start = range ? Number(range[1]) : 0;
-          const end = range ? Number(range[2]) : 0;
-          if (start > 0 && end >= start && end - start + 1 === entries.length && end <= 200) {
-            assignments = [...entries]
-              .sort((a, b) => a.filename.localeCompare(b.filename, undefined, { numeric: true }))
-              .map((entry, index) => ({ index: entry.index, episode: start + index }));
-          }
         }
         if (!assignments.length) {
-          return NextResponse.json({ message: "ZIP 안 자막의 회차를 파일명에서 찾지 못했습니다. 회차별 번호가 포함된 ZIP을 선택해 주세요." }, { status: 422 });
+          return NextResponse.json({ message: "ZIP의 시즌·회차를 확정하지 못했습니다. 시작 회차 설정을 확인하거나, 압축을 풀어 원하는 자막 파일을 직접 선택해 주세요." }, { status: 422 });
         }
         const subtitles = assignments.map(({ index, episode }) => {
           const entry = zip.getEntries()[index];
           const filename = entries.find((item) => item.index === index)!.filename;
-          const subtitle = parseSubtitleArchiveEntry(entry.getData(), episode, filename);
+          const subtitle = decodeSubtitleFile(entry.getData(), filename);
           if (!subtitle || Buffer.byteLength(subtitle.content) > 2 * 1024 * 1024) {
             throw new Error(`${filename}: 자막 내용을 읽지 못했습니다.`);
           }
@@ -118,7 +99,7 @@ export async function POST(request: NextRequest) {
         const subtitles = selected.map((row: { index: number; episode: number }) => {
           const entry = zip.getEntries()[row.index];
           const filename = entries.find((item) => item.index === row.index)!.filename;
-          const subtitle = parseSubtitleArchiveEntry(entry.getData(), row.episode, filename);
+          const subtitle = decodeSubtitleFile(entry.getData(), filename);
           if (!subtitle || Buffer.byteLength(subtitle.content) > 2 * 1024 * 1024) {
             throw new Error(`${filename}: 자막 내용을 읽지 못했습니다.`);
           }
@@ -139,7 +120,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: error instanceof Error ? error.message : "압축 파일을 읽을 수 없습니다." }, { status: 400 });
     }
   }
-  const subtitle = extractSubtitleFromBuffer(buffer, key.ep, file.name);
+  const subtitle = isZip
+    ? (() => { const { zip, entries } = inspectSubtitleArchive(buffer);
+      return entries.length === 1 ? decodeSubtitleFile(zip.getEntries()[entries[0].index].getData(), entries[0].filename) : null; })()
+    : decodeSubtitleFile(buffer, file.name);
   if (!subtitle || Buffer.byteLength(subtitle.content) > 2 * 1024 * 1024) {
     return NextResponse.json({ message: "이 회차의 자막을 파일에서 찾지 못했습니다." }, { status: 422 });
   }

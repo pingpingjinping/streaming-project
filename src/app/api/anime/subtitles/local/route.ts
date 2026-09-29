@@ -70,7 +70,7 @@ export async function GET(request: NextRequest) {
       sourceEpisode,
       null,
       parseSeason(resolvedTitle) || parseSeason(title),
-      { folderNameQuery: title, maxResults: 50 },
+      { folderNameQuery: title, maxResults: 50, localEpisode: episode },
     );
     const anissiaSubtitles = anissiaArchives
       .filter((subtitle) => !isRejected("anissia", `[로컬 Anissia · ${subtitle.creator}] ${subtitle.localArchiveTrackLabel} · ${subtitle.archiveFilename} · ${subtitle.orig_filename}`))
