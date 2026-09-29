@@ -95,6 +95,9 @@ export default function SubtitleSelectModal({
   const [searchKeyword, setSearchKeyword] = useState(animeTitle || "");
   const [searchEp, setSearchEp] = useState(episodeNumber || 1);
   const [searchResults, setSearchResults] = useState<SubtitleOption[]>([]);
+  const [searchCreators, setSearchCreators] = useState<CreatorInfo[]>([]);
+  const [catalogTitles, setCatalogTitles] = useState<Array<{ title: string; sources: string[] }>>([]);
+  const [localFolders, setLocalFolders] = useState<Array<{ folderName: string; provider: "aniall" | "anissia" }>>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isSearchingLocal, setIsSearchingLocal] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -170,6 +173,7 @@ export default function SubtitleSelectModal({
   const visibleCreators = creators.filter((creator) => !isRejected(creatorSource(creator)));
   const visibleLocalArchiveOptions = localArchiveOptions.filter((option) => !isRejected(subtitleSource(option)));
   const visibleSearchResults = searchResults.filter((option) => !isRejected(subtitleSource(option)));
+  const visibleSearchCreators = searchCreators.filter((creator) => !isRejected(creatorSource(creator)));
 
   const changeRejection = async (source: RejectedSource, reject: boolean) => {
     const key = rejectionId(source.provider, source.sourceKey);
@@ -270,7 +274,7 @@ export default function SubtitleSelectModal({
   };
 
   // 1. Download and apply creator's subtitle
-  const handleSelectCreator = async (creator: CreatorInfo) => {
+  const handleSelectCreator = async (creator: CreatorInfo, requestedEpisode = episodeNumber, requestedTitle = searchKeyword || animeTitle) => {
     if ((!creator.website && !creator.localArchive) || loadingCreator) return;
     const selectedCreatorKey = creatorKey(creator);
     setLoadingCreator(selectedCreatorKey);
@@ -283,9 +287,9 @@ export default function SubtitleSelectModal({
         body: JSON.stringify({
           creatorName: creator.name,
           website: creator.website,
-          title: searchKeyword || animeTitle,
+          title: requestedTitle,
           matchedTitle: creator.matchedTitle,
-          episodeNumber: episodeNumber,
+          episodeNumber: requestedEpisode,
           creatorEpisode: creator.episode,
           sourceProvider: creator.sourceProvider,
           localArchive: creator.localArchive,
@@ -299,7 +303,7 @@ export default function SubtitleSelectModal({
       }
 
       const newSub: SubtitleOption = {
-        name: `(${creator.name}) ${data.subtitle.orig_filename || `${episodeNumber}화 자막`}`,
+        name: `(${creator.name}) ${data.subtitle.orig_filename || `${requestedEpisode}화 자막`}`,
         format: data.subtitle.is_ass ? "ASS" : "VTT",
         is_ass: Boolean(data.subtitle.is_ass),
         content: data.subtitle.content,
@@ -320,18 +324,28 @@ export default function SubtitleSelectModal({
   };
 
   // 2. Perform manual search with user-entered keyword
-  const handleSearch = async (e?: React.FormEvent) => {
+  const handleSearch = async (e?: React.FormEvent, keywordOverride?: string) => {
     if (e) e.preventDefault();
-    const keyword = searchKeyword.trim();
+    const keyword = (keywordOverride || searchKeyword).trim();
+    if (keywordOverride) setSearchKeyword(keywordOverride);
     if (!keyword) return;
 
     setIsSearching(true);
     setSearchError(null);
     setSearchResults([]);
+    setSearchCreators([]);
+    setLocalFolders([]);
+    setCatalogTitles([]);
+
+    try {
+      const catalogRes = await fetch(`/api/anime/subtitles/catalog?q=${encodeURIComponent(keyword)}`);
+      const catalogData = await catalogRes.json();
+      if (catalogRes.ok && catalogData.success) setCatalogTitles(catalogData.titles || []);
+    } catch { /* Online lookup still works if DB title search fails. */ }
 
     try {
       const res = await fetch(
-        `/api/anime/subtitles?title=${encodeURIComponent(keyword)}&ep=${searchEp}&animeId=${encodeURIComponent(animeId)}&referenceTitle=${encodeURIComponent(animeTitle)}`
+        `/api/anime/subtitles?mode=online&title=${encodeURIComponent(keyword)}&ep=${searchEp}&animeId=${encodeURIComponent(animeId)}&referenceTitle=${encodeURIComponent(animeTitle)}`
       );
       const data = await res.json();
 
@@ -358,8 +372,10 @@ export default function SubtitleSelectModal({
 
       // The server has already grouped these in the configured provider order.
       setSearchResults(subs);
-      if (subs.length === 0) {
-        setSearchError("검색된 자막이 없습니다. 다른 제목(예: 한국어 정식 방영명)으로 검색해 보세요.");
+      const foundCreators: CreatorInfo[] = (data.creators || []).filter((creator: CreatorInfo) => creator.website);
+      setSearchCreators(foundCreators);
+      if (subs.length === 0 && foundCreators.length === 0) {
+        setSearchError("해당 회차의 온라인 자막은 없거나 읽을 수 없어. DB 작품 제목을 선택해 다시 찾아 봐.");
       }
     } catch (err: any) {
       setSearchError(err.message || "자막을 검색하는 중 오류가 발생했습니다.");
@@ -368,13 +384,20 @@ export default function SubtitleSelectModal({
     }
   };
 
-  const handleLocalSearch = async () => {
-    const keyword = searchKeyword.trim();
+  const handleLocalSearch = async (keywordOverride?: string) => {
+    const keyword = (keywordOverride || searchKeyword).trim();
+    if (keywordOverride) setSearchKeyword(keywordOverride);
     if (!keyword) return;
     setIsSearchingLocal(true);
     setSearchError(null);
     setSearchResults([]);
+    setSearchCreators([]);
+    setCatalogTitles([]);
+    setLocalFolders([]);
     try {
+      const folderRes = await fetch(`/api/anime/subtitles/local?mode=folders&title=${encodeURIComponent(keyword)}&ep=${searchEp}&animeId=${encodeURIComponent(animeId)}`);
+      const folderData = await folderRes.json();
+      if (folderRes.ok && folderData.success) setLocalFolders(folderData.folders || []);
       const res = await fetch(
         `/api/anime/subtitles/local?title=${encodeURIComponent(keyword)}&ep=${searchEp}&animeId=${encodeURIComponent(animeId)}`
       );
@@ -396,7 +419,7 @@ export default function SubtitleSelectModal({
         localArchiveTrackKey: s.localArchiveTrackKey,
       }));
       setSearchResults(subs);
-      if (subs.length === 0) setSearchError("Pi의 로컬 보관함에서 해당 회차 자막을 찾지 못했어.");
+      if (subs.length === 0) setSearchError("해당 회차의 로컬 자막은 없거나 읽을 수 없어. 위 폴더 후보에서 제목을 골라 확인해 봐.");
     } catch (err: any) {
       setSearchError(err.message || "로컬 자막을 검색하는 중 오류가 발생했습니다.");
     } finally {
@@ -782,7 +805,7 @@ export default function SubtitleSelectModal({
                 </button>
                 <button
                   type="button"
-                  onClick={handleLocalSearch}
+                  onClick={() => handleLocalSearch()}
                   disabled={isSearching || isSearchingLocal}
                   className="flex items-center gap-1.5 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-xs font-bold text-amber-200 transition hover:bg-amber-500/20 disabled:opacity-50"
                 >
@@ -794,6 +817,59 @@ export default function SubtitleSelectModal({
               {searchError && (
                 <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-3 text-xs text-red-400">
                   {searchError}
+                </div>
+              )}
+
+              {catalogTitles.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-slate-300">DB 작품 제목 ({catalogTitles.length})</p>
+                  <div className="max-h-64 space-y-1 overflow-y-auto rounded-xl border border-white/10 bg-slate-950/40 p-2">
+                    {catalogTitles.map((item) => (
+                      <button type="button" key={item.title} onClick={() => handleSearch(undefined, item.title)}
+                        className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-xs hover:bg-white/10">
+                        <span className="text-white">{item.title}</span>
+                        <span className="shrink-0 text-slate-400">{item.sources.join(", ")}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-slate-400">작품을 누르면 그 제목으로 온라인 자막을 찾아.</p>
+                </div>
+              )}
+
+              {localFolders.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-slate-300">Pi 로컬 폴더 ({localFolders.length})</p>
+                  <div className="max-h-64 space-y-1 overflow-y-auto rounded-xl border border-white/10 bg-slate-950/40 p-2">
+                    {localFolders.map((folder, index) => (
+                      <button type="button" key={`${folder.provider}-${folder.folderName}-${index}`}
+                        onClick={() => handleLocalSearch(folder.folderName)}
+                        className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-xs hover:bg-white/10">
+                        <span className="text-white">{folder.folderName}</span>
+                        <span className="shrink-0 text-slate-400">{folder.provider === "aniall" ? "AniAll" : "Anissia"}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-slate-400">폴더를 누르면 선택한 회차에 들어 있는 자막을 확인해.</p>
+                </div>
+              )}
+
+              {visibleSearchCreators.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-slate-300">온라인 제작자 후보 ({visibleSearchCreators.length})</p>
+                  {visibleSearchCreators.map((creator, index) => (
+                    <div key={`${creatorKey(creator)}-${index}`} className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-slate-900/60 p-3">
+                      <div className="min-w-0 text-xs">
+                        <p className="font-semibold text-white">{creator.matchedTitle || creator.name}</p>
+                        <p className="truncate text-slate-400">{creator.name} · 최신 등록 {creator.episode || "알 수 없음"}화</p>
+                      </div>
+                      <button type="button" onClick={() => handleSelectCreator(creator, searchEp, searchKeyword)}
+                        disabled={Boolean(loadingCreator)}
+                        className="shrink-0 rounded-lg bg-purple-600 px-3 py-2 text-xs text-white disabled:opacity-50">
+                        {loadingCreator === creatorKey(creator) ? "확인 중…" : "이 회차 확인"}
+                      </button>
+                    </div>
+                  ))}
+                  {creatorError && <p className="text-xs text-red-400">{creatorError}</p>}
                 </div>
               )}
 

@@ -1573,7 +1573,8 @@ export async function getAnissiaCreators(
   timeoutMs = 3500,
   directAnimeNo?: number | null,
   referenceTitle = title,
-  animeId?: string
+  animeId?: string,
+  broadSearch = false
 ): Promise<CreatorInfo[]> {
   const results: CreatorInfo[] = [];
   try {
@@ -1615,7 +1616,8 @@ export async function getAnissiaCreators(
 
           for (const item of content) {
             const sc = scoreAnimeMatch(title, targetSeason, item, resolvedTitle);
-            if (sc >= 50 && !candidates.has(item.animeNo)) {
+            const broadTitleMatch = broadSearch && normalizeWorkTitle(item.subject).includes(normalizeWorkTitle(title));
+            if ((sc >= 50 || broadTitleMatch) && !candidates.has(item.animeNo)) {
               candidates.set(item.animeNo, { ...item, searchScore: sc,
                 matchScore: scoreAnimeMatch(referenceTitle, parseSeason(referenceTitle), item, title) });
             }
@@ -1667,7 +1669,9 @@ export async function searchAllSubtitlesParallel(
   directAnimeNo?: number | null,
   referenceTitle = title,
   animeId = "",
-  sourceEpisodeStart: number | null = null
+  sourceEpisodeStart: number | null = null,
+  includeKairan = true,
+  broadSearch = false
 ): Promise<{
   subtitles: SubtitleResult[];
   creators: CreatorInfo[];
@@ -1688,10 +1692,10 @@ export async function searchAllSubtitlesParallel(
 
     // Fetch both indexed AniAll posts and current Anissia results concurrently.
     const [anissiaCreators, aniallMatches, aniallCandidates, kairanSub, sourcePriority, rejected] = await Promise.all([
-      getAnissiaCreators(targetTitle, episodeNumber, 3500, directAnimeNo, referenceTitle, animeId),
+      getAnissiaCreators(targetTitle, episodeNumber, 3500, directAnimeNo, referenceTitle, animeId, broadSearch),
       getAniAllMatches(targetTitle, animeId, true),
       getAniAllCandidates(targetTitle, animeId),
-      findKairanSubtitle(targetTitle, configuredSourceEpisode, 3500),
+      includeKairan ? findKairanSubtitle(targetTitle, configuredSourceEpisode, 3500) : Promise.resolve(null),
       getSubtitleSourcePriority(),
       getSubtitleRejections(animeId),
     ]);

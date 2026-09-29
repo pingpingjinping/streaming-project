@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { getAniAllMatches, searchAniAllMatchesByTitleFragment, getSubtitleEpisodeStart, getSubtitleRejections, getSubtitleSourcePriority } from "@/lib/db";
-import { getAniAllArchiveSubtitle, getAnissiaArchiveSubtitles } from "@/lib/subtitleStorage";
+import { getAniAllArchiveSubtitle, getAnissiaArchiveSubtitles, searchLocalSubtitleFolders } from "@/lib/subtitleStorage";
 import { parseSeason, resolveKoreanTitle } from "@/lib/subtitles";
 
 export async function GET(request: NextRequest) {
@@ -17,6 +17,11 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    if (params.get("mode") === "folders") {
+      const folders = await searchLocalSubtitleFolders(title);
+      return NextResponse.json({ success: true, folders },
+        { headers: { "Cache-Control": "no-store" } });
+    }
     const sourceEpisodeStart = animeId ? await getSubtitleEpisodeStart(user.username, animeId) : null;
     const rejected = await getSubtitleRejections(animeId);
     const sourcePriority = await getSubtitleSourcePriority();

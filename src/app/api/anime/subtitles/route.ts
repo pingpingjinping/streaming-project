@@ -23,6 +23,7 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const title = searchParams.get("title")?.trim();
   const referenceTitle = searchParams.get("referenceTitle")?.trim();
+  const onlineSearch = searchParams.get("mode") === "online";
   const ep = parseInt(searchParams.get("ep") || "1", 10) || 1;
   const animeIdParam = searchParams.get("animeId") || searchParams.get("animeNo") || "";
   const requestedAnissiaTrackKey = (searchParams.get("anissiaTrack") || "").slice(0, 1000);
@@ -53,6 +54,18 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    if (onlineSearch) {
+      // Manual online search must honor the typed keyword and show all
+      // discovered creators, even when a local or verified subtitle exists.
+      const query = await resolveKoreanTitle(title);
+      const result = await searchAllSubtitlesParallel(query || title, ep, 45000, null,
+        query || title, animeIdParam, null, false, true);
+      return NextResponse.json({
+        success: true, anime_title: title, episode: ep,
+        count: result.subtitles.length, subtitles: result.subtitles,
+        creators: result.creators,
+      }, { headers: { "Cache-Control": "no-store" } });
+    }
     const uploaded = animeIdParam
       ? (await getUploadedSubtitles(user.username, animeIdParam, ep))
         .filter((subtitle) => !isRejected("local", subtitle.name))

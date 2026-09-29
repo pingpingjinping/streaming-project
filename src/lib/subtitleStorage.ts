@@ -295,6 +295,31 @@ async function getAnissiaArchiveIndex(): Promise<AnissiaArchiveIndexEntry[]> {
   return anissiaArchiveIndexPromise;
 }
 
+export async function searchLocalSubtitleFolders(query: string): Promise<Array<{ folderName: string; provider: "aniall" | "anissia" }>> {
+  const needle = normalizeBlogTitle(query);
+  if (needle.length < 2) return [];
+  const matches: Array<{ folderName: string; provider: "aniall" | "anissia" }> = [];
+  try {
+    const folders = await readdir(path.join(root, "aniall_subtitles"), { withFileTypes: true });
+    for (const folder of folders) {
+      if (folder.isDirectory() && normalizeBlogTitle(folder.name).includes(needle)) {
+        matches.push({ folderName: folder.name, provider: "aniall" });
+      }
+    }
+  } catch (error: any) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+
+  const seen = new Set<string>();
+  for (const entry of await getAnissiaArchiveIndex()) {
+    const folderName = anissiaFolderParts(entry.finishPath).title;
+    if (!folderName || !normalizeBlogTitle(folderName).includes(needle) || seen.has(folderName)) continue;
+    seen.add(folderName);
+    matches.push({ folderName, provider: "anissia" });
+  }
+  return matches.sort((a, b) => a.folderName.localeCompare(b.folderName, "ko")).slice(0, 200);
+}
+
 function normalizeAnissiaTrackFilename(filename: string, episode: number): string {
   const base = path.basename(filename).replace(/\.(ass|ssa|smi|srt|vtt|zip)$/i, "");
   const patterns = [
