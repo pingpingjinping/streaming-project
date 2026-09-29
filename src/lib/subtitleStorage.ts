@@ -254,12 +254,12 @@ function normalizeAnissiaTrackFilename(filename: string, episode: number): strin
 }
 
 function anissiaTrackIdentity(creator: string, archiveFilename: string, entryFilename: string, episode: number) {
-  const rangePattern = /(?:^|[^\\d])\\d{1,3}\\s*[-~]\\s*\\d{1,3}(?!\\d)/;
-  const archiveBase = path.basename(archiveFilename).replace(/\\.(zip)$/i, "").replace(rangePattern, "{range}");
+  const rangePattern = /(?:^|[^\d])\d{1,3}\s*[-~]\s*\d{1,3}(?!\d)/;
+  const archiveBase = path.basename(archiveFilename).replace(/\.(zip)$/i, "").replace(rangePattern, "{range}");
   const normalizedArchive = normalizeAnissiaTrackFilename(archiveBase, episode);
   const normalizedEntry = normalizeAnissiaTrackFilename(entryFilename, episode);
   const trackKey = [normalizeBlogTitle(creator), normalizeBlogTitle(normalizedArchive), normalizeBlogTitle(normalizedEntry)].join("|");
-  const entryTrack = normalizedEntry.match(/\\{ep\\}([a-z][a-z0-9._-]*)$/i)?.[1] || "";
+  const entryTrack = normalizedEntry.match(/\{ep\}([a-z][a-z0-9._-]*)$/i)?.[1] || "";
   const trackLabel = /^ns$/i.test(entryTrack) ? "논스폰서판"
     : /^s$/i.test(entryTrack) ? "스폰서판"
       : entryTrack ? entryTrack + " 트랙" : "자막 트랙";
