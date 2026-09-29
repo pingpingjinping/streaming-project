@@ -10,7 +10,7 @@ import {
 import { assertSafeProxyUrl, UnsafeProxyUrlError } from "@/lib/proxyGuard";
 import { getSessionUser } from "@/lib/auth";
 import { getAniAllMatches, getManualSubtitleLink, getSubtitleSourcePriority, getSubtitleEpisodeStart, getSubtitleRejections } from "@/lib/db";
-import { getAniAllArchiveSubtitle, getAnissiaArchiveSubtitles, getUploadedSubtitle, getVerifiedSubtitleCache } from "@/lib/subtitleStorage";
+import { getAniAllArchiveSubtitle, getAnissiaArchiveSubtitles, getUploadedSubtitles, getVerifiedSubtitleCache } from "@/lib/subtitleStorage";
 import { getReanimeMatch } from "@/lib/reanimeMatches";
 
 export async function GET(request: NextRequest) {
@@ -53,10 +53,13 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const uploaded = animeIdParam ? await getUploadedSubtitle(user.username, animeIdParam, ep) : null;
-    if (uploaded && !isRejected("local", uploaded.name)) {
-      return NextResponse.json({ success: true, anime_title: title, episode: ep, count: 1,
-        subtitles: [uploaded], creators: [] }, { headers: { "Cache-Control": "no-store" } });
+    const uploaded = animeIdParam
+      ? (await getUploadedSubtitles(user.username, animeIdParam, ep))
+        .filter((subtitle) => !isRejected("local", subtitle.name))
+      : [];
+    if (uploaded.length) {
+      return NextResponse.json({ success: true, anime_title: title, episode: ep, count: uploaded.length,
+        subtitles: uploaded, creators: [] }, { headers: { "Cache-Control": "no-store" } });
     }
     const resolvedTitle = await resolveKoreanTitle(title);
     const searchTarget = reanimeMatch?.koreanTitle || resolvedTitle || title;
