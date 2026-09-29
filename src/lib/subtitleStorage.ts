@@ -124,6 +124,8 @@ export interface AnissiaArchiveSubtitle {
   updatedAt: string;
   animeNo: number | null;
   archiveFilename: string;
+  localArchiveTrackKey: string;
+  localArchiveTrackLabel: string;
 }
 
 interface AnissiaArchiveIndexEntry {
@@ -237,6 +239,32 @@ async function getAnissiaArchiveIndex(): Promise<AnissiaArchiveIndexEntry[]> {
   return anissiaArchiveIndexPromise;
 }
 
+function normalizeAnissiaTrackFilename(filename: string, episode: number): string {
+  const base = path.basename(filename).replace(/\.(ass|ssa|smi|srt|vtt|zip)$/i, "");
+  const patterns = [
+    new RegExp("(^|[\\s_-])0*" + episode + "(?=[A-Za-z][A-Za-z0-9._-]*$)"),
+    new RegExp("(^|[^a-z\\d])(?:episode|ep|e|#)\\s*0*" + episode + "(?!\\d)", "i"),
+    new RegExp("((?:제|第\\s*)?0*)" + episode + "(\\s*(?:화|회|편|話))"),
+    new RegExp("(^|[\\s_-])0*" + episode + "$"),
+  ];
+  for (const pattern of patterns) {
+    if (pattern.test(base)) return base.replace(pattern, "$1{ep}$2");
+  }
+  return base;
+}
+
+function anissiaTrackIdentity(creator: string, archiveFilename: string, entryFilename: string, episode: number) {
+  const rangePattern = /(?:^|[^\\d])\\d{1,3}\\s*[-~]\\s*\\d{1,3}(?!\\d)/;
+  const archiveBase = path.basename(archiveFilename).replace(/\\.(zip)$/i, "").replace(rangePattern, "{range}");
+  const normalizedArchive = normalizeAnissiaTrackFilename(archiveBase, episode);
+  const normalizedEntry = normalizeAnissiaTrackFilename(entryFilename, episode);
+  const trackKey = [normalizeBlogTitle(creator), normalizeBlogTitle(normalizedArchive), normalizeBlogTitle(normalizedEntry)].join("|");
+  const entryTrack = normalizedEntry.match(/\\{ep\\}([a-z][a-z0-9._-]*)$/i)?.[1] || "";
+  const trackLabel = /^ns$/i.test(entryTrack) ? "논스폰서판"
+    : /^s$/i.test(entryTrack) ? "스폰서판"
+      : entryTrack ? entryTrack + " 트랙" : "자막 트랙";
+  return { trackKey, trackLabel };
+}
 /** Find an offline Anissia subtitle archive using its adjacent finish.txt metadata. */
 export async function getAnissiaArchiveSubtitles(
   titles: string[],
@@ -310,6 +338,7 @@ export async function getAnissiaArchiveSubtitles(
             updatedAt: candidate.entry.updatedAt,
             animeNo: recordNumber(candidate.entry.record, ["animeNo", "anime_no", "anissiaNo"]),
             archiveFilename: filename,
+            ...anissiaTrackIdentity(candidate.creator, filename, subtitle.orig_filename, episode),
           });
         };
 
