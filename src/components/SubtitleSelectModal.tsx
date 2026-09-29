@@ -55,7 +55,9 @@ const creatorSource = (creator: CreatorInfo): RejectedSource => ({
 });
 const subtitleSource = (subtitle: SubtitleOption): RejectedSource => ({
   provider: subtitle.localArchive ? subtitle.sourceProvider || "local" : subtitle.sourceCreatorWebsite ? subtitle.sourceProvider || "anissia" : "local",
-  sourceKey: subtitle.sourceCreatorWebsite || (subtitle.localArchive ? subtitle.name : subtitle.url || subtitle.name),
+  sourceKey: subtitle.localArchive && subtitle.sourceProvider === "anissia"
+    ? subtitle.name
+    : subtitle.sourceCreatorWebsite || (subtitle.localArchive ? subtitle.name : subtitle.url || subtitle.name),
 });
 
 interface SubtitleSelectModalProps {
