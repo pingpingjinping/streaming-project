@@ -1015,7 +1015,7 @@ export async function searchBlogForEpisode(
             return;
           }
 
-          if (postEps.includes(targetEp)) {
+          if (cleanTitle(title).includes(cleanTitle(searchTerm)) && postEps.includes(targetEp)) {
             foundUrl = new URL(href, website).toString();
           }
         });
@@ -1322,11 +1322,18 @@ export async function fetchCreatorSubtitle(
         // Search that category for the requested episode before relying on
         // site search, whose query may not match an English provider title.
         if (domain.includes("tistory.com") && isSpecificPost && !isInitialUrlCurrentEp) {
-          const category = $init('a[href*="/category/"]').toArray()
+          // Match the current work's category before checking its episodes.
+          const workTitle = pageTitle.match(/^(.+?)\s*\d+\s*화/)?.[1]?.trim() || "";
+          const normalizedWorkTitle = cleanTitle(workTitle);
+          const category = normalizedWorkTitle ? $init('a[href*="/category/"]').toArray()
             .map((a) => $init(a).attr("href") || "")
             .find((href) => {
-              try { return href.startsWith("/category/") && decodeURIComponent(href).includes("/category/자막/"); } catch { return false; }
-            });
+              try {
+                const path = decodeURIComponent(new URL(href, website).pathname);
+                return path.startsWith("/category/") &&
+                  cleanTitle(path.split("/").pop() || "") === normalizedWorkTitle;
+              } catch { return false; }
+            }) : undefined;
           if (category) {
             const categoryUrl = new URL(category, website).toString();
             const categoryResponse = await fetch(categoryUrl, {
@@ -1340,6 +1347,7 @@ export async function fetchCreatorSubtitle(
                 const heading = $category(a).text().trim().split(/\r?\n/)[0].trim();
                 const href = $category(a).attr("href") || "";
                 if (!matchingPost && /\d+\s*화/.test(heading) &&
+                    cleanTitle(heading).includes(normalizedWorkTitle) &&
                     parseEpisodes(heading).includes(episodeNumber) &&
                     /^\/\d+(?:\?|$)/.test(href)) {
                   matchingPost = new URL(href, categoryUrl).toString();
