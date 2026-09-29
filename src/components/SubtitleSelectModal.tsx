@@ -95,6 +95,7 @@ export default function SubtitleSelectModal({
   const [searchKeyword, setSearchKeyword] = useState(animeTitle || "");
   const [searchEp, setSearchEp] = useState(episodeNumber || 1);
   const [searchResults, setSearchResults] = useState<SubtitleOption[]>([]);
+  const [searchCreators, setSearchCreators] = useState<CreatorInfo[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isSearchingLocal, setIsSearchingLocal] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -170,6 +171,7 @@ export default function SubtitleSelectModal({
   const visibleCreators = creators.filter((creator) => !isRejected(creatorSource(creator)));
   const visibleLocalArchiveOptions = localArchiveOptions.filter((option) => !isRejected(subtitleSource(option)));
   const visibleSearchResults = searchResults.filter((option) => !isRejected(subtitleSource(option)));
+  const visibleSearchCreators = searchCreators.filter((creator) => !isRejected(creatorSource(creator)));
 
   const changeRejection = async (source: RejectedSource, reject: boolean) => {
     const key = rejectionId(source.provider, source.sourceKey);
@@ -270,7 +272,7 @@ export default function SubtitleSelectModal({
   };
 
   // 1. Download and apply creator's subtitle
-  const handleSelectCreator = async (creator: CreatorInfo) => {
+  const handleSelectCreator = async (creator: CreatorInfo, requestedEpisode = episodeNumber, requestedTitle = searchKeyword || animeTitle) => {
     if ((!creator.website && !creator.localArchive) || loadingCreator) return;
     const selectedCreatorKey = creatorKey(creator);
     setLoadingCreator(selectedCreatorKey);
@@ -283,9 +285,9 @@ export default function SubtitleSelectModal({
         body: JSON.stringify({
           creatorName: creator.name,
           website: creator.website,
-          title: searchKeyword || animeTitle,
+          title: requestedTitle,
           matchedTitle: creator.matchedTitle,
-          episodeNumber: episodeNumber,
+          episodeNumber: requestedEpisode,
           creatorEpisode: creator.episode,
           sourceProvider: creator.sourceProvider,
           localArchive: creator.localArchive,
@@ -299,7 +301,7 @@ export default function SubtitleSelectModal({
       }
 
       const newSub: SubtitleOption = {
-        name: `(${creator.name}) ${data.subtitle.orig_filename || `${episodeNumber}화 자막`}`,
+        name: `(${creator.name}) ${data.subtitle.orig_filename || `${requestedEpisode}화 자막`}`,
         format: data.subtitle.is_ass ? "ASS" : "VTT",
         is_ass: Boolean(data.subtitle.is_ass),
         content: data.subtitle.content,
@@ -328,10 +330,11 @@ export default function SubtitleSelectModal({
     setIsSearching(true);
     setSearchError(null);
     setSearchResults([]);
+    setSearchCreators([]);
 
     try {
       const res = await fetch(
-        `/api/anime/subtitles?title=${encodeURIComponent(keyword)}&ep=${searchEp}&animeId=${encodeURIComponent(animeId)}&referenceTitle=${encodeURIComponent(animeTitle)}`
+        `/api/anime/subtitles?mode=online&title=${encodeURIComponent(keyword)}&ep=${searchEp}&animeId=${encodeURIComponent(animeId)}&referenceTitle=${encodeURIComponent(animeTitle)}`
       );
       const data = await res.json();
 
@@ -358,7 +361,9 @@ export default function SubtitleSelectModal({
 
       // The server has already grouped these in the configured provider order.
       setSearchResults(subs);
-      if (subs.length === 0) {
+      const foundCreators: CreatorInfo[] = (data.creators || []).filter((creator: CreatorInfo) => creator.website);
+      setSearchCreators(foundCreators);
+      if (subs.length === 0 && foundCreators.length === 0) {
         setSearchError("검색된 자막이 없습니다. 다른 제목(예: 한국어 정식 방영명)으로 검색해 보세요.");
       }
     } catch (err: any) {
@@ -794,6 +799,26 @@ export default function SubtitleSelectModal({
               {searchError && (
                 <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-3 text-xs text-red-400">
                   {searchError}
+                </div>
+              )}
+
+              {visibleSearchCreators.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-slate-300">온라인 제작자 후보 ({visibleSearchCreators.length})</p>
+                  {visibleSearchCreators.map((creator, index) => (
+                    <div key={`${creatorKey(creator)}-${index}`} className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-slate-900/60 p-3">
+                      <div className="min-w-0 text-xs">
+                        <p className="font-semibold text-white">{creator.matchedTitle || creator.name}</p>
+                        <p className="truncate text-slate-400">{creator.name} · 최신 등록 {creator.episode || "알 수 없음"}화</p>
+                      </div>
+                      <button type="button" onClick={() => handleSelectCreator(creator, searchEp, searchKeyword)}
+                        disabled={Boolean(loadingCreator)}
+                        className="shrink-0 rounded-lg bg-purple-600 px-3 py-2 text-xs text-white disabled:opacity-50">
+                        {loadingCreator === creatorKey(creator) ? "확인 중…" : "이 회차 확인"}
+                      </button>
+                    </div>
+                  ))}
+                  {creatorError && <p className="text-xs text-red-400">{creatorError}</p>}
                 </div>
               )}
 
