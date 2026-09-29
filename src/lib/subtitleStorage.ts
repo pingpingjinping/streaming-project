@@ -260,9 +260,11 @@ function anissiaTrackIdentity(creator: string, archiveFilename: string, entryFil
   const normalizedEntry = normalizeAnissiaTrackFilename(entryFilename, episode);
   const trackKey = [normalizeBlogTitle(creator), normalizeBlogTitle(normalizedArchive), normalizeBlogTitle(normalizedEntry)].join("|");
   const entryTrack = normalizedEntry.match(/\{ep\}([a-z][a-z0-9._-]*)$/i)?.[1] || "";
-  const trackLabel = /^ns$/i.test(entryTrack) ? "논스폰서판"
-    : /^s$/i.test(entryTrack) ? "스폰서판"
-      : entryTrack ? entryTrack + " 트랙" : "자막 트랙";
+  const archiveTrack = normalizedArchive.match(/(?:\{ep\}|\{range\})([a-z][a-z0-9._-]*)$/i)?.[1] || "";
+  const variant = entryTrack || archiveTrack;
+  const trackLabel = /^ns$/i.test(variant) ? "논스폰서판"
+    : /^s$/i.test(variant) ? "스폰서판"
+      : variant ? variant + " 트랙" : "자막 트랙";
   return { trackKey, trackLabel };
 }
 /** Find an offline Anissia subtitle archive using its adjacent finish.txt metadata. */
