@@ -565,6 +565,9 @@ export default function SubtitleSelectModal({
                   <h3 className="text-sm font-bold text-emerald-200">Pi 로컬 자막</h3>
                   {isLoadingLocalArchives && <span className="text-xs text-emerald-300">검색 중…</span>}
                 </div>
+                <p className="mb-2 text-[11px] leading-relaxed text-slate-400">
+                  스폰서판·논스폰서판처럼 같은 화에 여러 버전이 있으면, 여기서 고른 버전을 다음 화에서도 이어서 사용해.
+                </p>
                 {visibleLocalArchiveOptions.length ? (
                   <div className="space-y-2">
                     {visibleLocalArchiveOptions.map((subtitle, index) => (
