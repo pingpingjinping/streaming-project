@@ -57,6 +57,7 @@ export interface CreatorInfo {
   verifiedMatch?: boolean;
   sourceProvider?: "aniall" | "anissia";
   localArchive?: boolean;
+  localArchiveTrackKey?: string;
 }
 
 const SPEED_CYCLE_RATES = [1.0, 1.3, 1.5, 2.0];
@@ -2077,7 +2078,17 @@ export default function Player(props: PlayerProps) {
       sourceMatchedTitle: option.sourceMatchedTitle || option.matchedTitle,
       sourceProvider: option.sourceProvider,
       isCached: option.isCached,
+      localArchive: option.localArchive,
+      localArchiveTrackKey: option.localArchiveTrackKey,
     };
+    try {
+      const trackPreferenceKey = `anissia-local-track:${animeId}`;
+      if (option.localArchive && option.sourceProvider === "anissia" && option.localArchiveTrackKey) {
+        window.localStorage.setItem(trackPreferenceKey, option.localArchiveTrackKey);
+      } else {
+        window.localStorage.removeItem(trackPreferenceKey);
+      }
+    } catch {}
     const next = [subtitle, ...subs.filter((item) => item.name !== subtitle.name)];
     setSubs(next);
     setSelectedSubIndex(0);
@@ -3433,7 +3444,16 @@ export default function Player(props: PlayerProps) {
     setIsLoadingSubs(true);
     setNeedsManualSubtitleChoice(false);
 
-    fetch(`/api/anime/subtitles?title=${encodeURIComponent(animeTitle)}&ep=${currentEp}&animeId=${encodeURIComponent(animeId)}`)
+    const subtitleParams = new URLSearchParams({
+      title: animeTitle,
+      ep: String(currentEp),
+      animeId,
+    });
+    try {
+      const savedTrack = window.localStorage.getItem(`anissia-local-track:${animeId}`);
+      if (savedTrack) subtitleParams.set("anissiaTrack", savedTrack);
+    } catch {}
+    fetch(`/api/anime/subtitles?${subtitleParams.toString()}`)
       .then((r) => r.json())
       .then((data) => {
         if (isCancelled || !data.success) return;
@@ -3465,6 +3485,7 @@ export default function Player(props: PlayerProps) {
           sourceProvider: s.sourceProvider,
           isCached: Boolean(s.isCached),
           localArchive: Boolean(s.localArchive),
+          localArchiveTrackKey: s.localArchiveTrackKey,
         }));
 
         const combined = [...fetchedList, ...newSubs];
