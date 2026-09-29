@@ -9,7 +9,7 @@ function parseSubtitleArchiveEntry(buffer: Buffer, episode: number, filename: st
     // bypass archive-level format detection for UTF-16LE files with a BOM.
     const rawText = buffer[0] === 0xff && buffer[1] === 0xfe
       ? buffer.subarray(2).toString("utf16le")
-      : decodeSubtitleBuffer(buffer).replace(/^\\uFEFF/, "");
+      : decodeSubtitleBuffer(buffer);
     const converted = convertToVtt(rawText, ".smi");
     if (converted.ext === ".vtt" && converted.content.startsWith("WEBVTT") && converted.content.includes("-->")) {
       return {
