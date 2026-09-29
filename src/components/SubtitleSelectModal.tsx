@@ -392,6 +392,7 @@ export default function SubtitleSelectModal({
         sourceCreatorWebsite: s.sourceCreatorWebsite,
         sourceMatchedTitle: s.sourceMatchedTitle,
         localArchive: Boolean(s.localArchive),
+        localArchiveTrackKey: s.localArchiveTrackKey,
       }));
       setSearchResults(subs);
       if (subs.length === 0) setSearchError("Pi의 로컬 보관함에서 해당 회차 자막을 찾지 못했어.");
