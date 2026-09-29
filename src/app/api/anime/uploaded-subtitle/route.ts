@@ -112,7 +112,6 @@ export async function POST(request: NextRequest) {
         if (!Array.isArray(selected) || !selected.length || selected.length > entries.length ||
             selected.some((row) => !Number.isInteger(row?.index) || !Number.isInteger(row?.episode) ||
               row.episode < 1 || row.episode > 10000 || !entries.some((entry) => entry.index === row.index)) ||
-            new Set(selected.map((row) => row.episode)).size !== selected.length ||
             new Set(selected.map((row) => row.index)).size !== selected.length) {
           return NextResponse.json({ message: "회차 배치에 중복되거나 잘못된 값이 있습니다." }, { status: 400 });
         }
@@ -125,7 +124,7 @@ export async function POST(request: NextRequest) {
           }
           return { episode: row.episode, filename: filename.slice(0, 255), content: subtitle.content, format: subtitle.format };
         });
-        await saveUploadedSubtitles(user.username, key.id, subtitles);
+        await saveUploadedSubtitleCandidates(user.username, key.id, subtitles);
         const currentSubtitles = selected.some((row: { episode: number }) => row.episode === key.ep)
           ? await getUploadedSubtitles(user.username, key.id, key.ep) : [];
         return NextResponse.json({ success: true,
