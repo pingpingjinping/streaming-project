@@ -1322,7 +1322,7 @@ export async function getAnissiaCreators(
       candidates.set(directAnimeNo, { animeNo: directAnimeNo, subject: title, searchScore: 150, verifiedMatch: true });
     } else {
       // Persisted monthly suggestions remain visible even if title search misses them.
-      for (const item of await getMonthlyAnissiaCandidates(animeId || "")) {
+      for (const item of broadSearch ? [] : await getMonthlyAnissiaCandidates(animeId || "")) {
         candidates.set(item.animeNo, { animeNo: item.animeNo, subject: item.subject,
           searchScore: item.score, matchScore: item.score, verifiedMatch: false });
         monthlyIds.add(item.animeNo);
@@ -1336,36 +1336,48 @@ export async function getAnissiaCreators(
         }
       }
 
-      // 여러 애니시아 작품을 모아 점수순으로 비교할 수 있도록 최대 4개 쿼리를 검색
-      for (const q of queries.slice(0, 4)) {
-        try {
-          const url = `https://api.anissia.net/anime/list/0?q=${encodeURIComponent(q)}`;
-          const res = await fetch(url, {
-            headers: HEADERS,
-            signal: AbortSignal.timeout(timeoutMs),
-          });
-
-          if (!res.ok) continue;
-          const json = await res.json();
-          const content: Array<{ animeNo: number; subject: string }> = json?.data?.content || [];
-          if (content.length === 0) continue;
-
-          for (const item of content) {
-            const sc = scoreAnimeMatch(title, targetSeason, item, resolvedTitle);
-            const broadTitleMatch = broadSearch && normalizeWorkTitle(item.subject).includes(normalizeWorkTitle(title));
-            if ((sc >= 50 || broadTitleMatch) && !candidates.has(item.animeNo)) {
-              candidates.set(item.animeNo, { ...item, searchScore: sc,
-                matchScore: scoreAnimeMatch(referenceTitle, parseSeason(referenceTitle), item, title) });
+      // Manual keyword search follows every result page; automatic matching
+      // keeps its small shortlist to avoid unnecessary requests during playback.
+      for (const q of broadSearch ? [title] : queries.slice(0, 4)) {
+        let page = 0;
+        let hasNext = true;
+        const seenPageIds = new Set<number>();
+        while (hasNext) {
+          try {
+            const url = `https://api.anissia.net/anime/list/${page}?q=${encodeURIComponent(q)}`;
+            const res = await fetch(url, {
+              headers: HEADERS,
+              signal: AbortSignal.timeout(timeoutMs),
+            });
+            if (!res.ok) break;
+            const json = await res.json();
+            const content: Array<{ animeNo: number; subject: string }> = json?.data?.content || [];
+            if (content.length === 0) break;
+            // Stop if a provider ignores pagination and repeats the same page.
+            const fresh = content.filter((item) => !seenPageIds.has(item.animeNo));
+            if (!fresh.length) break;
+            for (const item of fresh) {
+              seenPageIds.add(item.animeNo);
+              const sc = scoreAnimeMatch(title, targetSeason, item, resolvedTitle);
+              const broadTitleMatch = broadSearch && normalizeWorkTitle(item.subject).includes(normalizeWorkTitle(title));
+              if ((sc >= 50 || broadTitleMatch) && !candidates.has(item.animeNo)) {
+                candidates.set(item.animeNo, { ...item, searchScore: sc,
+                  matchScore: scoreAnimeMatch(referenceTitle, parseSeason(referenceTitle), item, title) });
+              }
             }
-          }
-        } catch {}
+            page += 1;
+            hasNext = broadSearch && (json?.data?.last === false ||
+              page < Number(json?.data?.totalPages || 0));
+          } catch { break; }
+        }
       }
     }
 
     const ranked = [...candidates.values()].sort((a, b) =>
       Number(monthlyIds.has(b.animeNo)) - Number(monthlyIds.has(a.animeNo)) ||
       (b.matchScore ?? b.searchScore) - (a.matchScore ?? a.searchScore));
-    const captionLists = await Promise.all(ranked.slice(0, 4).map(async (anime) => {
+    const selected = broadSearch ? ranked : ranked.slice(0, 4);
+    const fetchCaptions = async (anime: (typeof ranked)[number]): Promise<CreatorInfo[]> => {
       try {
         const capRes = await fetch(`https://api.anissia.net/anime/caption/animeNo/${anime.animeNo}`, {
           headers: HEADERS, signal: AbortSignal.timeout(timeoutMs),
@@ -1389,8 +1401,12 @@ export async function getAnissiaCreators(
             verifiedMatch: anime.verifiedMatch }];
         });
       } catch { return []; }
-    }));
-    results.push(...captionLists.flat());
+    };
+    // Bound network concurrency while retaining every manual-search candidate.
+    for (let offset = 0; offset < selected.length; offset += 6) {
+      const captionLists = await Promise.all(selected.slice(offset, offset + 6).map(fetchCaptions));
+      results.push(...captionLists.flat());
+    }
   } catch (e) {
     console.error("[getAnissiaCreators error]:", e);
   }
