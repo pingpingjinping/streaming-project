@@ -16,6 +16,20 @@ const mixedBytes=zipFile('aniall_subtitles/혼합 작품/all.zip',{'TV/S01E01.sr
   'OVA/01.srt':srt('OVA one'),'bonus.ass':Buffer.from('[Script Info]\nTitle: unnumbered bonus')});
 zipFile('aniall_subtitles/버전 작품/all.zip',{'01.srt':srt('version one'),'01ns.srt':srt('version two')});
 const registryBytes=zipFile('aniall_subtitles/registry.zip',{'TV/01.srt':srt('reviewed TV'),'OVA/01.srt':srt('reviewed OVA'),'bonus.ass':Buffer.from('[Script Info]\nTitle: unnumbered')});
+for(const ep of [1,2,3]) {
+  put(`anissia_subtitles/풀린 작품/${String(ep).padStart(2,'0')}.srt`,srt(`flat base ${ep}`));
+  put(`anissia_subtitles/풀린 작품/${String(ep).padStart(2,'0')}__2.srt`,srt(`flat variant two ${ep}`));
+}
+put('anissia_subtitles/풀린 작품/04.srt',srt('flat base 4'));
+put('anissia_subtitles/풀린 작품/OVA/01.srt',srt('flat OVA'));
+put('anissia_subtitles/풀린 작품/S02/01.srt',srt('flat season two'));
+put('anissia_subtitles/풀린 작품/unknown.ass',Buffer.from('[Script Info]\nTitle: unknown'));
+for(const ep of [1,2]) {
+  put(`aniall_subtitles/풀린 애니올/TV/${String(ep).padStart(2,'0')}.srt`,srt(`aniall flat ${ep}`));
+}
+put('aniall_subtitles/풀린 애니올/OVA/01.srt',srt('aniall flat OVA'));
+for(const provider of ['anissia','aniall']) put(`${provider}_subtitles/평면 작품 S02/01.srt`,srt(`${provider} flat season two`));
+zipFile('aniall_subtitles/복수 ZIP/all.zip',Object.fromEntries([1,2,3].flatMap(ep=>[[`${String(ep).padStart(2,'0')}.srt`,srt(`zip base ${ep}`)],[`${String(ep).padStart(2,'0')}__2.srt`,srt(`zip variant two ${ep}`)]])));
 const db=require('../src/lib/db.ts'),auth=require('../src/lib/auth.ts'),storage=require('../src/lib/subtitleStorage.ts');
 const reviewed=require('../src/lib/reviewedSubtitleStorage.ts'),titles=require('../src/lib/subtitles.ts'),matches=require('../src/lib/reanimeMatches.ts');
 const identity=require('../src/lib/subtitleLocalIdentity.ts');
@@ -28,7 +42,7 @@ patch(auth,'getSessionUser',async()=>({username}));
 patch(db,'getSubtitleBundleAssignment',async(u,a)=>assignments.get(`${u}:${a}`)||null);
 patch(db,'getSubtitleBundleAssignments',async u=>[...assignments.entries()].filter(([k])=>k.startsWith(u+':')).map(([,v])=>v));
 patch(db,'saveSubtitleBundleAssignment',async(u,a,provider,bundleKey,label)=>{
-  for(const[k,v]of assignments)if(k.startsWith(u+':')&&v.provider===provider&&v.bundleKey===bundleKey)assignments.delete(k);
+  for(const[k,v]of assignments)if(k.startsWith(u+':')&&v.provider===provider&&identity.bundleScopesOverlap(v.bundleKey,bundleKey))assignments.delete(k);
   assignments.set(`${u}:${a}`,{animeId:a,provider,bundleKey,label,exclusive:true});return true;
 });
 patch(db,'deleteSubtitleBundleAssignment',async(u,a)=>{assignments.delete(`${u}:${a}`);return true;});
@@ -160,7 +174,7 @@ test('Postgres persists scoped ownership and episode exceptions without modifyin
     assert.deepEqual((await reviewed.findReviewedBundleFiles('aniall',ovaKey)).map(r=>r.pid),['pg-ova']);
     // The production settings module uses a real isolated Postgres connection.
     const exports={},code=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../src/lib/db.ts'),'utf8'),{compilerOptions}).outputText;
-    vm.runInNewContext(code,{exports,require:id=>id==='postgres'?()=>sql:require(id),process:{env:{DATABASE_URL:url}},console,Buffer,setTimeout,clearTimeout});
+    vm.runInNewContext(code,{exports,require:id=>id==='postgres'?()=>sql:id==='./subtitleLocalIdentity'?identity:require(id),process:{env:{DATABASE_URL:url}},console,Buffer,setTimeout,clearTimeout});
     await Promise.all([exports.getSubtitleEpisodeOverrides('alice','re_tv'),exports.getSubtitleEpisodeOverrides('bob','re_tv')]);
     assert.equal(await exports.saveSubtitleBundleAssignment('alice','re_tv','aniall',tvKey,'TV'),true);
     assert.equal(await exports.saveSubtitleBundleAssignment('alice','re_ova','aniall',ovaKey,'OVA'),true);
@@ -176,9 +190,111 @@ test('Postgres persists scoped ownership and episode exceptions without modifyin
     await exports.deleteSubtitleEpisodeOverride('alice','re_new_tv',4);
     assert.equal((await exports.getSubtitleEpisodeOverrides('alice','re_new_tv')).length,0);
     await exports.deleteSubtitleBundleAssignment('alice','re_new_tv');
+    const localKey=identity.bundleScopeKey({type:'local',provider:'anissia',work:'풀린 작품',track:'base',kind:'main',season:1});
+    const folderKey=identity.bundleScopeKey({type:'folder',provider:'anissia',work:'풀린 작품',kind:'main',season:1});
+    const folderVariant=identity.bundleScopeKey({type:'folder',provider:'anissia',work:'풀린 작품',track:'variant-two',kind:'main',season:1});
+    const folderOva=identity.bundleScopeKey({type:'folder',provider:'anissia',work:'풀린 작품',kind:'ova',season:1});
+    const folderSeason=identity.bundleScopeKey({type:'folder',provider:'anissia',work:'풀린 작품',kind:'main',season:2});
+    for(const [anime,key] of [['old-track',localKey],['folder-ova',folderOva],['folder-season',folderSeason]])
+      assert.equal(await exports.saveSubtitleBundleAssignment('alice',anime,'anissia',key,anime),true);
+    await exports.saveSubtitleBundleAssignment('bob','bob-track','anissia',localKey,'Bob');
+    assert.equal(await exports.saveSubtitleBundleAssignment('alice','new-folder','anissia',folderKey,'Folder'),true);
+    assert.equal(await exports.getSubtitleBundleAssignment('alice','old-track'),null);
+    assert.equal(await exports.saveSubtitleBundleAssignment('alice','new-folder','anissia',folderVariant,'Variant two'),true);
+    assert.equal((await exports.getSubtitleBundleAssignment('alice','new-folder')).bundleKey,folderVariant);
+    assert.equal((await exports.getSubtitleBundleAssignment('alice','folder-ova')).bundleKey,folderOva);
+    assert.equal((await exports.getSubtitleBundleAssignment('alice','folder-season')).bundleKey,folderSeason);
+    assert.equal((await exports.getSubtitleBundleAssignment('bob','bob-track')).bundleKey,localKey);
     assert.equal(await snapshot(),before);
   } finally {
     db.getDb=previous;if(sql) await sql.end();
     await admin.unsafe(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await admin.end();
+  }
+});
+
+test('folder can be assigned without a file; unpacked numbered members follow successive episodes',async()=>{
+  rows=[];
+  const key=identity.bundleScopeKey({type:'folder',provider:'anissia',work:'풀린 작품',kind:'main',season:1});
+  const response=await bundleRoute.PUT(request('subtitle-bundle','PUT',{animeId:'re_flat',provider:'anissia',bundleKey:key}));
+  assert.equal(response.status,200);
+  for(const ep of [1,2,3]) {
+    const result=await play('re_flat','다른 번역명',ep);
+    assert.equal(result.count,2);assert.equal(result.needs_manual_subtitle_choice,true);
+    assert.ok(result.subtitles.every(s=>s.content.includes(` ${ep}`)));
+  }
+  const folderChoices=await storage.searchLocalSubtitleFolders('풀린');
+  assert.ok(folderChoices.some(f=>f.folderKey===key));
+  assert.equal((await play('re_wrong_flat','풀린 작품',1)).count,0);
+});
+test('choosing 01 or 01__2 remembers that folder variant for 02 and 03',async()=>{
+  const key=identity.bundleScopeKey({type:'folder',provider:'anissia',work:'풀린 작품',kind:'main',season:1});
+  const files=await storage.getAnissiaArchiveSubtitles(['풀린 작품'],1,null,null,{bundleKey:key});
+  for(const text of ['flat base','flat variant two']) {
+    const selected=files.find(s=>s.content.includes(text));
+    assert.ok(selected);assert.equal((await bundleRoute.PUT(request('subtitle-bundle','PUT',{animeId:'re_flat',provider:'anissia',bundleKey:key,fileId:selected.localFileId}))).status,200);
+    assert.equal(identity.parseBundleScope(assignments.get('alice:re_flat').bundleKey).type,'folder');
+    for(const ep of [2,3]) {
+      const result=await play('re_flat','다른 제목',ep);assert.equal(result.count,1);assert.equal(result.needs_manual_subtitle_choice,false);
+      assert.ok(result.subtitles[0].content.includes(`${text} ${ep}`));
+    }
+    const next=await play('re_flat','다른 제목',4);
+    if(text==='flat base')assert.ok(next.subtitles[0].content.includes('flat base 4'));
+    else {assert.equal(next.assignment_missing,true);assert.equal(next.count,0);}
+    assert.equal((await play('re_flat','다른 제목',5)).assignment_missing,true);
+  }
+});
+test('folder scope separates OVA and season two, supports nested AniAll, and per-episode exceptions still win',async()=>{
+  const folder=(provider,work,kind='main',season=1)=>identity.bundleScopeKey({type:'folder',provider,work,kind,season});
+  for(const [id,provider,work,kind,season,text] of [
+    ['re_flat_ova','anissia','풀린 작품','ova',1,'flat OVA'],
+    ['re_flat_s2','anissia','풀린 작품','main',2,'flat season two'],
+    ['re_aniall_folder','aniall','풀린 애니올','main',1,'aniall flat 1'],
+    ['re_aniall_ova','aniall','풀린 애니올','ova',1,'aniall flat OVA'],
+  ]) {
+    assert.equal((await bundleRoute.PUT(request('subtitle-bundle','PUT',{animeId:id,provider,bundleKey:folder(provider,work,kind,season)}))).status,200);
+    const result=await play(id,'새 번역명');assert.equal(result.count,1);assert.ok(result.subtitles[0].content.includes(text));
+  }
+  assert.ok((await play('re_aniall_folder','새 번역명',2)).subtitles[0].content.includes('aniall flat 2'));
+  const files=await storage.getAnissiaArchiveSubtitles(['풀린 작품'],1,null,null,{bundleKey:folder('anissia','풀린 작품','ova')});
+  const chosen=files[0];
+  await exceptionRoute.PUT(request('subtitle-exceptions','PUT',{animeId:'re_flat',episodeNumber:2,provider:'anissia',fileId:chosen.localFileId}));
+  assert.ok((await play('re_flat','새 제목',2)).subtitles[0].content.includes('flat OVA'));
+  await exceptionRoute.DELETE(request('subtitle-exceptions?animeId=re_flat&ep=2','DELETE'));
+  assert.ok((await play('re_flat','새 제목',2)).subtitles[0].content.includes('flat variant two 2'));
+});
+test('folder API rejects path escape, foreign provider, missing folder and a file from another folder',async()=>{
+  for(const work of ['../풀린 작품','/풀린 작품','없는 폴더']) {
+    const response=await bundleRoute.PUT(request('subtitle-bundle','PUT',{animeId:'re_bad_folder',provider:'anissia',bundleKey:identity.bundleScopeKey({type:'folder',provider:'anissia',work,kind:'main',season:1})}));
+    assert.ok([400,409].includes(response.status));
+  }
+  const key=identity.bundleScopeKey({type:'folder',provider:'anissia',work:'풀린 작품',kind:'main',season:1});
+  const other=(await storage.getAnissiaArchiveSubtitles(['작품 B'],1,102))[0];
+  assert.equal((await bundleRoute.PUT(request('subtitle-bundle','PUT',{animeId:'re_bad_folder',provider:'anissia',bundleKey:key,fileId:other.localFileId}))).status,409);
+});
+
+test('flat season-two folder uses its declared season without requiring S02 on every file',async()=>{
+  for(const provider of ['anissia','aniall']) {
+    const key=identity.bundleScopeKey({type:'folder',provider,work:'평면 작품 S02',kind:'main',season:2});
+    const saved=await bundleRoute.PUT(request('subtitle-bundle','PUT',{animeId:`flat-season-${provider}`,provider,bundleKey:key}));
+    assert.equal(saved.status,200);
+    const result=await play(`flat-season-${provider}`,'다른 이름',1);
+    assert.equal(result.count,1);assert.equal(result.needs_manual_subtitle_choice,false);
+    assert.ok(result.subtitles[0].content.includes(`${provider} flat season two`));
+  }
+});
+
+test('folder variant preference also follows __2 members inside an AniAll ZIP',async()=>{
+  const key=identity.bundleScopeKey({type:'folder',provider:'aniall',work:'복수 ZIP',kind:'main',season:1});
+  const files=await storage.getAniAllArchiveSubtitles('복수 ZIP',1,null,null,'',{bundleKey:key});
+  assert.equal(files.length,2);
+  assert.equal(identity.bundleSelectionMatches(key,files[0].sourceBundleKey),false);
+  for(const variant of ['zip base','zip variant two']) {
+    const chosen=files.find(file=>file.content.includes(variant));assert.ok(chosen);
+    assert.equal((await bundleRoute.PUT(request('subtitle-bundle','PUT',{animeId:'re_zip_folder',provider:'aniall',bundleKey:key,fileId:chosen.localFileId}))).status,200);
+    assert.equal(identity.bundleSelectionMatches(assignments.get('alice:re_zip_folder').bundleKey,chosen.sourceBundleKey),true);
+    for(const ep of [2,3]) {
+      const result=await play('re_zip_folder','다른 이름',ep);assert.equal(result.count,1);
+      assert.ok(result.subtitles[0].content.includes(`${variant} ${ep}`));
+    }
   }
 });

@@ -4,6 +4,7 @@ export type LocalProvider = 'aniall' | 'anissia' | 'naver';
 export type SubtitleKind = 'main' | 'ova' | 'special' | 'movie' | 'preview' | 'drama' | 'unknown';
 export type BundleScope = { kind: SubtitleKind; season: number } & (
   { type: 'reviewed'; dataset: string; pack: string; workSource: string; workId: string }
+  | { type: 'folder'; provider: 'aniall' | 'anissia'; work: string; track?:string }
   | { type: 'local'; provider: 'aniall' | 'anissia'; work: string; track: string }
 );
 const kinds: SubtitleKind[] = ['main', 'ova', 'special', 'movie', 'preview', 'drama', 'unknown'];
@@ -13,6 +14,7 @@ const text = (value: unknown, limit = 1000): value is string => typeof value ===
 export function bundleScopeKey(scope: BundleScope): string {
   const identity = scope.type === 'reviewed'
     ? {type: scope.type, dataset: scope.dataset, pack: scope.pack, workSource: scope.workSource, workId: scope.workId}
+    : scope.type==='folder' ? {type:scope.type,provider:scope.provider,work:scope.work,...(scope.track?{track:scope.track}:{})}
     : {type: scope.type, provider: scope.provider, work: scope.work, track: scope.track};
   return 'b2:' + encodeURIComponent(JSON.stringify({...identity, kind: scope.kind, season: scope.season}));
 }
@@ -23,8 +25,10 @@ export function parseBundleScope(key: string): BundleScope | null {
     if (!s || !kinds.includes(s.kind) || !Number.isInteger(s.season) || s.season < 1 || s.season > 99) return null;
     if (s.type === 'reviewed') {
       if (![s.dataset,s.pack,s.workSource,s.workId].every(v => text(v))) return null;
-    } else if (s.type === 'local') {
-      if (!['aniall','anissia'].includes(s.provider) || !text(s.work) || !text(s.track)) return null;
+    } else if (s.type === 'local' || s.type === 'folder') {
+      if (!['aniall','anissia'].includes(s.provider) || !text(s.work) || (s.type==='local' && !text(s.track))) return null;
+      if(s.type==='folder' && s.track!==undefined && !text(s.track))return null;
+      if(s.type==='folder' && /[\\/]|^\.{1,2}$/.test(s.work))return null;
     } else return null;
     return bundleScopeKey(s) === key ? s : null;
   } catch { return null; }
@@ -67,4 +71,23 @@ export function parseLocalFileKey(key: string): {relative: string; member: strin
     if (!safePath(relative) || !safePath(member,true) || !/^[a-f\d]{64}$/.test(sha256)) return null;
     return localFileKey(relative,member,sha256) === key ? {relative,member,sha256} : null;
   } catch {return null;}
+}
+
+/** A folder owns all tracks of its original season/format slice. */
+export function bundleScopesOverlap(first:string,second:string):boolean {
+  if(first===second)return true;
+  const a=parseBundleScope(first),b=parseBundleScope(second);
+  if(!a || !b || a.type==='reviewed' || b.type==='reviewed')return false;
+  return (a.type==='folder' || b.type==='folder') && a.provider===b.provider && a.work===b.work && a.kind===b.kind && a.season===b.season;
+}
+
+export function bundleMatchesAssignment(assignment:string,candidate:string):boolean {
+  const scope=parseBundleScope(assignment),file=parseBundleScope(candidate);
+  return bundleScopesOverlap(assignment,candidate) && !(scope?.type==='folder' && scope.track && file?.type==='local' && scope.track!==file.track);
+}
+
+/** A folder with no chosen track leaves every variant available for selection. */
+export function bundleSelectionMatches(assignment:string,candidate:string):boolean {
+  const scope=parseBundleScope(assignment);
+  return bundleMatchesAssignment(assignment,candidate) && !(scope?.type==='folder' && !scope.track);
 }

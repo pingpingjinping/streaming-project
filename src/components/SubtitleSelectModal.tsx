@@ -1,4 +1,6 @@
 "use client";
+import SubtitleFolderAssignments from "./SubtitleFolderAssignments";
+import {parseBundleScope,bundleScopesOverlap,bundleSelectionMatches} from "@/lib/subtitleLocalIdentity";
 import SubtitleEpisodeExceptions from "./SubtitleEpisodeExceptions";
 
 import { useState, useRef, useEffect, DragEvent, ChangeEvent } from "react";
@@ -50,6 +52,7 @@ export interface SubtitleOption {
   localFileId?: string;
   episodeConfirmed?: boolean;
   episodeException?: boolean;
+  sourceFolderKey?:string;sourceFolderLabel?:string;
   sourceBundleKey?: string;
   sourceBundleLabel?: string;
   bundleAssigned?: boolean;
@@ -112,7 +115,7 @@ export default function SubtitleSelectModal({
   const [searchResults, setSearchResults] = useState<SubtitleOption[]>([]);
   const [searchCreators, setSearchCreators] = useState<CreatorInfo[]>([]);
   const [catalogTitles, setCatalogTitles] = useState<Array<{ title: string; sources: string[] }>>([]);
-  const [localFolders, setLocalFolders] = useState<Array<{ folderName: string; provider: "aniall" | "anissia" | "naver" }>>([]);
+  const [localFolders, setLocalFolders] = useState<Array<{ folderName: string;folderKey?:string; provider: "aniall" | "anissia" | "naver" }>>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isSearchingLocal, setIsSearchingLocal] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -233,6 +236,18 @@ export default function SubtitleSelectModal({
     }
   };
 
+  const selectLocalSubtitle=async(subtitle:SubtitleOption)=>{
+    try {
+      const scope=bundleAssignment ? parseBundleScope(bundleAssignment.bundleKey) : null;
+      if(scope?.type==='folder' && subtitle.sourceFolderKey && bundleScopesOverlap(bundleAssignment!.bundleKey,subtitle.sourceFolderKey)) {
+        const response=await fetch('/api/anime/subtitle-bundle',{method:'PUT',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({animeId,provider:scope.provider,bundleKey:subtitle.sourceFolderKey,fileId:subtitle.localFileId})});
+        const data=await response.json();if(!response.ok || !data.success)throw new Error(data.message || '버전을 저장하지 못했습니다.');
+        setBundleAssignment(data.assignment);window.dispatchEvent(new CustomEvent('subtitle-settings-changed',{detail:{animeId}}));
+      }
+      onSelectSubtitle(subtitle);onClose();
+    }catch(error){setBundleNotice(error instanceof Error?error.message:'버전을 저장하지 못했습니다.');}
+  };
   const assignBundle = async (subtitle: SubtitleOption) => {
     if (!subtitle.localArchive || !subtitle.sourceProvider || !subtitle.sourceBundleKey || savingBundleKey) return;
     const key = `${subtitle.sourceProvider}:${subtitle.sourceBundleKey}`;
@@ -245,7 +260,7 @@ export default function SubtitleSelectModal({
         body: JSON.stringify({
           animeId,
           provider: subtitle.sourceProvider,
-          bundleKey: subtitle.sourceBundleKey,
+          bundleKey: subtitle.sourceFolderKey || subtitle.sourceBundleKey,
           fileId:subtitle.reviewedFileId || subtitle.localFileId,
           label: subtitle.sourceBundleLabel || subtitle.sourceMatchedTitle || subtitle.matchedTitle || animeTitle,
         }),
@@ -319,6 +334,7 @@ export default function SubtitleSelectModal({
           localArchiveTrackKey: subtitle.localArchiveTrackKey,
           reviewedFileId: subtitle.reviewedFileId,
           localFileId:subtitle.localFileId,episodeConfirmed:subtitle.episodeConfirmed,episodeException:subtitle.episodeException,
+          sourceFolderKey:subtitle.sourceFolderKey,sourceFolderLabel:subtitle.sourceFolderLabel,
           sourceBundleKey: subtitle.sourceBundleKey,
           sourceBundleLabel: subtitle.sourceBundleLabel,
           bundleAssigned: Boolean(subtitle.bundleAssigned),
@@ -460,6 +476,7 @@ export default function SubtitleSelectModal({
         localArchiveTrackKey: s.localArchiveTrackKey,
         reviewedFileId: s.reviewedFileId,
         localFileId:s.localFileId,episodeConfirmed:s.episodeConfirmed,episodeException:s.episodeException,
+        sourceFolderKey:s.sourceFolderKey,sourceFolderLabel:s.sourceFolderLabel,
         sourceBundleKey: s.sourceBundleKey,
         sourceBundleLabel: s.sourceBundleLabel,
         bundleAssigned: Boolean(s.bundleAssigned),
@@ -514,6 +531,7 @@ export default function SubtitleSelectModal({
         localArchiveTrackKey: s.localArchiveTrackKey,
         reviewedFileId: s.reviewedFileId,
         localFileId:s.localFileId,episodeConfirmed:s.episodeConfirmed,episodeException:s.episodeException,
+        sourceFolderKey:s.sourceFolderKey,sourceFolderLabel:s.sourceFolderLabel,
         sourceBundleKey: s.sourceBundleKey,
         sourceBundleLabel: s.sourceBundleLabel,
         bundleAssigned: Boolean(s.bundleAssigned),
@@ -711,12 +729,13 @@ export default function SubtitleSelectModal({
                   candidate={exceptionCandidate} onCancel={()=>setExceptionCandidate(null)} onSaved={(subtitle,ep)=>{
                     if(ep===(episodeNumber || 1)) {onSelectSubtitle(subtitle);onClose();}
                   }} />
+                <SubtitleFolderAssignments animeId={animeId} choices={localArchiveOptions} onSaved={setBundleAssignment} />
                 {visibleLocalArchiveOptions.length ? (
                   <div className="space-y-2">
                     {visibleLocalArchiveOptions.map((subtitle, index) => (
                       <div key={`${subtitle.name}-${index}`} className="flex min-w-0 flex-col gap-2">
                         <button type="button"
-                          onClick={() => { onSelectSubtitle(subtitle); onClose(); }}
+                          onClick={() => selectLocalSubtitle(subtitle)}
                           className="flex w-full min-w-0 flex-col items-start gap-2 rounded-xl border border-emerald-500/20 bg-slate-900/70 px-3 py-2 text-left hover:border-emerald-400/50 hover:bg-slate-900">
                           <span className="w-full min-w-0 whitespace-normal break-words [overflow-wrap:anywhere] text-sm font-semibold leading-relaxed text-white">{subtitle.name}</span>
                           <span className="shrink-0 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-bold text-emerald-300">현재 화 적용</span>
@@ -726,12 +745,12 @@ export default function SubtitleSelectModal({
                           <button type="button" onClick={() => assignBundle(subtitle)}
                             disabled={Boolean(savingBundleKey) || Boolean(bundleAssignment
                               && bundleAssignment.provider === subtitle.sourceProvider
-                              && bundleAssignment.bundleKey === subtitle.sourceBundleKey)}
+                              && bundleSelectionMatches(bundleAssignment.bundleKey,subtitle.sourceBundleKey!))}
                             className="shrink-0 rounded-lg bg-purple-600 px-2.5 py-2 text-[11px] font-bold text-white hover:bg-purple-500 disabled:bg-emerald-950/50 disabled:text-emerald-300">
                             {bundleAssignment && bundleAssignment.provider === subtitle.sourceProvider
-                              && bundleAssignment.bundleKey === subtitle.sourceBundleKey
+                              && bundleSelectionMatches(bundleAssignment.bundleKey,subtitle.sourceBundleKey!)
                               ? "작품 지정됨"
-                              : savingBundleKey === `${subtitle.sourceProvider}:${subtitle.sourceBundleKey}` ? "지정 중…" : "작품 전체 지정"}
+                              : savingBundleKey === `${subtitle.sourceProvider}:${subtitle.sourceBundleKey}` ? "지정 중…" : subtitle.sourceFolderKey ? "이 버전 계속" : "작품 전체 지정"}
                           </button>
                         )}
                         {(subtitle.reviewedFileId || subtitle.localFileId) && <button type="button" onClick={()=>setExceptionCandidate(subtitle)}
@@ -1007,6 +1026,7 @@ export default function SubtitleSelectModal({
                 </div>
               )}
 
+              <SubtitleFolderAssignments animeId={animeId} choices={[...localFolders,...searchResults]} onSaved={setBundleAssignment} />
               {/* Search Results */}
               <div className="space-y-2">
                 {visibleSearchResults.map((sub, idx) => (
@@ -1044,12 +1064,12 @@ export default function SubtitleSelectModal({
                       <button type="button" onClick={() => assignBundle(sub)}
                         disabled={Boolean(savingBundleKey) || Boolean(bundleAssignment
                           && bundleAssignment.provider === sub.sourceProvider
-                          && bundleAssignment.bundleKey === sub.sourceBundleKey)}
+                          && bundleSelectionMatches(bundleAssignment.bundleKey,sub.sourceBundleKey!))}
                         className="rounded-lg bg-emerald-600 px-3 py-2 text-[11px] font-bold text-white hover:bg-emerald-500 disabled:bg-emerald-950/50 disabled:text-emerald-300">
                         {bundleAssignment && bundleAssignment.provider === sub.sourceProvider
-                          && bundleAssignment.bundleKey === sub.sourceBundleKey
+                          && bundleSelectionMatches(bundleAssignment.bundleKey,sub.sourceBundleKey!)
                           ? "작품 지정됨"
-                          : savingBundleKey === `${sub.sourceProvider}:${sub.sourceBundleKey}` ? "지정 중…" : "작품 전체 지정"}
+                          : savingBundleKey === `${sub.sourceProvider}:${sub.sourceBundleKey}` ? "지정 중…" : sub.sourceFolderKey ? "이 버전 계속" : "작품 전체 지정"}
                       </button>
                     )}
                     {sub.localArchive && (sub.reviewedFileId || sub.localFileId) && <button type="button" onClick={()=>{setExceptionCandidate(sub);setActiveTab("creators");}}
@@ -1059,8 +1079,7 @@ export default function SubtitleSelectModal({
                       className="rounded-lg px-2 py-2 text-[11px] text-slate-400 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50">이 자막은 아니야</button>
                     <button
                       onClick={() => {
-                        onSelectSubtitle(sub);
-                        onClose();
+                        selectLocalSubtitle(sub);
                       }}
                       className="rounded-xl bg-purple-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-purple-500 active:scale-95"
                     >

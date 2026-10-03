@@ -1,4 +1,6 @@
 "use client";
+import {bundleSelectionMatches} from "@/lib/subtitleLocalIdentity";
+import SubtitleFolderAssignments from "./SubtitleFolderAssignments";
 import SubtitleEpisodeExceptions from "./SubtitleEpisodeExceptions";
 
 import { useEffect, useMemo, useState } from "react";
@@ -15,7 +17,7 @@ type BundleAssignment = {
 };
 
 type FolderCandidate = {
-  folderName: string;
+  folderName: string;folderKey?:string;
   provider: Provider;
 };
 
@@ -23,6 +25,7 @@ type SubtitleCandidate = {
   name: string;
   reviewedFileId?:string;localFileId?:string;
   sourceProvider?: Provider;
+  sourceFolderKey?:string;sourceFolderLabel?:string;
   sourceBundleKey?: string;
   sourceBundleLabel?: string;
   sourceMatchedTitle?: string;
@@ -118,7 +121,7 @@ export default function SubtitleBundleAssignmentSetting({
         body: JSON.stringify({
           animeId,
           provider: item.sourceProvider,
-          bundleKey: item.sourceBundleKey,
+          bundleKey: item.sourceFolderKey || item.sourceBundleKey,
           fileId:item.reviewedFileId || item.localFileId,
           label: item.sourceBundleLabel || item.sourceMatchedTitle || item.matchedTitle || keyword || animeTitle,
         }),
@@ -199,6 +202,7 @@ export default function SubtitleBundleAssignmentSetting({
         </button>
       </form>
 
+      <SubtitleFolderAssignments animeId={animeId} choices={[...folders,...results]} onSaved={setAssignment} />
       {folders.length > 0 && (
         <div className="mt-3">
           <p className="mb-1 text-[11px] font-semibold text-slate-400">폴더 후보</p>
@@ -220,7 +224,7 @@ export default function SubtitleBundleAssignmentSetting({
           {bundleResults.map((item) => {
             const key = `${item.sourceProvider}:${item.sourceBundleKey}`;
             const selected = Boolean(assignment && assignment.provider === item.sourceProvider
-              && assignment.bundleKey === item.sourceBundleKey);
+              && bundleSelectionMatches(assignment.bundleKey,item.sourceBundleKey!));
             return (
               <div key={key} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-slate-900/70 p-3">
                 <div className="min-w-0 w-full">
@@ -236,7 +240,7 @@ export default function SubtitleBundleAssignmentSetting({
                 <button type="button" onClick={() => assign(item)}
                   disabled={Boolean(savingKey) || selected}
                   className="shrink-0 rounded-lg bg-purple-600 px-3 py-2 text-[11px] font-bold text-white hover:bg-purple-500 disabled:bg-emerald-950/50 disabled:text-emerald-300">
-                  {selected ? "지정됨" : savingKey === key ? "지정 중…" : "이 묶음 지정"}
+                  {selected ? "지정됨" : savingKey === key ? "지정 중…" : item.sourceFolderKey ? "이 버전 계속" : "이 묶음 지정"}
                 </button>
               </div>
             );

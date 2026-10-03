@@ -22,7 +22,7 @@ import {
 import { getAniAllArchiveSubtitle, getAnissiaArchiveSubtitles, getUploadedSubtitles, getVerifiedSubtitleCache, getAniAllArchiveSubtitles } from "@/lib/subtitleStorage";
 import { getReviewedSubtitles } from "@/lib/reviewedSubtitleStorage";
 import { getReanimeMatch } from "@/lib/reanimeMatches";
-import { parseBundleScope } from "@/lib/subtitleLocalIdentity";
+import { parseBundleScope, bundleScopesOverlap } from "@/lib/subtitleLocalIdentity";
 import {resolveSubtitleOverride, distinctLocalSubtitles} from "@/lib/subtitleOverrides";
 import { pruneVerifiedSubtitleCache } from "@/lib/subtitleCache";
 
@@ -75,7 +75,7 @@ export async function GET(request: NextRequest) {
     rejections.some((entry) => entry.provider === provider && entry.sourceKey === sourceKey);
   const claimedByOtherAnime = (provider: string, bundleKey?: string) =>
     Boolean(bundleKey && bundleAssignments.some((entry) =>
-      entry.exclusive && entry.provider === provider && entry.bundleKey === bundleKey
+      entry.exclusive && entry.provider === provider && bundleScopesOverlap(entry.bundleKey,bundleKey!)
         && entry.animeId !== animeIdParam));
 
   if (!title) {
@@ -158,7 +158,7 @@ export async function GET(request: NextRequest) {
       const reviewed=await findReviewedLocal('aniall',false);if(reviewed) return reviewed;
       const scope=bundleAssignment ? parseBundleScope(bundleAssignment.bundleKey) : null;
       if(bundleAssignment) {
-        if(!scope || scope.type!=='local' || scope.provider!=='aniall') return null;
+        if(!scope || (scope.type!=='local' && scope.type!=='folder') || scope.provider!=='aniall') return null;
         const postId=scope.work.match(/^([1-9]\d*)__/)?.[1] || '';
         const postUrl=postId?`https://aniall.tistory.com/${postId}`:'';
         const subtitles=await getAniAllArchiveSubtitles(scope.work.replace(/^[1-9]\d*__/,''),ep,scope.season,sourceEpisodeStart,postUrl,
