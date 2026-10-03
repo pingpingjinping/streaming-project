@@ -8,7 +8,17 @@ New AniAll downloads use `postId__blogTitle`, isolating same-title posts. Number
 
 The Pi weekly wrapper imports published AniAll mappings, then runs `scripts/match-weekly-aniall.py` against the current PostgreSQL catalog. Only successfully downloaded posts in the new numbered layout that are absent from `subtitle-data/aniall-weekly-matching.json` are processed. The existing monthly matcher and protected importers decide exact matches and review candidates. Fuzzy scores never become automatic confirmations. The checkpoint includes unresolved decisions and is committed only after both imports succeed. Unresolved posts can still be reviewed by the monthly pipeline. No reviewed registry or confirmed episode row is changed.
 
-For a preview: `python3 scripts/match-weekly-aniall.py --dry-run`. Both repositories must be updated before enabling the weekly service. The 60-second viewing cache remains separate under `subtitle-data/verified`; there is no cross-directory content deduplication.
+For a preview: `python3 scripts/match-weekly-aniall.py --dry-run`. Both repositories must be updated before enabling the weekly service.
+
+## Viewing cache cleanup
+
+The 60-second viewing cache remains under `subtitle-data/verified`. The player skips local and already-cached subtitles. The cache endpoint also skips explicit local/cached flags. New web caches store source work identity, the configured source episode, season, and a digest of the decoded content and format.
+
+When automatic playback finds a local subtitle, only caches for that same site work and episode with identical decoded content and format are deleted. Already-decoded playback content is reused, including legacy caches without digest metadata. Different variants, other works/episodes, and unconfirmed reviewed episodes remain untouched. Cached bytes are checked again before removal, and a short per-entry filesystem lock protects concurrent saves. No local subtitle, ZIP, reviewed registry, or episode DB row is changed.
+
+Each new successful Pi download writes its exact paths to `.cache-cleanup-pending`. After weekly matching, the low-priority CLI checks only those files against cache metadata. It reuses the production decoder and episode parser; historical source directories are never scanned. ZIPs with no relevant cached work are not opened. Only hashes are retained while decoding. AniAll cleanup requires an exact current weekly work match; ambiguous/manual and legacy caches without source context are retained for playback cleanup. Failed jobs remain pending; successful outcomes are logged in `cache-cleanup-results.jsonl`.
+
+The CLI is compiled during `npm run build` and copied into the image. Once the updated image is running, pending jobs can be resumed with `docker compose exec -T anime nice -n 15 node scripts/subtitle-cache/cleanup.cjs`. It needs no network requests or full DB import. Source directories, cache files, and migration backups are excluded from Docker build context.
 
 `scripts/update-anime-db-release.py` imports the canonical db-v1 catalog and its completed reviewed subtitle registry. Existing catalog digest state alone does not suppress the first registry import; the separate subtitle marker is written only after both importers succeed. Run `python3 scripts/import-reviewed-subtitles.py DATABASE --dry-run` to validate without applying, or run the existing release updater for normal imports into `anime_subtitle_*` tables.
 

@@ -5,6 +5,8 @@ on:
     paths:
       - 'src/**'
       - 'scripts/test-*.cjs'
+      - 'scripts/*subtitle-cache*.cjs'
+      - 'Dockerfile'
       - 'scripts/*.py'
       - 'package*.json'
       - '.github/workflows/subtitle-regression.yml'
@@ -13,6 +15,8 @@ on:
     paths:
       - 'src/**'
       - 'scripts/test-*.cjs'
+      - 'scripts/*subtitle-cache*.cjs'
+      - 'Dockerfile'
       - 'scripts/*.py'
       - 'package*.json'
       - '.github/workflows/subtitle-regression.yml'

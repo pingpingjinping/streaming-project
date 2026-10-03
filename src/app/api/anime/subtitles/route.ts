@@ -13,6 +13,15 @@ import { getAniAllMatches, getManualSubtitleLink, getSubtitleSourcePriority, get
 import { getAniAllArchiveSubtitle, getAnissiaArchiveSubtitles, getUploadedSubtitles, getVerifiedSubtitleCache } from "@/lib/subtitleStorage";
 import { getReviewedSubtitles } from "@/lib/reviewedSubtitleStorage";
 import { getReanimeMatch } from "@/lib/reanimeMatches";
+import { pruneVerifiedSubtitleCache } from "@/lib/subtitleCache";
+
+async function pruneLocalCache(animeId: string, episode: number, subtitles: Array<{content: string; format: string}>) {
+  if (!animeId || !subtitles.length) return;
+  try { await pruneVerifiedSubtitleCache(animeId, episode, subtitles
+    .filter(s => s.format === 'ASS' || s.format === 'VTT')
+    .map(s => ({content: s.content, format: s.format as 'ASS' | 'VTT'}))); }
+  catch (error) { console.warn('[Subtitle cache cleanup deferred]', error); }
+}
 
 export async function GET(request: NextRequest) {
   // 보안: 미인증 사용자가 서버를 오픈 크롤링/퍼치 서비스로 악용하는 것을 방지
@@ -72,6 +81,7 @@ export async function GET(request: NextRequest) {
         .filter((subtitle) => !isRejected("local", subtitle.name))
       : [];
     if (uploaded.length) {
+      await pruneLocalCache(animeIdParam, ep, uploaded);
       return NextResponse.json({ success: true, anime_title: title, episode: ep, count: uploaded.length,
         subtitles: uploaded, creators: [] }, { headers: { "Cache-Control": "no-store" } });
     }
@@ -87,6 +97,7 @@ export async function GET(request: NextRequest) {
         season: parseSeason(comparisonTitle) || parseSeason(searchTarget), source, isRejected: (provider, key) => isRejected(provider, key)
           || (provider === "aniall" && rejections.some(r => r.provider === "aniall" && !r.sourceKey.startsWith("reviewed:"))) });
       if (!reviewed.subtitles.length || (!includeUnknown && reviewed.subtitles.every(s => !s.episodeConfirmed))) return null;
+      await pruneLocalCache(animeIdParam, ep, reviewed.subtitles.filter(s => s.episodeConfirmed));
       return NextResponse.json({ success: true, anime_title: title, episode: ep,
         count: reviewed.subtitles.length, subtitles: reviewed.subtitles, creators: [], local_archive: true,
         needs_manual_subtitle_choice: reviewed.needsManualChoice }, { headers: { "Cache-Control": "no-store" } });
@@ -116,6 +127,7 @@ export async function GET(request: NextRequest) {
       if (!bestLocal) {
         const directFolder = await getAniAllArchiveSubtitle(comparisonTitle, ep, parseSeason(comparisonTitle), sourceEpisodeStart);
         if (directFolder && !isRejected("local", directFolder.name)) {
+          await pruneLocalCache(animeIdParam, ep, [directFolder]);
           return NextResponse.json({
             success: true, anime_title: title, resolved_title: resolvedTitle, episode: ep, count: 1,
             subtitles: [{ ...directFolder, sourceProvider: "aniall", sourceMatchedTitle: comparisonTitle, localArchive: true }],
@@ -125,6 +137,7 @@ export async function GET(request: NextRequest) {
       }
 
       if (!bestLocal) return null;
+      await pruneLocalCache(animeIdParam, ep, [bestLocal.subtitle]);
       return NextResponse.json({
         success: true, anime_title: title, resolved_title: resolvedTitle, episode: ep, count: 1,
         subtitles: [{ ...bestLocal.subtitle, sourceProvider: "aniall", sourceCreatorWebsite: bestLocal.match.postUrl,
@@ -149,6 +162,7 @@ export async function GET(request: NextRequest) {
         requestedAnissiaTrackKey && subtitle.localArchiveTrackKey === requestedAnissiaTrackKey
       ) || availableLocalSubtitles[0];
       if (!local) return null;
+      await pruneLocalCache(animeIdParam, ep, [local]);
       const displayName = `[로컬 Anissia · ${local.creator}] ${local.localArchiveTrackLabel} · ${local.archiveFilename} · ${local.orig_filename}`;
       return NextResponse.json({
         success: true,
@@ -352,7 +366,8 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    let sub = null;
+    let sub: {name: string; orig_filename: string; content: string; format: 'ASS' | 'VTT'; is_ass: boolean; url?: string} | null = null;
+    let readLocal = false;
     if (localArchive && sourceProvider === "anissia") {
       const animeNoMatch = animeId.match(/^(?:ani_)?(\d+)$/);
       const animeNo = animeNoMatch ? Number(animeNoMatch[1]) : null;
@@ -370,6 +385,7 @@ export async function POST(request: NextRequest) {
           && (!matchedTitle || item.matchedTitle === matchedTitle))
       );
       if (local) {
+        readLocal = true;
         sub = {
           name: local.name,
           orig_filename: local.orig_filename,
@@ -385,6 +401,7 @@ export async function POST(request: NextRequest) {
       if (sourceProvider === "aniall") {
         const blogTitle = String(creatorName).replace(/^AniAll\s*[·|]\s*/i, "").trim();
         sub = await getAniAllArchiveSubtitle(blogTitle, ep, targetSeason, sourceEpisodeStart, String(website));
+        readLocal = Boolean(sub);
       }
       if (!sub) sub = await fetchCreatorSubtitle(creatorName, website, targetTitle, sourceEpisode, 5000, ep);
     }
@@ -414,9 +431,10 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    if (readLocal) await pruneLocalCache(animeId, ep, [sub]);
     return NextResponse.json({
       success: true,
-      subtitle: { ...sub, sourceProvider: sourceProvider === "aniall" ? "aniall" : "anissia" },
+      subtitle: { ...sub, sourceProvider: sourceProvider === "aniall" ? "aniall" : "anissia", localArchive: readLocal },
     });
   } catch (error) {
     console.error("[Subtitles POST error]:", error);

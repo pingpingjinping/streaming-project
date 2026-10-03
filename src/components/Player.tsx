@@ -1,4 +1,5 @@
 "use client";
+import { canCacheSubtitle } from "@/lib/subtitleCachePolicy";
 import LocalizedAnimeTitle from "@/components/LocalizedAnimeTitle";
 
 import { useEffect, useRef, useState, useCallback } from "react";
@@ -2003,6 +2004,8 @@ export default function Player(props: PlayerProps) {
           sourceProvider: creator.sourceProvider,
           episodeNumber: currentEpRef.current,
           creatorEpisode: creator.episode,
+          animeId,
+          localArchive: Boolean(creator.localArchive),
         }),
       });
       const data = await res.json();
@@ -2015,6 +2018,7 @@ export default function Player(props: PlayerProps) {
           sourceCreatorWebsite: creator.website,
           sourceMatchedTitle: creator.matchedTitle,
           sourceProvider: creator.sourceProvider,
+          localArchive: Boolean(data.subtitle.localArchive),
         };
 
         const isAss = !!data.subtitle.is_ass;
@@ -3213,8 +3217,7 @@ export default function Player(props: PlayerProps) {
 
           const selectedSubtitle = currentSubRef.current;
           const sourceUrl = selectedSubtitle?.sourceCreatorWebsite || selectedSubtitle?.url || "";
-          const cacheKey = selectedSubtitle && !selectedSubtitle.isCached && selectedSubtitle.sourceProvider &&
-            /^https?:\/\//i.test(sourceUrl) && selectedSubtitle.content
+          const cacheKey = selectedSubtitle && canCacheSubtitle(selectedSubtitle)
             ? `${animeId}:${currentEpRef.current}:${selectedSubtitle.sourceProvider}:${sourceUrl}:${selectedSubtitle.sourceMatchedTitle || ""}`
             : "";
           const progress = subtitleCacheProgressRef.current;
@@ -3237,6 +3240,8 @@ export default function Player(props: PlayerProps) {
                   matchedTitle: selectedSubtitle!.sourceMatchedTitle || "",
                   filename: selectedSubtitle!.name, format: selectedSubtitle!.format,
                   content: selectedSubtitle!.content,
+                  localArchive: Boolean(selectedSubtitle!.localArchive),
+                  isCached: Boolean(selectedSubtitle!.isCached),
                 }),
               }).then((response) => {
                 if (!response.ok) throw new Error(`Subtitle cache returned ${response.status}`);
