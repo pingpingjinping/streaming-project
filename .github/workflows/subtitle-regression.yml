@@ -43,6 +43,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m unittest discover -s scripts -p test_reviewed_db_import.py -v
+      - run: python -m unittest discover -s scripts -p test_weekly_aniall.py -v
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

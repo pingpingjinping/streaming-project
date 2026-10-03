@@ -103,7 +103,7 @@ export async function GET(request: NextRequest) {
       let bestLocal: { subtitle: NonNullable<Awaited<ReturnType<typeof getAniAllArchiveSubtitle>>>;
         match: (typeof matches)[number] } | null = null;
       for (const match of matches) {
-        const localSub = await getAniAllArchiveSubtitle(match.blogTitle, ep, parseSeason(match.canonicalTitle), sourceEpisodeStart);
+        const localSub = await getAniAllArchiveSubtitle(match.blogTitle, ep, parseSeason(match.canonicalTitle), sourceEpisodeStart, match.postUrl);
         if (!localSub) continue;
         if (!bestLocal) bestLocal = { subtitle: localSub, match };
         localCreators.push({ name: `AniAll · ${match.blogTitle}`, episode: "Pi에 저장된 자막",
@@ -384,7 +384,7 @@ export async function POST(request: NextRequest) {
     } else if (website) {
       if (sourceProvider === "aniall") {
         const blogTitle = String(creatorName).replace(/^AniAll\s*[·|]\s*/i, "").trim();
-        sub = await getAniAllArchiveSubtitle(blogTitle, ep, targetSeason, sourceEpisodeStart);
+        sub = await getAniAllArchiveSubtitle(blogTitle, ep, targetSeason, sourceEpisodeStart, String(website));
       }
       if (!sub) sub = await fetchCreatorSubtitle(creatorName, website, targetTitle, sourceEpisode, 5000, ep);
     }
