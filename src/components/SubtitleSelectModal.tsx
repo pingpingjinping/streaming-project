@@ -1,6 +1,6 @@
 "use client";
 import SubtitleFolderAssignments from "./SubtitleFolderAssignments";
-import {parseBundleScope,bundleScopesOverlap,bundleSelectionMatches} from "@/lib/subtitleLocalIdentity";
+import {parseBundleScope,bundleSelectionMatches} from "@/lib/subtitleLocalIdentity";
 import SubtitleEpisodeExceptions from "./SubtitleEpisodeExceptions";
 
 import { useState, useRef, useEffect, DragEvent, ChangeEvent } from "react";
@@ -130,6 +130,14 @@ export default function SubtitleSelectModal({
   const [savingStartEpisode, setSavingStartEpisode] = useState(false);
   const [startEpisodeNotice, setStartEpisodeNotice] = useState<string | null>(null);
   const [exceptionCandidate,setExceptionCandidate]=useState<SubtitleOption|null>(null);
+  const [subtitleSettingsRevision,setSubtitleSettingsRevision]=useState(0);
+  useEffect(()=>{
+    const changed=(event:Event)=>{
+      if((event as CustomEvent).detail?.animeId===animeId)setSubtitleSettingsRevision(value=>value+1);
+    };
+    window.addEventListener('subtitle-settings-changed',changed);
+    return()=>window.removeEventListener('subtitle-settings-changed',changed);
+  },[animeId]);
   const [bundleAssignment, setBundleAssignment] = useState<BundleAssignment | null>(null);
   const [savingBundleKey, setSavingBundleKey] = useState("");
   const [bundleNotice, setBundleNotice] = useState<string | null>(null);
@@ -204,7 +212,7 @@ export default function SubtitleSelectModal({
       .then((data) => { if (!cancelled) setBundleAssignment(data.assignment || null); })
       .catch((error) => { if (!cancelled) setBundleNotice(error.message || "묶음 지정을 불러오지 못했습니다."); });
     return () => { cancelled = true; };
-  }, [isOpen, animeId]);
+  }, [isOpen, animeId,subtitleSettingsRevision]);
 
   const isRejected = ({ provider, sourceKey }: RejectedSource) =>
     rejectedSources.some((entry) => rejectionId(entry.provider, entry.sourceKey) === rejectionId(provider, sourceKey));
@@ -237,9 +245,11 @@ export default function SubtitleSelectModal({
   };
 
   const selectLocalSubtitle=async(subtitle:SubtitleOption)=>{
+    if(savingBundleKey)return;
     try {
-      const scope=bundleAssignment ? parseBundleScope(bundleAssignment.bundleKey) : null;
-      if(scope?.type==='folder' && subtitle.sourceFolderKey && bundleScopesOverlap(bundleAssignment!.bundleKey,subtitle.sourceFolderKey)) {
+      const scope=subtitle.sourceFolderKey ? parseBundleScope(subtitle.sourceFolderKey) : null;
+      if(!subtitle.episodeException && scope?.type==='folder' && subtitle.localFileId) {
+        setSavingBundleKey(`${scope.provider}:${subtitle.sourceBundleKey}`);setBundleNotice(null);
         const response=await fetch('/api/anime/subtitle-bundle',{method:'PUT',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({animeId,provider:scope.provider,bundleKey:subtitle.sourceFolderKey,fileId:subtitle.localFileId})});
         const data=await response.json();if(!response.ok || !data.success)throw new Error(data.message || '버전을 저장하지 못했습니다.');
@@ -247,6 +257,7 @@ export default function SubtitleSelectModal({
       }
       onSelectSubtitle(subtitle);onClose();
     }catch(error){setBundleNotice(error instanceof Error?error.message:'버전을 저장하지 못했습니다.');}
+    finally{setSavingBundleKey('');}
   };
   const assignBundle = async (subtitle: SubtitleOption) => {
     if (!subtitle.localArchive || !subtitle.sourceProvider || !subtitle.sourceBundleKey || savingBundleKey) return;
@@ -305,6 +316,7 @@ export default function SubtitleSelectModal({
     }
     let cancelled = false;
     setIsLoadingLocalArchives(true);
+    setLocalArchiveOptions([]);
     const params = new URLSearchParams({
       title: animeTitle,
       ep: String(episodeNumber || 1),
@@ -348,7 +360,7 @@ export default function SubtitleSelectModal({
       })
       .finally(() => { if (!cancelled) setIsLoadingLocalArchives(false); });
     return () => { cancelled = true; };
-  }, [isOpen, animeId, animeTitle, episodeNumber]);
+  }, [isOpen, animeId, animeTitle, episodeNumber,subtitleSettingsRevision]);
 
   if (!mounted || !isOpen) return null;
 
@@ -735,10 +747,11 @@ export default function SubtitleSelectModal({
                     {visibleLocalArchiveOptions.map((subtitle, index) => (
                       <div key={`${subtitle.name}-${index}`} className="flex min-w-0 flex-col gap-2">
                         <button type="button"
+                          disabled={Boolean(savingBundleKey)}
                           onClick={() => selectLocalSubtitle(subtitle)}
                           className="flex w-full min-w-0 flex-col items-start gap-2 rounded-xl border border-emerald-500/20 bg-slate-900/70 px-3 py-2 text-left hover:border-emerald-400/50 hover:bg-slate-900">
                           <span className="w-full min-w-0 whitespace-normal break-words [overflow-wrap:anywhere] text-sm font-semibold leading-relaxed text-white">{subtitle.name}</span>
-                          <span className="shrink-0 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-bold text-emerald-300">현재 화 적용</span>
+                          <span className="shrink-0 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-bold text-emerald-300">{subtitle.sourceFolderKey ? "현재 화 선택 · 다음 화 유지" : "현재 화 적용"}</span>
                         </button>
                         <div className="flex flex-wrap items-center gap-2">
                         {subtitle.sourceProvider && subtitle.sourceBundleKey && (
@@ -1078,12 +1091,13 @@ export default function SubtitleSelectModal({
                       disabled={Boolean(savingRejection)}
                       className="rounded-lg px-2 py-2 text-[11px] text-slate-400 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50">이 자막은 아니야</button>
                     <button
+                      disabled={Boolean(savingBundleKey)}
                       onClick={() => {
                         selectLocalSubtitle(sub);
                       }}
                       className="rounded-xl bg-purple-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-purple-500 active:scale-95"
                     >
-                      현재 화 선택
+                      {sub.sourceFolderKey ? "선택 · 다음 화 유지" : "현재 화 선택"}
                     </button>
                     </div>
                   </div>

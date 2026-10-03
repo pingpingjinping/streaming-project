@@ -30,6 +30,10 @@ for(const ep of [1,2]) {
 put('aniall_subtitles/풀린 애니올/OVA/01.srt',srt('aniall flat OVA'));
 for(const provider of ['anissia','aniall']) put(`${provider}_subtitles/평면 작품 S02/01.srt`,srt(`${provider} flat season two`));
 zipFile('aniall_subtitles/복수 ZIP/all.zip',Object.fromEntries([1,2,3].flatMap(ep=>[[`${String(ep).padStart(2,'0')}.srt`,srt(`zip base ${ep}`)],[`${String(ep).padStart(2,'0')}__2.srt`,srt(`zip variant two ${ep}`)]])));
+for(const ep of Array.from({length:12},(_,i)=>i+1)) {
+  for(const provider of ['anissia','aniall']) for(const suffix of ['','__2'])
+    put(`${provider}_subtitles/연속 작품/${String(ep).padStart(2,'0')}${suffix}.srt`,srt(`${provider} series${suffix} episode ${ep}`));
+}
 const db=require('../src/lib/db.ts'),auth=require('../src/lib/auth.ts'),storage=require('../src/lib/subtitleStorage.ts');
 const reviewed=require('../src/lib/reviewedSubtitleStorage.ts'),titles=require('../src/lib/subtitles.ts'),matches=require('../src/lib/reanimeMatches.ts');
 const identity=require('../src/lib/subtitleLocalIdentity.ts');
@@ -297,4 +301,52 @@ test('folder variant preference also follows __2 members inside an AniAll ZIP',a
       assert.ok(result.subtitles[0].content.includes(`${variant} ${ep}`));
     }
   }
+});
+
+test('current-episode recommendations contain only the requested folder episode after choosing a variant',async()=>{
+  const local=require('../src/app/api/anime/subtitles/local/route.ts');
+  for(const provider of ['anissia','aniall']) {
+    const key=identity.bundleScopeKey({type:'folder',provider,work:'연속 작품',kind:'main',season:1});
+    const files=provider==='anissia'
+      ? await storage.getAnissiaArchiveSubtitles(['연속 작품'],1,null,null,{bundleKey:key})
+      : await storage.getAniAllArchiveSubtitles('연속 작품',1,null,null,'',{bundleKey:key});
+    const chosen=files.find(file=>file.content.includes('series__2'));assert.ok(chosen);
+    await bundleRoute.PUT(request('subtitle-bundle','PUT',{animeId:`re_recs_${provider}`,provider,bundleKey:key,fileId:chosen.localFileId}));
+    const data=await (await local.GET(request(`subtitles/local?animeId=re_recs_${provider}&title=${encodeURIComponent('다른 이름')}&ep=2`,'GET'))).json();
+    assert.equal(data.success,true);assert.equal(data.count,1);
+    assert.ok(data.subtitles[0].content.includes('series__2 episode 2'));
+    assert.equal(data.subtitles[0].episodeConfirmed,true);
+  }
+});
+
+test('one first-episode choice follows 1 through 12 without asking again for either folder variant',async()=>{
+  for(const provider of ['anissia','aniall']) for(const suffix of ['','__2']) {
+    const key=identity.bundleScopeKey({type:'folder',provider,work:'연속 작품',kind:'main',season:1});
+    const first=provider==='anissia'
+      ? await storage.getAnissiaArchiveSubtitles(['연속 작품'],1,null,null,{bundleKey:key})
+      : await storage.getAniAllArchiveSubtitles('연속 작품',1,null,null,'',{bundleKey:key});
+    const file=first.find(s=>s.content.includes(`series${suffix} episode 1`));assert.ok(file);
+    const animeId=`re_continue_${provider}`;
+    const saved=await bundleRoute.PUT(request('subtitle-bundle','PUT',{animeId,provider,bundleKey:key,fileId:file.localFileId}));
+    assert.equal(saved.status,200);
+    for(let ep=1;ep<=12;ep++) {
+      const data=await play(animeId,'다른 번역명',ep);
+      assert.equal(data.count,1);assert.equal(data.needs_manual_subtitle_choice,false);
+      assert.ok(data.subtitles[0].content.includes(`series${suffix} episode ${ep}\n`));
+    }
+    assert.equal((await play(animeId,'다른 번역명',13)).assignment_missing,true);
+  }
+});
+test('recommendations exclude other episodes while explicit search still permits episode exceptions',async()=>{
+  const local=require('../src/app/api/anime/subtitles/local/route.ts');
+  username='recommend-unassigned';
+  try {
+    const endpoint=`subtitles/local?animeId=re_unassigned_series&title=${encodeURIComponent('연속 작품')}&ep=2`;
+    const normal=await (await local.GET(request(endpoint,'GET'))).json();
+    assert.equal(normal.success,true);assert.equal(normal.count,4);
+    assert.ok(normal.subtitles.every(s=>s.episodeConfirmed && s.content.includes('episode 2\n')));
+    const search=await (await local.GET(request(endpoint+'&mode=search','GET'))).json();
+    assert.equal(search.success,true);
+    assert.ok(search.subtitles.some(s=>!s.episodeConfirmed && s.content.includes('episode 1\n')));
+  }finally{username='alice';}
 });
