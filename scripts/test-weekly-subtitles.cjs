@@ -42,6 +42,18 @@ put(`anissia_subtitles/${flatWork}/카미츠바키 페스 24 THE DAY THE EARTH S
 put('anissia_subtitles/깨진 완료 마커/finish.txt', 'download finished');
 put('anissia_subtitles/깨진 완료 마커/01.srt', '1\n00:00:01,000 --> 00:00:04,000\nmarker fallback\n');
 fs.mkdirSync(path.join(root, 'anissia_subtitles/zz_scan_noise'), {recursive:true});
+const crypto=require('node:crypto');
+const sourceManifest={version:1,files:{}};
+function registered(relative,source,id,text,episode=1) {
+  const bytes=archive(text,`${String(episode).padStart(2,'0')}.srt`);put(relative,bytes);
+  sourceManifest.files[relative]={sha256:crypto.createHash('sha256').update(bytes).digest('hex'),sources:[{source,id:String(id),title:'합친 작품',episode:String(episode),creator:'제작자',source_url:''}]};
+  put('.weekly-subtitle-sources.json',JSON.stringify(sourceManifest));
+}
+registered('anissia_subtitles/합친 작품/1화/제작자/subtitle.zip','anissia',700,'title source one');
+registered('anissia_subtitles/합친 작품/1화/제작자/subtitle [variant].zip','anissia',701,'title source two');
+registered('anissia_subtitles/합친 작품/2화/제작자/subtitle.zip','anissia',700,'title source episode two',2);
+registered('aniall_subtitles/합친 게시글/all.zip','aniall',800,'post metadata one');
+registered('aniall_subtitles/합친 게시글/all [variant].zip','aniall',801,'post metadata two');
 const storage = require('../src/lib/subtitleStorage.ts');
 test('Anissia index does not lose works after 30000 unrelated directory entries', async () => {
   const promises = require('node:fs/promises'), original = promises.readdir;
@@ -126,4 +138,42 @@ test('manual lookup retains same-title posts and permits explicit unresolved fol
     const explicit = await GET(new NextRequest(`http://localhost/api/anime/subtitles/local?title=${encodeURIComponent('7654__같은 게시글명')}&ep=1`));
     assert.ok((await explicit.json()).subtitles[0].content.includes('post one'));
   } finally { for (const [object, key, value] of patches.reverse()) object[key] = value; }
+});
+
+test('title-only Anissia folder uses exact file identities and follows its bound track',async()=>{
+  const first=await storage.getAnissiaArchiveSubtitles(['다른 번역명'],1,700);
+  assert.equal(first.length,1);assert.ok(first[0].content.includes('title source one'));assert.equal(first[0].animeNo,700);
+  const other=await storage.getAnissiaArchiveSubtitles(['다른 번역명'],1,701);
+  assert.equal(other.length,1);assert.ok(other[0].content.includes('title source two'));
+  assert.notEqual(first[0].sourceBundleKey,other[0].sourceBundleKey);
+  const next=await storage.getAnissiaArchiveSubtitles(['다른 번역명'],2,700,null,{bundleKey:first[0].sourceBundleKey});
+  assert.equal(next.length,1);assert.ok(next[0].content.includes('episode two'));
+  assert.equal((await storage.getLocalSubtitleFile(first[0].localFileId)).sourceBundleKey,first[0].sourceBundleKey);
+});
+test('same title-only AniAll folder retains exact post scope and prevents unresolved title bypass',async()=>{
+  for(const id of [800,801]) {
+    const found=await storage.getAniAllArchiveSubtitles('새 번역명',1,null,null,`https://aniall.tistory.com/${id}`);
+    assert.equal(found.length,1);assert.ok(found[0].content.includes(id===800?'metadata one':'metadata two'));
+    assert.equal((await storage.getLocalSubtitleFile(found[0].localFileId)).sourceBundleKey,found[0].sourceBundleKey);
+    const bound=await storage.getAniAllArchiveSubtitles('합친 게시글',1,null,null,'',{bundleKey:found[0].sourceBundleKey});
+    assert.equal(bound.length,1);
+  }
+  assert.equal((await storage.getAniAllArchiveSubtitles('합친 게시글',1)).length,0);
+  assert.equal((await storage.getAniAllArchiveSubtitles('합친 게시글',1,null,null,'',{manualSearch:true})).length,2);
+  assert.equal((await storage.getAniAllArchiveSubtitles('합친 게시글',1,null,null,'https://aniall.tistory.com/9999')).length,0);
+});
+test('adding provenance for identical bytes preserves an existing work assignment key',async()=>{
+  const file='aniall_subtitles/합친 게시글/all.zip';
+  const before=(await storage.getAniAllArchiveSubtitles('합친 게시글',1,null,null,'https://aniall.tistory.com/800'))[0];
+  sourceManifest.files[file].sources.push({source:'aniall',id:'802',title:'합친 게시글',episode:'1',creator:'',source_url:''});
+  put('.weekly-subtitle-sources.json',JSON.stringify(sourceManifest));
+  const after=(await storage.getAniAllArchiveSubtitles('합친 게시글',1,null,null,'',{bundleKey:before.sourceBundleKey}))[0];
+  assert.equal(after.sourceBundleKey,before.sourceBundleKey);
+  assert.equal((await storage.getLocalSubtitleFile(before.localFileId)).sourceBundleKey,before.sourceBundleKey);
+});
+test('changed registered title-folder bytes cannot authorize playback or an exact override',async()=>{
+  const selected=(await storage.getAniAllArchiveSubtitles('합친 게시글',1,null,null,'https://aniall.tistory.com/800'))[0];
+  put('aniall_subtitles/합친 게시글/all.zip',archive('changed bytes'));
+  assert.equal((await storage.getAniAllArchiveSubtitles('합친 게시글',1,null,null,'https://aniall.tistory.com/800')).length,0);
+  assert.equal(await storage.getLocalSubtitleFile(selected.localFileId),null);
 });

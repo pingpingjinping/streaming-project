@@ -2,11 +2,11 @@
 
 ## Weekly downloads
 
-New Anissia downloads use `animeNo__title/episode/creator`; the reader accepts the work ID without requiring `finish.txt`, and refuses mismatching explicit IDs. Existing plain-title folders remain supported.
+New Anissia downloads use `title/episode/creator` and reuse the existing exact title folder. File-level work IDs and original hashes are recorded in `.weekly-subtitle-sources.json`, including history backfill and Erulabo downloads. The reader accepts those IDs without requiring `finish.txt`. Existing plain-title and numbered folders remain readable.
 
-New AniAll downloads use `postId__blogTitle`, isolating same-title posts. Numbered folders require the actual matched post URL; an unresolved post cannot bypass review via the title-only fallback. Old title-only folders and reviewed archive IDs remain supported.
+New AniAll downloads use `blogTitle` and reuse that work folder. Post IDs and original file hashes remain in the same metadata file, so two posts with identical titles cannot select each other's files. Different same-name attachment bytes are preserved as separate variants; identical bytes reuse the existing file. An unresolved new post requires manual selection. Old numbered folders, untouched title-only corpus files and reviewed archive IDs remain supported.
 
-The Pi weekly wrapper imports published AniAll mappings, then runs `scripts/match-weekly-aniall.py` against the current PostgreSQL catalog. Only successfully downloaded posts in the new numbered layout that are absent from `subtitle-data/aniall-weekly-matching.json` are processed. The existing monthly matcher and protected importers decide exact matches and review candidates. Fuzzy scores never become automatic confirmations. The checkpoint includes unresolved decisions and is committed only after both imports succeed. Unresolved posts can still be reviewed by the monthly pipeline. No reviewed registry or confirmed episode row is changed.
+The Pi weekly wrapper imports published AniAll mappings, then runs `scripts/match-weekly-aniall.py` against the current PostgreSQL catalog. Only successfully downloaded posts with exact file provenance (or the legacy numbered layout) that are absent from `subtitle-data/aniall-weekly-matching.json` are processed. The existing monthly matcher and protected importers decide exact matches and review candidates. Fuzzy scores never become automatic confirmations. The checkpoint includes unresolved decisions and is committed only after both imports succeed. Unresolved posts can still be reviewed by the monthly pipeline. No reviewed registry or confirmed episode row is changed.
 
 For a preview: `python3 scripts/match-weekly-aniall.py --dry-run`. Both repositories must be updated before enabling the weekly service.
 

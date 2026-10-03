@@ -191,3 +191,17 @@ test('packaged CLI decodes and cleans a ZIP outside the app dependency tree',asy
     fs.unlinkSync(pending);
   } finally {fs.rmSync(isolated,{recursive:true,force:true});}
 });
+
+test('weekly cleanup accepts title folders only with exact source metadata and unchanged bytes',async()=>{
+  const text=subtitle('title folder cleanup');
+  await save('re_title_cleanup',text,{sourceWorkId:'900',sourceEpisode:1,season:1});
+  const relative='anissia_subtitles/제목 폴더/1화/제작자/01.srt';const bytes=srt('title folder cleanup');put(relative,bytes);
+  const pending=job({source:'anissia',anime_no:'900',anime_title:'제목 폴더'},relative);
+  put('.weekly-subtitle-sources.json',JSON.stringify({version:1,files:{[relative]:{sha256:createHash('sha256').update(bytes).digest('hex'),sources:[{source:'anissia',id:'901'}]}}}));
+  assert.equal((await cleanupPending(root)).deferred,1);assert.ok(fs.existsSync(pending));
+  put('.weekly-subtitle-sources.json',JSON.stringify({version:1,files:{[relative]:{sha256:createHash('sha256').update(bytes).digest('hex'),sources:[{source:'anissia',id:'900'}]}}}));
+  put(relative,srt('changed bytes'));
+  assert.equal((await cleanupPending(root)).deferred,1);assert.ok(await cache.getVerifiedSubtitleCache('re_title_cleanup',1));
+  put(relative,bytes);assert.equal((await cleanupPending(root)).removed,1);
+  assert.equal(await cache.getVerifiedSubtitleCache('re_title_cleanup',1),null);
+});
