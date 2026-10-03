@@ -53,6 +53,31 @@ export async function findReviewedFiles(animeId: string, keyword = ""): Promise<
   }
 }
 
+async function findReviewedBundleFiles(source: Provider, bundleKey: string): Promise<ReviewedFile[]> {
+  const sql = getDb();
+  const packId = bundleKey.startsWith("pack:") ? bundleKey.slice(5) : "";
+  if (!sql || !packId || packId.length > 1000) return [];
+  try {
+    const rows = await sql`
+      SELECT f.*, a.sha256 AS archive_sha256,
+        ARRAY(SELECT DISTINCT e.target_episode
+          FROM anime_subtitle_file_origins o
+          JOIN anime_subtitle_confirmed_episodes e ON e.dataset_key=o.dataset_key AND e.file_id=o.file_id
+          WHERE o.dataset_key=f.dataset_key AND o.pid=f.pid AND e.status='confirmed_episode'
+          ORDER BY e.target_episode) AS confirmed_episodes
+      FROM anime_subtitle_files f
+      JOIN anime_subtitle_archives a ON a.dataset_key=f.dataset_key AND a.pack_id=f.pack_id
+      WHERE f.dataset_key=${DATASET} AND f.work_confirmed=TRUE
+        AND f.source=${source} AND f.pack_id=${packId}
+      ORDER BY f.pid LIMIT 5000
+    `;
+    return rows as unknown as ReviewedFile[];
+  } catch (error: any) {
+    if (error?.code === "42P01") return [];
+    throw error;
+  }
+}
+
 export async function findReviewedTitles(keyword: string) {
   const sql = getDb();
   if (!sql || !keyword) return [];
@@ -152,6 +177,7 @@ export async function readReviewedFile(file: ReviewedFile) {
       return { ...decoded, orig_filename: path.posix.basename(file.member_path),
         name: `[로컬 ${file.source === 'aniall' ? 'AniAll' : 'Naver'} · ${file.work_title_ko}] ${path.posix.basename(file.member_path)}`,
         sourceProvider: file.source, sourceMatchedTitle: file.work_title_ko,
+        sourceBundleKey: `pack:${file.pack_id}`, sourceBundleLabel: file.work_title_ko,
         reviewedFileId: `${DATASET}:${file.pid}`, localArchive: true, verifiedMatch: true,
         reanimeLinked: Boolean(file.reanime_id) };
     } catch { /* A bad ZIP member must not select a different file. */ }
@@ -182,9 +208,12 @@ export function reviewedEpisodeCandidates(files: ReviewedFile[], episode: number
 }
 
 export async function getReviewedSubtitles(input: { animeId: string; episode: number; sourceEpisode: number;
-  season: number | null; source?: Provider; keyword?: string; manualSearch?: boolean;
+  season: number | null; source?: Provider; keyword?: string; manualSearch?: boolean; bundleKey?: string;
   isRejected?: (provider: string, key: string) => boolean }) {
-  const files = (await findReviewedFiles(input.animeId, input.keyword || ""))
+  const sourceFiles = input.source && input.bundleKey
+    ? await findReviewedBundleFiles(input.source, input.bundleKey)
+    : await findReviewedFiles(input.animeId, input.keyword || "");
+  const files = sourceFiles
     .filter(f => (!input.source || f.source === input.source)
       && !input.isRejected?.(f.source, `reviewed:${DATASET}:${f.pid}`));
   const { exact, manual } = reviewedEpisodeCandidates(files, input.episode, input.sourceEpisode, input.season);
@@ -208,10 +237,16 @@ export async function getReviewedSubtitles(input: { animeId: string; episode: nu
 
 /** A native-player request may only read a file in this work's exact reviewed binding. */
 export async function getReviewedSubtitleById(animeId: string, reviewedFileId: string,
-  isRejected?: (provider: string, key: string) => boolean) {
+  isRejected?: (provider: string, key: string) => boolean, allowedBundleKey = "") {
   if (!reviewedFileId.startsWith(`${DATASET}:`) || reviewedFileId.length > 300) return null;
   const pid = reviewedFileId.slice(DATASET.length + 1);
-  const file = (await findReviewedFiles(animeId)).find(f => f.pid === pid);
+  let file = (await findReviewedFiles(animeId)).find(f => f.pid === pid);
+  if (!file && allowedBundleKey.startsWith("pack:")) {
+    for (const source of ["aniall", "naver"] as const) {
+      file = (await findReviewedBundleFiles(source, allowedBundleKey)).find(f => f.pid === pid);
+      if (file) break;
+    }
+  }
   if (!file || isRejected?.(file.source, `reviewed:${reviewedFileId}`)) return null;
   return readReviewedFile(file);
 }
