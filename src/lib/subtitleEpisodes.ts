@@ -19,7 +19,7 @@ const valid = (n: number) => Number.isInteger(n) && n > 0 && n <= 10000;
 const unique = (values: number[]) => [...new Set(values)];
 
 export function readEpisodeEvidence(value: string, filename = false, filePath = filename): EpisodeEvidence {
-  const normalized = value.normalize('NFKC').replace(/\b\d+(?:\.\d+)?\s*(?:KB|MB|GB)\b/gi, '').replace(/\.(?:zip|ass|ssa|srt|smi|vtt)(?=\s|$)/gi, '');
+  const normalized = value.normalize('NFKC').replace(/__\d+(?=\.(?:zip|ass|ssa|srt|smi|vtt)$)/i,'').replace(/\b\d+(?:\.\d+)?\s*(?:KB|MB|GB)\b/gi, '').replace(/\.(?:zip|ass|ssa|srt|smi|vtt)(?=\s|$)/gi, '');
   // URL IDs, calendar dates, hashes, resolution and codec numbers are not episodes.
   const text = normalized.replace(/https?:\/\/\S+/gi, ' ')
     .replace(/\b(?:19|20)\d{2}[-/.]\d{1,2}[-/.]\d{1,2}\b/g, ' ')

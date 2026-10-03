@@ -1,4 +1,5 @@
 import postgres from "postgres";
+import {bundleScopesOverlap} from "./subtitleLocalIdentity";
 import { createHash } from "node:crypto";
 
 let dbClient: ReturnType<typeof postgres> | null = null;
@@ -555,6 +556,13 @@ export async function saveSubtitleBundleAssignment(
   await initDb();
   try {
     await sql.begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(hashtext(${userId}))`;
+      const current=await tx`SELECT anime_id,bundle_key FROM subtitle_bundle_assignments WHERE user_id=${userId} AND provider=${provider}`;
+      for(const row of current) {
+        if(row.anime_id!==animeId && bundleScopesOverlap(bundleKey,row.bundle_key)) {
+          await tx`DELETE FROM subtitle_bundle_assignments WHERE user_id=${userId} AND anime_id=${row.anime_id}`;
+        }
+      }
       // A local bundle has one owner per user. Reassigning it moves ownership
       // from a wrong season/work instead of leaving the bundle visible twice.
       await tx`

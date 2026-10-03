@@ -11,7 +11,7 @@ import {
 } from "@/lib/db";
 import { getAniAllArchiveSubtitles, getAnissiaArchiveSubtitles, searchLocalSubtitleFolders } from "@/lib/subtitleStorage";
 import { findReviewedTitles, getReviewedSubtitles } from "@/lib/reviewedSubtitleStorage";
-import {parseBundleScope} from "@/lib/subtitleLocalIdentity";
+import {parseBundleScope,bundleScopesOverlap,bundleSelectionMatches} from "@/lib/subtitleLocalIdentity";
 import { parseSeason, resolveKoreanTitle } from "@/lib/subtitles";
 
 export async function GET(request: NextRequest) {
@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
     const allowReassignmentSearch = params.get("mode") === "search";
     const claimedByOtherAnime = (provider: string, bundleKey?: string) =>
       Boolean(!allowReassignmentSearch && bundleKey && bundleAssignments.some((entry) =>
-        entry.exclusive && entry.provider === provider && entry.bundleKey === bundleKey && entry.animeId !== animeId));
+        entry.exclusive && entry.provider === provider && bundleScopesOverlap(entry.bundleKey,bundleKey!) && entry.animeId !== animeId));
     const assignedScope=bundleAssignment ? parseBundleScope(bundleAssignment.bundleKey) : null;
     const resolvedTitle = await resolveKoreanTitle(title) || title;
     const exactMatches = (await getAniAllMatches(resolvedTitle, animeId)).sort((a, b) => b.confidence - a.confidence);
@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
       return true;
     });
     const candidates = new Map<string, { blogTitle: string; canonicalTitle: string; postUrl: string; confidence: number }>();
-    if (bundleAssignment?.provider === "aniall" && assignedScope?.type === "local" && !allowReassignmentSearch) {
+    if (bundleAssignment?.provider === "aniall" && (assignedScope?.type === "local" || assignedScope?.type === "folder") && !allowReassignmentSearch) {
       const postId = assignedScope.work.match(/^([1-9]\d*)__/)?.[1] || "";
       const postUrl = postId ? `https://aniall.tistory.com/${postId}` : "";
       candidates.set(`assigned:${bundleAssignment.bundleKey}`, {
@@ -83,7 +83,7 @@ export async function GET(request: NextRequest) {
     const aniallSubtitles = [];
     for (const candidate of [...candidates.values()].slice(0, 20)) {
       const found=await getAniAllArchiveSubtitles(candidate.blogTitle,episode,parseSeason(candidate.canonicalTitle),sourceEpisodeStart,candidate.postUrl,
-        {manualSearch:true,bundleKey:!allowReassignmentSearch && assignedScope?.type==='local' && bundleAssignment?.provider==='aniall' ? bundleAssignment.bundleKey : undefined});
+        {manualSearch:true,bundleKey:!allowReassignmentSearch && (assignedScope?.type==='local' || assignedScope?.type==='folder') && bundleAssignment?.provider==='aniall' ? bundleAssignment.bundleKey : undefined});
       for(const subtitle of found) {
       if (claimedByOtherAnime("aniall", subtitle.sourceBundleKey)) continue;
       const displayName = `[로컬 AniAll · ${candidate.blogTitle}] ${subtitle.orig_filename}`;
@@ -94,7 +94,7 @@ export async function GET(request: NextRequest) {
         episode, sourceProvider: "aniall", sourceCreatorWebsite: candidate.postUrl,
         sourceMatchedTitle: candidate.canonicalTitle, matchScore: candidate.confidence,
         verifiedMatch: candidate.confidence >= 90, localArchive: true,
-        bundleAssigned: bundleAssignment?.provider === "aniall" && bundleAssignment.bundleKey === subtitle.sourceBundleKey,
+        bundleAssigned: bundleAssignment?.provider === "aniall" && bundleSelectionMatches(bundleAssignment.bundleKey,subtitle.sourceBundleKey),
       });
       }
     }
@@ -102,7 +102,7 @@ export async function GET(request: NextRequest) {
     const anissiaNoMatch = animeId.match(/^(?:ani_)?(\d+)$/);
     const anissiaNo = anissiaNoMatch ? Number(anissiaNoMatch[1]) : null;
     const sourceEpisode = sourceEpisodeStart && sourceEpisodeStart > 0 ? sourceEpisodeStart + episode - 1 : episode;
-    const assignedAnissiaLabel = !allowReassignmentSearch && assignedScope?.type==='local' && bundleAssignment?.provider==='anissia' ? assignedScope.work.replace(/^[1-9]\d*__/,'') : "";
+    const assignedAnissiaLabel = !allowReassignmentSearch && (assignedScope?.type==='local' || assignedScope?.type==='folder') && bundleAssignment?.provider==='anissia' ? assignedScope.work.replace(/^[1-9]\d*__/,'') : "";
     const anissiaArchives = await getAnissiaArchiveSubtitles(
       [title, resolvedTitle, assignedAnissiaLabel].filter(Boolean),
       sourceEpisode,
@@ -124,7 +124,7 @@ export async function GET(request: NextRequest) {
         matchScore: 100,
         verifiedMatch: true,
         localArchive: true,
-        bundleAssigned: bundleAssignment?.provider === "anissia" && bundleAssignment.bundleKey === subtitle.sourceBundleKey,
+        bundleAssigned: bundleAssignment?.provider === "anissia" && bundleSelectionMatches(bundleAssignment.bundleKey,subtitle.sourceBundleKey),
       }));
     const reviewed = await getReviewedSubtitles({ animeId, episode, sourceEpisode,
       season: parseSeason(resolvedTitle) || parseSeason(title),
@@ -140,7 +140,7 @@ export async function GET(request: NextRequest) {
     const reviewedVisible = reviewed.subtitles
       .filter(s => !claimedByOtherAnime(s.sourceProvider, s.sourceBundleKey))
       .map(s => ({ ...s,
-        bundleAssigned: bundleAssignment?.provider === s.sourceProvider && bundleAssignment.bundleKey === s.sourceBundleKey }));
+        bundleAssigned: bundleAssignment?.provider === s.sourceProvider && bundleSelectionMatches(bundleAssignment.bundleKey,s.sourceBundleKey) }));
     const reviewedAniAll = reviewedVisible.filter(s => s.sourceProvider === "aniall");
     const reviewedNaver = reviewedVisible.filter(s => s.sourceProvider === "naver");
     const subtitles = sourcePriority === "aniall"
