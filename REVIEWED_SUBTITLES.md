@@ -38,7 +38,15 @@ ZIP paths containing `미확정` are physical locations, not current review stat
 
 New weekly subtitles remain in the downloader's existing work folders; they do not need to be repacked into reviewed ZIPs. AniAll lookup now also accepts a loose file with unambiguous episode evidence. Weekly files are not inserted into the completed review registry by a playback request. Multiple loose variants remain unavailable to automatic selection; use the existing upload/manual subtitle workflow to choose an ambiguous new file.
 
-Manual local search includes reviewed work titles and original archive/member names, including work-confirmed files with no ReAnime link. Searching or selecting a file does not assign a ReAnime ID or persist an episode. Native VTT lookup reads a selected reviewed PID only within its exact current work binding; a manually chosen file from an unlinked/different work is available through its embedded subtitle content, but does not gain a native VTT work binding.
+Manual local search includes reviewed work titles and original archive/member names, including work-confirmed files with no ReAnime link. Searching or selecting a file does not assign a ReAnime ID or change a confirmed episode. Native VTT lookup reads a selected reviewed PID within its current work binding or an explicit user episode exception. A transient selection from another work remains available through its embedded content.
+
+## User assignments and episode exceptions
+
+Work assignments bind one original work/season/format slice, rather than claiming an entire ZIP. TV and OVA members in a mixed ZIP can be assigned independently. Raw download track keys include the physical work folder, so generic creator names and filenames cannot bind another work accidentally. Numbered episodes continue automatically within the selected slice. Different subtitle variants remain choices, and a bound file with unknown episode evidence still requires manual selection.
+
+Both the work settings and playback subtitle picker provide `예외 만들기`. Choose an exact file and the target site episode; it overrides the work assignment only on that episode. `예외 해제` restores the normal selection. Raw files use relative path, exact archive member and original content hash; reviewed files retain dataset/PID identity and registry hash checks. Missing or changed assigned files show a reselection notice without silently falling back to another subtitle. Manual search remains available for choosing a replacement.
+
+These settings belong to the signed-in user and are stored in `subtitle_bundle_assignments` and `subtitle_episode_overrides`. Playback does not modify catalog matches, the reviewed registry, confirmed episode rows or source subtitle files. Legacy whole-ZIP/track assignments remain stored, but require one explicit reselection because their work/format scope cannot be inferred safely.
 
 Rejections of reviewed files use stable `reviewed:DATASET:PID` keys. Existing website-based AniAll rejections conservatively suppress the reviewed AniAll fallback for that work, because merged cleaned archives do not expose reliable creator URL provenance. Clearing that existing rejection restores the fallback. No existing rejection rows are rewritten.
 
@@ -46,4 +54,4 @@ Manually edited Postgres file rows remain protected by the importer, and confirm
 
 ## Validation
 
-`npm run test:subtitles` exercises mixed archives, archive/member hashes, flattened paths, PID rejection, confirmed episodes, episode offsets, ambiguity, missing files, native VTT and loose weekly files. GitHub Actions additionally runs the reader's actual SQL against an isolated PostgreSQL service to exclude held files, ineligible links and unrelated historical episode mappings. The existing importer checks and production build also run in the same workflow.
+`npm run test:subtitles` exercises mixed archives, archive/member hashes, flattened paths, PID rejection, confirmed episodes, episode offsets, ambiguity, missing files, native VTT and loose weekly files. It also checks independent TV/OVA assignments, successive episodes, exact-file exceptions, removal, missing-file notices and user isolation. GitHub Actions runs actual PostgreSQL queries and settings writes, comparing only the fixture rows involved to verify reviewed work links and confirmed episodes remain unchanged. The existing importer checks and production build also run in the same workflow.

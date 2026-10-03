@@ -107,6 +107,8 @@ interface SubtitleItem {
   localArchive?: boolean;
   localArchiveTrackKey?: string;
   reviewedFileId?: string;
+  localFileId?:string;
+  episodeException?:boolean;
   sourceBundleKey?: string;
   sourceBundleLabel?: string;
   bundleAssigned?: boolean;
@@ -595,6 +597,13 @@ export default function Player(props: PlayerProps) {
   const [subs, setSubs] = useState<SubtitleItem[]>([]);
   const [selectedSubIndex, setSelectedSubIndex] = useState<number>(0);
   const [isLoadingSubs, setIsLoadingSubs] = useState<boolean>(true);
+  const [subtitleNotice,setSubtitleNotice]=useState("");
+  const [subtitleSettingsRevision,setSubtitleSettingsRevision]=useState(0);
+  useEffect(()=>{
+    const changed=(event:Event)=>{if((event as CustomEvent).detail?.animeId===animeId)setSubtitleSettingsRevision(n=>n+1);};
+    window.addEventListener("subtitle-settings-changed",changed);
+    return()=>window.removeEventListener("subtitle-settings-changed",changed);
+  },[animeId]);
   const [needsManualSubtitleChoice, setNeedsManualSubtitleChoice] = useState(false);
   const [creators, setCreators] = useState<CreatorInfo[]>([]);
   const [loadingCreatorName, setLoadingCreatorName] = useState<string | null>(null);
@@ -955,8 +964,9 @@ export default function Player(props: PlayerProps) {
       }
       const offsetVal = parseFloat(String(offset)) || 0;
       if (subData.reviewedFileId) {
-        return `/api/anime/subtitles/vtt?animeId=${encodeURIComponent(animeId)}&reviewedFileId=${encodeURIComponent(subData.reviewedFileId)}&offset=${offsetVal}&_t=${Date.now()}`;
+        return `/api/anime/subtitles/vtt?animeId=${encodeURIComponent(animeId)}&reviewedFileId=${encodeURIComponent(subData.reviewedFileId)}&ep=${currentEpRef.current}&offset=${offsetVal}&_t=${Date.now()}`;
       }
+      if(subData.localFileId) return `/api/anime/subtitles/vtt?animeId=${encodeURIComponent(animeId)}&localFileId=${encodeURIComponent(subData.localFileId)}&ep=${currentEpRef.current}&offset=${offsetVal}&_t=${Date.now()}`;
       const rawUrl = subData.url;
 
       if (rawUrl && !rawUrl.startsWith("blob:") && !rawUrl.startsWith("data:")) {
@@ -2090,6 +2100,7 @@ export default function Player(props: PlayerProps) {
   };
 
   const handleSelectFoundSubtitle = (option: SubtitleOption) => {
+    setNeedsManualSubtitleChoice(false);setSubtitleNotice("");
     const subtitle: SubtitleItem = {
       name: option.name,
       format: option.format,
@@ -2103,6 +2114,7 @@ export default function Player(props: PlayerProps) {
       localArchive: option.localArchive,
       localArchiveTrackKey: option.localArchiveTrackKey,
       reviewedFileId: option.reviewedFileId,
+      localFileId:option.localFileId,episodeException:option.episodeException,
       sourceBundleKey: option.sourceBundleKey,
       sourceBundleLabel: option.sourceBundleLabel,
       bundleAssigned: option.bundleAssigned,
@@ -3469,7 +3481,7 @@ export default function Player(props: PlayerProps) {
   useEffect(() => {
     let isCancelled = false;
     setIsLoadingSubs(true);
-    setNeedsManualSubtitleChoice(false);
+    setNeedsManualSubtitleChoice(false);setSubtitleNotice("");
 
     const subtitleParams = new URLSearchParams({
       title: animeTitle,
@@ -3485,7 +3497,7 @@ export default function Player(props: PlayerProps) {
       .then((data) => {
         if (isCancelled || !data.success) return;
         const needsChoice = Boolean(data.needs_manual_subtitle_choice);
-        setNeedsManualSubtitleChoice(needsChoice);
+        setNeedsManualSubtitleChoice(needsChoice);setSubtitleNotice(data.subtitle_notice || "");
 
         if (Array.isArray(data.creators)) {
           setCreators(data.creators);
@@ -3514,6 +3526,7 @@ export default function Player(props: PlayerProps) {
           localArchive: Boolean(s.localArchive),
           localArchiveTrackKey: s.localArchiveTrackKey,
           reviewedFileId: s.reviewedFileId,
+          localFileId:s.localFileId,episodeException:s.episodeException,
           sourceBundleKey: s.sourceBundleKey,
           sourceBundleLabel: s.sourceBundleLabel,
           bundleAssigned: Boolean(s.bundleAssigned),
@@ -3568,7 +3581,7 @@ export default function Player(props: PlayerProps) {
     return () => {
       isCancelled = true;
     };
-  }, [animeTitle, currentEp, currentVttUrl]);
+  }, [animeId,animeTitle, currentEp, currentVttUrl,subtitleSettingsRevision]);
 
   // 4-Stage Audio Skip Trigger
   const triggerManualAudioSkip = async (isAuto = false) => {
@@ -4314,7 +4327,7 @@ export default function Player(props: PlayerProps) {
         </div>
         {needsManualSubtitleChoice && (
           <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-            가장 높은 매칭 후보에서 자막을 불러오지 못했어요. 다른 후보는 자동 적용하지 않았으니, 아래 목록에서 직접 골라 주세요.
+            {subtitleNotice || "자막 버전이 여러 개이거나 회차를 확인할 수 없어 자동 적용하지 않았어요. 자막 선택에서 직접 고르거나 예외를 만들어 주세요."}
           </div>
         )}
       </div>

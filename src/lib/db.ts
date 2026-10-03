@@ -382,6 +382,21 @@ export async function initDb() {
     console.warn("[initDb subtitle_bundle_assignments warning]:", e?.message);
   }
 
+  // User playback overrides only; reviewed work/episode tables are immutable here.
+  try {
+    await sql`CREATE TABLE IF NOT EXISTS subtitle_episode_overrides (
+    user_id VARCHAR(100) NOT NULL, anime_id VARCHAR(100) NOT NULL,
+    episode_number INT NOT NULL CHECK (episode_number BETWEEN 1 AND 10000),
+    provider VARCHAR(16) NOT NULL, file_id TEXT NOT NULL, label TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, anime_id, episode_number)
+    )`;
+  } catch (error: any) {
+    // Concurrent first requests can race on the PostgreSQL type catalog.
+    // Another successful CREATE already provided the same table in this case.
+    if (error?.code !== '23505' && error?.code !== '42P07') throw error;
+  }
+
   isInitialized = true;
 }
 
@@ -577,6 +592,34 @@ export async function deleteSubtitleBundleAssignment(userId: string, animeId: st
     console.error("[deleteSubtitleBundleAssignment error]:", e);
     return false;
   }
+}
+
+export interface SubtitleEpisodeOverride {
+  episodeNumber: number; provider: SubtitleBundleProvider; fileId: string; label: string;
+}
+export async function getSubtitleEpisodeOverrides(userId: string, animeId: string): Promise<SubtitleEpisodeOverride[]> {
+  const sql=getDb(); if(!sql || !userId || !animeId) return [];
+  await initDb();
+  const rows=await sql`SELECT episode_number,provider,file_id,label FROM subtitle_episode_overrides
+    WHERE user_id=${userId} AND anime_id=${animeId} ORDER BY episode_number`;
+  return rows.map(r=>({episodeNumber:Number(r.episode_number),provider:r.provider as SubtitleBundleProvider,fileId:String(r.file_id),label:String(r.label)}));
+}
+export async function saveSubtitleEpisodeOverride(userId: string, animeId: string, value: SubtitleEpisodeOverride) {
+  const sql=getDb(); if(!sql || !userId || !animeId || animeId.length>100
+    || !Number.isInteger(value.episodeNumber) || value.episodeNumber<1 || value.episodeNumber>10000
+    || !['aniall','anissia','naver'].includes(value.provider) || !value.fileId || value.fileId.length>4000 || value.label.length>1000) return false;
+  await initDb();
+  await sql`INSERT INTO subtitle_episode_overrides(user_id,anime_id,episode_number,provider,file_id,label)
+    VALUES(${userId},${animeId},${value.episodeNumber},${value.provider},${value.fileId},${value.label})
+    ON CONFLICT(user_id,anime_id,episode_number) DO UPDATE SET provider=EXCLUDED.provider,file_id=EXCLUDED.file_id,
+      label=EXCLUDED.label,updated_at=CURRENT_TIMESTAMP`;
+  return true;
+}
+export async function deleteSubtitleEpisodeOverride(userId: string, animeId: string, episode: number) {
+  const sql=getDb(); if(!sql || !userId || !animeId || !Number.isInteger(episode) || episode<1 || episode>10000) return false;
+  await initDb();
+  await sql`DELETE FROM subtitle_episode_overrides WHERE user_id=${userId} AND anime_id=${animeId} AND episode_number=${episode}`;
+  return true;
 }
 
 export interface AniAllMatch {

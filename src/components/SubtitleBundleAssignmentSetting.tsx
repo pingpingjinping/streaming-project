@@ -1,4 +1,5 @@
 "use client";
+import SubtitleEpisodeExceptions from "./SubtitleEpisodeExceptions";
 
 import { useEffect, useMemo, useState } from "react";
 import { FolderOpen, Loader2, Search, Subtitles, X } from "lucide-react";
@@ -20,6 +21,7 @@ type FolderCandidate = {
 
 type SubtitleCandidate = {
   name: string;
+  reviewedFileId?:string;localFileId?:string;
   sourceProvider?: Provider;
   sourceBundleKey?: string;
   sourceBundleLabel?: string;
@@ -35,6 +37,7 @@ export default function SubtitleBundleAssignmentSetting({
   animeId: string;
   animeTitle: string;
 }) {
+  const [exceptionCandidate,setExceptionCandidate]=useState<SubtitleCandidate|null>(null);
   const [assignment, setAssignment] = useState<BundleAssignment | null>(null);
   const [keyword, setKeyword] = useState(animeTitle);
   const [episode, setEpisode] = useState(1);
@@ -116,6 +119,7 @@ export default function SubtitleBundleAssignmentSetting({
           animeId,
           provider: item.sourceProvider,
           bundleKey: item.sourceBundleKey,
+          fileId:item.reviewedFileId || item.localFileId,
           label: item.sourceBundleLabel || item.sourceMatchedTitle || item.matchedTitle || keyword || animeTitle,
         }),
       });
@@ -158,7 +162,7 @@ export default function SubtitleBundleAssignmentSetting({
             <h2 className="text-sm font-bold text-emerald-100">로컬 자막 묶음 지정</h2>
           </div>
           <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
-            AniAll·Anissia·Naver 로컬 ZIP/묶음을 이 작품 전체에 고정해. 다음 화에서도 같은 묶음을 자동으로 찾고, 다른 시즌에서는 이 묶음을 숨겨.
+            ZIP 안의 작품·시즌별 묶음을 지정해. 회차가 확인된 파일만 자동 적용하고, TV·OVA는 따로 지정할 수 있어.
           </p>
         </div>
         {assignment && (
@@ -176,6 +180,9 @@ export default function SubtitleBundleAssignmentSetting({
           {" · "}{assignment.label || assignment.bundleKey}
         </div>
       )}
+
+      <SubtitleEpisodeExceptions animeId={animeId} animeTitle={animeTitle} currentEpisode={episode}
+        candidate={exceptionCandidate} onCancel={()=>setExceptionCandidate(null)} />
 
       <form className="mt-4 flex flex-wrap gap-2" onSubmit={(event) => { event.preventDefault(); searchLocal(); }}>
         <input value={keyword} onChange={(event) => setKeyword(event.target.value)}
@@ -224,6 +231,8 @@ export default function SubtitleBundleAssignmentSetting({
                     {item.sourceProvider === "aniall" ? "AniAll" : item.sourceProvider === "naver" ? "Naver" : "Anissia"} · {item.name}
                   </p>
                 </div>
+                {(item.reviewedFileId || item.localFileId) && <button type="button" onClick={()=>setExceptionCandidate(item)}
+                  className="shrink-0 rounded-lg border border-amber-500/40 px-3 py-2 text-[11px] text-amber-200">예외 만들기</button>}
                 <button type="button" onClick={() => assign(item)}
                   disabled={Boolean(savingKey) || selected}
                   className="shrink-0 rounded-lg bg-purple-600 px-3 py-2 text-[11px] font-bold text-white hover:bg-purple-500 disabled:bg-emerald-950/50 disabled:text-emerald-300">
@@ -234,6 +243,16 @@ export default function SubtitleBundleAssignmentSetting({
           })}
         </div>
       )}
+
+      {results.some(item=>item.reviewedFileId || item.localFileId) && <details className="mt-3 rounded-xl border border-slate-700 p-3 text-xs">
+        <summary className="cursor-pointer font-semibold text-amber-100">파일별 예외 선택</summary>
+        <div className="mt-2 max-h-60 space-y-2 overflow-y-auto">
+          {results.filter(item=>item.reviewedFileId || item.localFileId).map((item,index)=><div key={`${item.reviewedFileId || item.localFileId}-${index}`} className="flex items-center gap-2">
+            <span className="min-w-0 flex-1 break-words text-slate-300">{item.name}</span>
+            <button type="button" onClick={()=>setExceptionCandidate(item)} className="shrink-0 rounded-lg border border-amber-500/40 px-2 py-1 text-amber-200">예외 만들기</button>
+          </div>)}
+        </div>
+      </details>}
 
       {notice && <p className="mt-3 text-[11px] text-emerald-200">{notice}</p>}
     </section>

@@ -4,8 +4,9 @@ import { createHash } from "node:crypto";
 import AdmZip from "adm-zip";
 import iconv from "iconv-lite";
 import { getDb } from "@/lib/db";
-import { decodeSubtitleFile } from "@/lib/subtitles";
+import { decodeSubtitleFile, parseSeason } from "@/lib/subtitles";
 import { evidenceAgrees, readEpisodeEvidence, selectEpisodeEntries } from "@/lib/subtitleEpisodes";
+import { bundleScopeKey, parseBundleScope, subtitleScope, scopeLabel } from './subtitleLocalIdentity';
 
 const DATASET = "reviewed_v6_1109";
 const root = () => process.env.SUBTITLE_STORAGE_DIR || path.join(process.cwd(), "data", "subtitles");
@@ -53,10 +54,11 @@ export async function findReviewedFiles(animeId: string, keyword = ""): Promise<
   }
 }
 
-async function findReviewedBundleFiles(source: Provider, bundleKey: string): Promise<ReviewedFile[]> {
+export async function findReviewedBundleFiles(source: Provider, bundleKey: string): Promise<ReviewedFile[]> {
   const sql = getDb();
-  const packId = bundleKey.startsWith("pack:") ? bundleKey.slice(5) : "";
-  if (!sql || !packId || packId.length > 1000) return [];
+  const scope = parseBundleScope(bundleKey);
+  if (!sql || !scope || scope.type !== 'reviewed' || scope.dataset !== DATASET) return [];
+  const packId = scope.pack;
   try {
     const rows = await sql`
       SELECT f.*, a.sha256 AS archive_sha256,
@@ -64,18 +66,40 @@ async function findReviewedBundleFiles(source: Provider, bundleKey: string): Pro
           FROM anime_subtitle_file_origins o
           JOIN anime_subtitle_confirmed_episodes e ON e.dataset_key=o.dataset_key AND e.file_id=o.file_id
           WHERE o.dataset_key=f.dataset_key AND o.pid=f.pid AND e.status='confirmed_episode'
+            AND ((e.target_source=f.target_source AND e.target_id=f.target_id)
+              OR (e.target_source='ReAnime' AND e.target_id=f.reanime_id))
           ORDER BY e.target_episode) AS confirmed_episodes
       FROM anime_subtitle_files f
       JOIN anime_subtitle_archives a ON a.dataset_key=f.dataset_key AND a.pack_id=f.pack_id
       WHERE f.dataset_key=${DATASET} AND f.work_confirmed=TRUE
         AND f.source=${source} AND f.pack_id=${packId}
+        AND f.target_source=${scope.workSource} AND f.target_id=${scope.workId}
       ORDER BY f.pid LIMIT 5000
     `;
-    return rows as unknown as ReviewedFile[];
+    return (rows as unknown as ReviewedFile[]).filter(f => reviewedBundleKey(f) === bundleKey);
   } catch (error: any) {
     if (error?.code === "42P01") return [];
     throw error;
   }
+}
+
+export function reviewedBundleKey(file: ReviewedFile) {
+  return bundleScopeKey({type:'reviewed',dataset:DATASET,pack:file.pack_id,workSource:file.target_source,workId:file.target_id,
+    ...subtitleScope(file.member_path,file.work_title_ko,parseSeason(file.work_title_ko) || 1)});
+}
+
+/** Explicit user exceptions may point at another work, but never at held files. */
+export async function getReviewedFileForOverride(fileId: string) {
+  const sql = getDb();
+  if (!sql || !fileId.startsWith(`${DATASET}:`) || fileId.length > 300) return null;
+  const pid = fileId.slice(DATASET.length+1);
+  try {
+    const rows = await sql`SELECT f.*, a.sha256 AS archive_sha256
+      FROM anime_subtitle_files f JOIN anime_subtitle_archives a
+        ON a.dataset_key=f.dataset_key AND a.pack_id=f.pack_id
+      WHERE f.dataset_key=${DATASET} AND f.pid=${pid} AND f.work_confirmed=TRUE AND f.source IN ('aniall','naver') LIMIT 1`;
+    return rows[0] ? readReviewedFile(rows[0] as unknown as ReviewedFile) : null;
+  } catch (error: any) { if(error?.code === '42P01') return null; throw error; }
 }
 
 export async function findReviewedTitles(keyword: string) {
@@ -177,7 +201,8 @@ export async function readReviewedFile(file: ReviewedFile) {
       return { ...decoded, orig_filename: path.posix.basename(file.member_path),
         name: `[로컬 ${file.source === 'aniall' ? 'AniAll' : 'Naver'} · ${file.work_title_ko}] ${path.posix.basename(file.member_path)}`,
         sourceProvider: file.source, sourceMatchedTitle: file.work_title_ko,
-        sourceBundleKey: `pack:${file.pack_id}`, sourceBundleLabel: file.work_title_ko,
+        sourceBundleKey: reviewedBundleKey(file),
+        sourceBundleLabel: scopeLabel(file.work_title_ko,subtitleScope(file.member_path,file.work_title_ko,parseSeason(file.work_title_ko) || 1)),
         reviewedFileId: `${DATASET}:${file.pid}`, localArchive: true, verifiedMatch: true,
         reanimeLinked: Boolean(file.reanime_id) };
     } catch { /* A bad ZIP member must not select a different file. */ }
@@ -216,7 +241,10 @@ export async function getReviewedSubtitles(input: { animeId: string; episode: nu
   const files = sourceFiles
     .filter(f => (!input.source || f.source === input.source)
       && !input.isRejected?.(f.source, `reviewed:${DATASET}:${f.pid}`));
-  const { exact, manual } = reviewedEpisodeCandidates(files, input.episode, input.sourceEpisode, input.season);
+  const scope = input.bundleKey ? parseBundleScope(input.bundleKey) : null;
+  const expectedKind = scope?.kind || subtitleScope('',files[0]?.work_title_ko || '').kind;
+  const eligible = input.manualSearch ? files : files.filter(f => subtitleScope(f.member_path,f.work_title_ko).kind === expectedKind);
+  const { exact, manual } = reviewedEpisodeCandidates(eligible, input.episode, input.sourceEpisode, scope?.season || input.season);
   const results: Array<NonNullable<Awaited<ReturnType<typeof readReviewedFile>>> & { episode: number; episodeConfirmed: boolean }> = [];
   const seen = new Set<string>();
   const load = async (rows: ReviewedFile[], confirmed: boolean) => {
@@ -231,7 +259,11 @@ export async function getReviewedSubtitles(input: { animeId: string; episode: nu
   };
   await load(exact, true);
   const hasExact = results.length > 0;
-  if (results.length < 50 && (input.manualSearch || !hasExact)) await load(manual, false);
+  if (results.length < 50 && (input.manualSearch || !hasExact)) {
+    // Manual browsing can choose a different season/format/episode for an
+    // explicit exception. It never grants that file automatic episode status.
+    await load(input.manualSearch ? files.filter(f=>!exact.includes(f)) : manual, false);
+  }
   return { subtitles: results, needsManualChoice: results.length > 1 || (!hasExact && results.length > 0) };
 }
 
@@ -241,7 +273,7 @@ export async function getReviewedSubtitleById(animeId: string, reviewedFileId: s
   if (!reviewedFileId.startsWith(`${DATASET}:`) || reviewedFileId.length > 300) return null;
   const pid = reviewedFileId.slice(DATASET.length + 1);
   let file = (await findReviewedFiles(animeId)).find(f => f.pid === pid);
-  if (!file && allowedBundleKey.startsWith("pack:")) {
+  if (!file && parseBundleScope(allowedBundleKey)?.type === 'reviewed') {
     for (const source of ["aniall", "naver"] as const) {
       file = (await findReviewedBundleFiles(source, allowedBundleKey)).find(f => f.pid === pid);
       if (file) break;
