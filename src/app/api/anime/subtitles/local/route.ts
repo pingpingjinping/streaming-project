@@ -41,8 +41,9 @@ export async function GET(request: NextRequest) {
     ]);
     const isRejected = (provider: string, sourceKey: string) =>
       rejected.some((entry) => entry.provider === provider && entry.sourceKey === sourceKey);
+    const allowReassignmentSearch = params.get("mode") === "search";
     const claimedByOtherAnime = (provider: string, bundleKey?: string) =>
-      Boolean(bundleKey && bundleAssignments.some((entry) =>
+      Boolean(!allowReassignmentSearch && bundleKey && bundleAssignments.some((entry) =>
         entry.exclusive && entry.provider === provider && entry.bundleKey === bundleKey && entry.animeId !== animeId));
     const resolvedTitle = await resolveKoreanTitle(title) || title;
     const exactMatches = (await getAniAllMatches(resolvedTitle, animeId)).sort((a, b) => b.confidence - a.confidence);
