@@ -8,6 +8,8 @@ import {
   EpisodeStreamInfo,
 } from "./types";
 import { ANISSIA_PREFIX, stripAnissiaId, toAnissiaId } from "./ids";
+import {getConfirmedReanimeIdsForAnissia} from "../reanimeMatches";
+import {getReanimeArtwork} from "./reanime";
 import { resolveAnissiaStream } from "../resolvers/videoResolver";
 
 /** Parse Anissia episode labels without concatenating punctuation-separated digits.
@@ -130,14 +132,11 @@ async function getMasterScheduleMap(): Promise<Map<number, { subject: string; or
  */
 export async function fetchAniListMeta(searchTitle: string): Promise<AniListMeta | null> {
   if (!searchTitle || searchTitle.trim().length === 0) return null;
-  const cleanTitle = searchTitle
-    .replace(/[第期シーズンSeason]+|\d+기|\d+th/gi, "")
-    .replace(/[~～\-–].*$/, "")
-    .trim();
+  const cleanTitle = searchTitle.normalize('NFKC').replace(/\s+/g,' ').trim();
   const cacheKey = cleanTitle.toLowerCase();
 
   const cached = aniListMetaCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+  if (cached && Date.now() - cached.timestamp < (cached.meta ? CACHE_TTL_MS : 5*60*1000)) {
     return cached.meta;
   }
 
@@ -203,24 +202,25 @@ export async function fetchAniListMeta(searchTitle: string): Promise<AniListMeta
   }
 }
 
-/**
- * 여러 타이틀의 AniList 메타데이터를 병렬 큐(최대 5개 동시)로 일괄 보강
- */
-async function enrichWithAniList(items: Array<{ titleToSearch: string; [k: string]: any }>): Promise<Map<string, AniListMeta>> {
-  const metaMap = new Map<string, AniListMeta>();
-  const batchSize = 5;
-
-  for (let i = 0; i < items.length; i += batchSize) {
-    const batch = items.slice(i, i + batchSize);
-    await Promise.allSettled(
-      batch.map(async (item) => {
-        const meta = await fetchAniListMeta(item.titleToSearch);
-        if (meta) {
-          metaMap.set(item.titleToSearch, meta);
-        }
-      })
-    );
+const metaKey=(animeNo:unknown,title:string)=>`${animeNo || ''}:${title}`;
+async function fetchAnissiaMeta(animeNo:number,searchTitle:string,links?:Map<number,string>):Promise<AniListMeta|null> {
+  const reanimeId=(links || await getConfirmedReanimeIdsForAnissia([animeNo])).get(animeNo);
+  if(reanimeId) {
+    const artwork=await getReanimeArtwork(reanimeId);
+    if(artwork)return artwork;
   }
+  return fetchAniListMeta(searchTitle);
+}
+
+/** ReAnime first, AniList only when no confirmed ReAnime poster is available. */
+async function enrichWithArtwork(items:Array<{titleToSearch:string;animeNo:unknown;[k:string]:any}>):Promise<Map<string,AniListMeta>> {
+  const metaMap=new Map<string,AniListMeta>();
+  const targets=[...new Map(items.map(item=>[metaKey(item.animeNo,item.titleToSearch),item])).values()];
+  const links=await getConfirmedReanimeIdsForAnissia(targets.map(item=>Number(item.animeNo)));
+  for(let i=0;i<targets.length;i+=5)await Promise.allSettled(targets.slice(i,i+5).map(async item=>{
+    const meta=await fetchAnissiaMeta(Number(item.animeNo),item.titleToSearch,links);
+    if(meta)metaMap.set(metaKey(item.animeNo,item.titleToSearch),meta);
+  }));
   return metaMap;
 }
 
@@ -347,7 +347,7 @@ class AnissiaProvider implements AnimeProvider {
         }
       }
 
-      // 스케줄 마스터 맵에서 일본어 원제 매핑 (AniList 포스터 일치율 100% 보장)
+      // 원제를 보완하고 확정된 ReAnime ID로 포스터를 먼저 조회
       const scheduleMap = await getMasterScheduleMap();
       const enrichTargets = uniqueItems.map((u) => {
         const sched = scheduleMap.get(Number(u.animeNo));
@@ -358,12 +358,12 @@ class AnissiaProvider implements AnimeProvider {
           animeNo: u.animeNo,
         };
       });
-      const metaMap = await enrichWithAniList(enrichTargets);
+      const metaMap = await enrichWithArtwork(enrichTargets);
 
       const items: AnimeListItem[] = uniqueItems.map((item) => {
         const sched = scheduleMap.get(Number(item.animeNo));
         const searchTitle = sched?.originalSubject || item.subject || "";
-        const meta = metaMap.get(searchTitle);
+        const meta = metaMap.get(metaKey(item.animeNo,searchTitle));
         const epStr = item.episode ? `${item.episode}화` : "";
         const creatorStr = item.name ? `[${item.name}]` : "";
         const remarks = [epStr, creatorStr].filter(Boolean).join(" ");
@@ -422,15 +422,15 @@ class AnissiaProvider implements AnimeProvider {
       const json = await res.json();
       const rawList = Array.isArray(json.data) ? json.data : [];
 
-      // AniList 메타데이터 병렬 결합 (일본어 원제 우선 매핑)
+      // 확정 ReAnime 포스터 우선, 없을 때 원제로 AniList 조회
       const enrichTargets = rawList.map((item: any) => ({
-        titleToSearch: item.originalSubject || item.subject,
+        titleToSearch: item.originalSubject || item.subject,animeNo:item.animeNo,
       }));
-      const metaMap = await enrichWithAniList(enrichTargets);
+      const metaMap = await enrichWithArtwork(enrichTargets);
 
       const items: AnimeListItem[] = rawList.map((item: any) => {
         const searchKey = item.originalSubject || item.subject;
-        const meta = metaMap.get(searchKey);
+        const meta = metaMap.get(metaKey(item.animeNo,searchKey));
         const timeStr = item.time || "";
         const capCount = Number(item.captionCount || 0);
         const remarks = `${timeStr} | 자막 ${capCount}명`;
@@ -661,12 +661,12 @@ class AnissiaProvider implements AnimeProvider {
       const data = json?.data;
       const list = Array.isArray(data?.content) ? data.content : Array.isArray(data) ? data : [];
       const targets = list.map((item: any) => ({
-        titleToSearch: item.originalSubject || item.subject || "",
+        titleToSearch: item.originalSubject || item.subject || "",animeNo:item.animeNo,
       }));
-      const metaMap = await enrichWithAniList(targets);
+      const metaMap = await enrichWithArtwork(targets);
       const items: AnimeListItem[] = list.map((item: any) => {
         const searchKey = item.originalSubject || item.subject || "";
-        const meta = metaMap.get(searchKey);
+        const meta = metaMap.get(metaKey(item.animeNo,searchKey));
         const captionCount = Number(item.captionCount || 0);
         return {
           id: toAnissiaId(item.animeNo),
@@ -710,13 +710,13 @@ class AnissiaProvider implements AnimeProvider {
       const list = Array.isArray(content) ? content : [];
 
       const enrichTargets = list.map((item: any) => ({
-        titleToSearch: item.originalSubject || item.subject,
+        titleToSearch: item.originalSubject || item.subject,animeNo:item.animeNo,
       }));
-      const metaMap = await enrichWithAniList(enrichTargets);
+      const metaMap = await enrichWithArtwork(enrichTargets);
 
       const items: AnimeListItem[] = list.map((item: any) => {
         const searchKey = item.originalSubject || item.subject;
-        const meta = metaMap.get(searchKey);
+        const meta = metaMap.get(metaKey(item.animeNo,searchKey));
         const genres = item.genres ? item.genres.split(",").map((g: string) => g.trim()) : [];
 
         return {
@@ -770,8 +770,8 @@ class AnissiaProvider implements AnimeProvider {
 
       const captions = capRes.status === "fulfilled" && Array.isArray(capRes.value?.data) ? capRes.value.data : [];
 
-      // AniList 메타데이터 보강 (고화질 포스터, 배너, 줄거리)
-      const meta = await fetchAniListMeta(animeData.originalSubject || animeData.subject);
+      // 확정 ReAnime 메타데이터 우선, 없을 때 AniList 조회
+      const meta = await fetchAnissiaMeta(animeNo,animeData.originalSubject || animeData.subject);
 
       // 에피소드 목록 추출 (자막 등록된 에피소드 번호 파싱 또는 1부터 최대 번호까지)
       const epNumbers = new Set<number>();

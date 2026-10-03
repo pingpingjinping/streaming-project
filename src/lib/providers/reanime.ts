@@ -138,6 +138,46 @@ async function fetchReanimeJson<T = any>(
   return null;
 }
 
+export interface ReanimeArtwork {
+  poster:string;banner:string;anilistId:number;romajiTitle:string;nativeTitle:string;
+  description:string;genres:string[];totalEpisodes:number|null;rating:number|null;
+}
+const artworkCache=new Map<string,{value:ReanimeArtwork|null;expires:number}>();
+const artworkPending=new Map<string,Promise<ReanimeArtwork|null>>();
+
+/** Fetch metadata only, without downloading episode lists or searching by title. */
+export async function getReanimeArtwork(reanimeId:string):Promise<ReanimeArtwork|null> {
+  const slug=stripReanimeId(reanimeId);if(!slug || !/^[a-z\d][a-z\d-]*$/i.test(slug))return null;
+  const baseUrl=await getBaseUrl(),key=baseUrl+'|'+slug;
+  const cached=artworkCache.get(key);if(cached && cached.expires>Date.now())return cached.value;
+  if(artworkPending.has(key))return artworkPending.get(key)!;
+  const pending=(async()=>{
+    let value:ReanimeArtwork|null=null;
+    try {
+      const raw=await fetchReanimeJson<any>(`${baseUrl}/api/v1/anime/${encodeURIComponent(slug)}`,
+        {...REANIME_HEADERS,Referer:`${baseUrl}/`},3000);
+      if(raw && (!raw.anime_id || raw.anime_id===slug)) {
+        const image=(input:unknown)=>{
+          if(typeof input!=='string' || !input.trim())return '';
+          try {const url=new URL(input,baseUrl);return /^https?:$/.test(url.protocol)?url.href:'';}catch{return '';}
+        };
+        const poster=[raw.cover_image?.extra_large,raw.cover_image?.large,raw.cover_image?.medium,raw.banner_image].map(image).find(Boolean) || '';
+        if(poster)value={poster,banner:image(raw.banner_image),anilistId:Number(raw.anilist_id)||0,
+          romajiTitle:raw.title?.romaji || raw.title?.english || '',nativeTitle:raw.title?.native || '',
+          description:typeof raw.description==='string'?raw.description.replace(/<[^>]*>/g,''):'',
+          genres:Array.isArray(raw.genres)?raw.genres.filter((g:unknown)=>typeof g==='string'):[],
+          totalEpisodes:Number(raw.episodes_total)>0?Number(raw.episodes_total):null,
+          rating:Number(raw.average_score)>0?Number(raw.average_score)/10:null};
+      }
+    }catch { /* Missing posters allow the AniList fallback. */ }
+    if(artworkCache.size>=4000)artworkCache.delete(artworkCache.keys().next().value!);
+    artworkCache.set(key,{value,expires:Date.now()+(value?24*60*60*1000:5*60*1000)});
+    return value;
+  })();
+  artworkPending.set(key,pending);
+  try{return await pending;}finally{artworkPending.delete(key);}
+}
+
 async function fetchHomeData(): Promise<any> {
   const now = Date.now();
   if (homeCache && now - homeCache.timestamp < HOME_CACHE_TTL) {

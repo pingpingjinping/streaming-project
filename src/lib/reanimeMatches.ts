@@ -40,6 +40,25 @@ export async function getMonthlyAnissiaCandidates(animeId: string): Promise<Rean
 
 const bundled = matches as unknown as Record<string, [string, number | null, string]>;
 
+/** Reverse only confirmed IDs; multiple ReAnime works never become an arbitrary poster. */
+export async function getConfirmedReanimeIdsForAnissia(animeNos: number[]): Promise<Map<number,string>> {
+  const ids=[...new Set(animeNos.filter(n=>Number.isSafeInteger(n) && n>0))];
+  const candidates=new Map<number,Set<string>>();
+  const add=(n:number,id:string)=>{
+    if(!ids.includes(n) || !id)return;
+    const values=candidates.get(n) || new Set<string>();values.add(id);candidates.set(n,values);
+  };
+  if(!ids.length)return new Map();
+  const sql=getDb();let loaded=false;
+  if(sql)try {
+    const rows=await sql`SELECT anissia_no,reanime_id FROM anime_reanime_matches
+      WHERE anissia_no=ANY(${ids}::integer[]) AND review_status IN ('검토된 사항','자동확정')`;
+    rows.forEach(row=>add(Number(row.anissia_no),String(row.reanime_id)));loaded=true;
+  }catch { /* A Pi without the imported table can use the bundled reviewed IDs. */ }
+  if(!loaded)for(const [slug,row] of Object.entries(bundled))if(row[1])add(row[1],slug);
+  return new Map([...candidates].flatMap(([n,values])=>values.size===1 ? [[n,[...values][0]] as const] : []));
+}
+
 export function getBundledReanimeMatch(animeId: string): ReanimeMatch | null {
   const slug = animeId.replace(/^re_/, "");
   const row = bundled[slug];

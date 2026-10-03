@@ -1,3 +1,4 @@
+import {getLinkedReanimeCatalog} from "@/lib/linkedReanimeCatalog";
 import { NextRequest, NextResponse } from "next/server";
 import {
   getProvider,
@@ -30,7 +31,9 @@ export async function GET(request: NextRequest) {
   const period = (searchParams.get("period") || "day") as "day" | "week" | "month" | "all";
 
   let result;
-  if (q) {
+  if(source==="reanime" && searchParams.get("linked")==="1") {
+    result=await getLinkedReanimeCatalog({q,page,year,sort:searchParams.get("sort") || "year_desc"});
+  } else if (q) {
     result = await provider.searchAnime(q, page);
   } else if (source === "reanime") {
     const category = (
@@ -56,7 +59,7 @@ export async function GET(request: NextRequest) {
 
   const noCache = searchParams.get("nocache") === "1";
   const cacheControl =
-    noCache || q
+    noCache || q || searchParams.get("linked")==="1"
       ? "no-store"
       : "public, s-maxage=300, stale-while-revalidate=600";
 

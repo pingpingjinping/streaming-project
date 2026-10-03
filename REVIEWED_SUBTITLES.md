@@ -56,6 +56,12 @@ Rejections of reviewed files use stable `reviewed:DATASET:PID` keys. Existing we
 
 Manually edited Postgres file rows remain protected by the importer, and confirmed episode rows are imported without reassignment. These code changes do not transfer ZIPs, delete old files, or deploy to the Pi. Copy and test the cleaned folders before removing an old AniAll copy.
 
+## Artwork and linked ReAnime catalog
+
+Anissia recent captions, schedules, catalog, search and detail pages first use the unique confirmed ReAnime ID associated with the Anissia work. ReAnime metadata is requested for that exact ID, without fetching episodes or searching titles. Only a missing link or unusable ReAnime poster falls back to AniList. Ambiguous reverse links are not selected arbitrarily. Artwork results are cached for 24 hours, failures for five minutes, and simultaneous ReAnime metadata requests are deduplicated. AniList search preserves original title letters, seasons and subtitles. Global Anissia rankings continue to use their original AniList data.
+
+In ReAnime, `DB 연결 작품만 보기` lists confirmed `anime_reanime_matches` joined to the ReAnime catalog. Both `검토된 사항` and `자동확정` are eligible; held candidates and orphan links are excluded. This means confirmed work DB linkage, independent of local subtitle possession. Pagination, Korean/native/English title search, year and year sort happen in the DB before artwork lookup. The active filter survives search, pagination and year controls. Genre and remote feed filters remain in the normal catalog. An unavailable or empty DB never substitutes an unfiltered feed. These reads do not modify catalog links, episode rows, review decisions or subtitle files.
+
 ## Validation
 
 `npm run test:subtitles` exercises mixed archives, archive/member hashes, flattened paths, PID rejection, confirmed episodes, episode offsets, ambiguity, missing files, native VTT and loose weekly files. It also checks independent TV/OVA assignments, successive episodes, exact-file exceptions, removal, missing-file notices and user isolation. GitHub Actions runs actual PostgreSQL queries and settings writes, comparing only the fixture rows involved to verify reviewed work links and confirmed episodes remain unchanged. The existing importer checks and production build also run in the same workflow.
