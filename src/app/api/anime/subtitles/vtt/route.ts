@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { searchAllSubtitlesParallel, findKairanSubtitle } from "@/lib/subtitles";
 import { assertSafeProxyUrl, UnsafeProxyUrlError } from "@/lib/proxyGuard";
 import { getReviewedSubtitleById } from "@/lib/reviewedSubtitleStorage";
-import { getSubtitleRejections } from "@/lib/db";
+import { getSubtitleBundleAssignment, getSubtitleRejections } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
 
 function toSeconds(tStr: string): number {
@@ -103,10 +103,14 @@ export async function GET(request: NextRequest) {
     let isAss = false;
 
     if (reviewedFileId) {
-      const rejected = await getSubtitleRejections(animeId);
+      const [rejected, assignment] = await Promise.all([
+        getSubtitleRejections(animeId),
+        getSubtitleBundleAssignment(user.username, animeId),
+      ]);
       const subtitle = await getReviewedSubtitleById(animeId, reviewedFileId,
         (provider, key) => rejected.some(r => r.provider === provider && (r.sourceKey === key
-          || (provider === "aniall" && !r.sourceKey.startsWith("reviewed:")))));
+          || (provider === "aniall" && !r.sourceKey.startsWith("reviewed:")))),
+        assignment?.bundleKey || "");
       if (!subtitle) return new NextResponse("WEBVTT\n\n", { status: 404,
         headers: { "Content-Type": "text/vtt; charset=utf-8", "Cache-Control": "no-store" } });
       content = subtitle.content;
