@@ -107,6 +107,9 @@ interface SubtitleItem {
   localArchive?: boolean;
   localArchiveTrackKey?: string;
   reviewedFileId?: string;
+  sourceBundleKey?: string;
+  sourceBundleLabel?: string;
+  bundleAssigned?: boolean;
 }
 
 const creatorIdentity = (creator: CreatorInfo) => `${creator.website}\n${creator.matchedTitle || ""}`;
@@ -2100,6 +2103,9 @@ export default function Player(props: PlayerProps) {
       localArchive: option.localArchive,
       localArchiveTrackKey: option.localArchiveTrackKey,
       reviewedFileId: option.reviewedFileId,
+      sourceBundleKey: option.sourceBundleKey,
+      sourceBundleLabel: option.sourceBundleLabel,
+      bundleAssigned: option.bundleAssigned,
     };
     try {
       const trackPreferenceKey = `anissia-local-track:${animeId}`;
@@ -3508,6 +3514,9 @@ export default function Player(props: PlayerProps) {
           localArchive: Boolean(s.localArchive),
           localArchiveTrackKey: s.localArchiveTrackKey,
           reviewedFileId: s.reviewedFileId,
+          sourceBundleKey: s.sourceBundleKey,
+          sourceBundleLabel: s.sourceBundleLabel,
+          bundleAssigned: Boolean(s.bundleAssigned),
         }));
 
         const combined = [...fetchedList, ...newSubs];

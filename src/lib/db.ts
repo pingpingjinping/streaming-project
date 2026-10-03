@@ -360,6 +360,28 @@ export async function initDb() {
     console.warn("[initDb subtitle_episode_starts warning]:", e?.message);
   }
 
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS subtitle_bundle_assignments (
+        user_id VARCHAR(100) NOT NULL,
+        anime_id VARCHAR(100) NOT NULL,
+        provider VARCHAR(16) NOT NULL,
+        bundle_key TEXT NOT NULL,
+        label TEXT NOT NULL DEFAULT '',
+        exclusive BOOLEAN NOT NULL DEFAULT TRUE,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, anime_id),
+        CONSTRAINT uq_subtitle_bundle_owner UNIQUE (user_id, provider, bundle_key)
+      )
+    `;
+    await sql`
+      CREATE INDEX IF NOT EXISTS idx_subtitle_bundle_assignment_lookup
+      ON subtitle_bundle_assignments(user_id, provider, bundle_key)
+    `;
+  } catch (e: any) {
+    console.warn("[initDb subtitle_bundle_assignments warning]:", e?.message);
+  }
+
   isInitialized = true;
 }
 
@@ -441,6 +463,118 @@ export async function setSubtitleEpisodeStart(
     return true;
   } catch (e) {
     console.error("[setSubtitleEpisodeStart error]:", e);
+    return false;
+  }
+}
+
+export type SubtitleBundleProvider = "aniall" | "anissia" | "naver";
+
+export interface SubtitleBundleAssignment {
+  animeId: string;
+  provider: SubtitleBundleProvider;
+  bundleKey: string;
+  label: string;
+  exclusive: boolean;
+}
+
+function toSubtitleBundleAssignment(row: any): SubtitleBundleAssignment {
+  return {
+    animeId: String(row.anime_id),
+    provider: String(row.provider) as SubtitleBundleProvider,
+    bundleKey: String(row.bundle_key),
+    label: String(row.label || ""),
+    exclusive: row.exclusive !== false,
+  };
+}
+
+export async function getSubtitleBundleAssignment(
+  userId: string,
+  animeId: string,
+): Promise<SubtitleBundleAssignment | null> {
+  const sql = getDb();
+  if (!sql || !userId || !animeId) return null;
+  await initDb();
+  try {
+    const rows = await sql`
+      SELECT anime_id, provider, bundle_key, label, exclusive
+      FROM subtitle_bundle_assignments
+      WHERE user_id = ${userId} AND anime_id = ${animeId}
+      LIMIT 1
+    `;
+    return rows[0] ? toSubtitleBundleAssignment(rows[0]) : null;
+  } catch (e) {
+    console.warn("[getSubtitleBundleAssignment warning]:", e);
+    return null;
+  }
+}
+
+export async function getSubtitleBundleAssignments(userId: string): Promise<SubtitleBundleAssignment[]> {
+  const sql = getDb();
+  if (!sql || !userId) return [];
+  await initDb();
+  try {
+    const rows = await sql`
+      SELECT anime_id, provider, bundle_key, label, exclusive
+      FROM subtitle_bundle_assignments
+      WHERE user_id = ${userId}
+      ORDER BY updated_at DESC
+    `;
+    return rows.map(toSubtitleBundleAssignment);
+  } catch (e) {
+    console.warn("[getSubtitleBundleAssignments warning]:", e);
+    return [];
+  }
+}
+
+export async function saveSubtitleBundleAssignment(
+  userId: string,
+  animeId: string,
+  provider: SubtitleBundleProvider,
+  bundleKey: string,
+  label = "",
+): Promise<boolean> {
+  const sql = getDb();
+  if (!sql || !userId || !animeId || animeId.length > 100 ||
+      !["aniall", "anissia", "naver"].includes(provider) ||
+      !bundleKey || bundleKey.length > 2000 || label.length > 1000) return false;
+  await initDb();
+  try {
+    await sql.begin(async (tx) => {
+      // A local bundle has one owner per user. Reassigning it moves ownership
+      // from a wrong season/work instead of leaving the bundle visible twice.
+      await tx`
+        DELETE FROM subtitle_bundle_assignments
+        WHERE user_id = ${userId} AND provider = ${provider}
+          AND bundle_key = ${bundleKey} AND anime_id <> ${animeId}
+      `;
+      await tx`
+        INSERT INTO subtitle_bundle_assignments
+          (user_id, anime_id, provider, bundle_key, label, exclusive, updated_at)
+        VALUES (${userId}, ${animeId}, ${provider}, ${bundleKey}, ${label}, TRUE, CURRENT_TIMESTAMP)
+        ON CONFLICT (user_id, anime_id)
+        DO UPDATE SET provider = EXCLUDED.provider, bundle_key = EXCLUDED.bundle_key,
+          label = EXCLUDED.label, exclusive = TRUE, updated_at = CURRENT_TIMESTAMP
+      `;
+    });
+    return true;
+  } catch (e) {
+    console.error("[saveSubtitleBundleAssignment error]:", e);
+    return false;
+  }
+}
+
+export async function deleteSubtitleBundleAssignment(userId: string, animeId: string): Promise<boolean> {
+  const sql = getDb();
+  if (!sql || !userId || !animeId) return false;
+  await initDb();
+  try {
+    await sql`
+      DELETE FROM subtitle_bundle_assignments
+      WHERE user_id = ${userId} AND anime_id = ${animeId}
+    `;
+    return true;
+  } catch (e) {
+    console.error("[deleteSubtitleBundleAssignment error]:", e);
     return false;
   }
 }
