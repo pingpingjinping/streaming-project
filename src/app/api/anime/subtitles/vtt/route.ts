@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { searchAllSubtitlesParallel, findKairanSubtitle } from "@/lib/subtitles";
 import { assertSafeProxyUrl, UnsafeProxyUrlError } from "@/lib/proxyGuard";
 import { getReviewedSubtitleById } from "@/lib/reviewedSubtitleStorage";
-import { getSubtitleBundleAssignment, getSubtitleRejections } from "@/lib/db";
+import { getSubtitleBundleAssignment, getSubtitleRejections, getSubtitleEpisodeOverrides } from "@/lib/db";
+import {getLocalSubtitleFile} from "@/lib/subtitleStorage";
+import {resolveSubtitleOverride} from '@/lib/subtitleOverrides';
 import { getSessionUser } from "@/lib/auth";
 
 function toSeconds(tStr: string): number {
@@ -94,6 +96,7 @@ export async function GET(request: NextRequest) {
   const ep = parseInt(searchParams.get("ep") || "1", 10) || 1;
   const subName = searchParams.get("name")?.trim();
   const rawUrl = searchParams.get("url")?.trim();
+  const localFileId=searchParams.get("localFileId") || "";
   const reviewedFileId = searchParams.get("reviewedFileId") || "";
   const animeId = searchParams.get("animeId") || "";
   const offset = parseFloat(searchParams.get("offset") || "0") || 0;
@@ -102,12 +105,19 @@ export async function GET(request: NextRequest) {
     let content = "";
     let isAss = false;
 
-    if (reviewedFileId) {
-      const [rejected, assignment] = await Promise.all([
+    if(localFileId) {
+      const subtitle=await getLocalSubtitleFile(localFileId);
+      if(!subtitle) return new NextResponse("WEBVTT\n\n",{status:404,headers:{"Content-Type":"text/vtt; charset=utf-8","Cache-Control":"no-store"}});
+      content=subtitle.content;isAss=subtitle.is_ass;
+    }
+    if (!localFileId && reviewedFileId) {
+      const [rejected, assignment, exceptions] = await Promise.all([
         getSubtitleRejections(animeId),
         getSubtitleBundleAssignment(user.username, animeId),
+        getSubtitleEpisodeOverrides(user.username,animeId),
       ]);
-      const subtitle = await getReviewedSubtitleById(animeId, reviewedFileId,
+      const exception=exceptions.find(e=>e.episodeNumber===ep && e.fileId===reviewedFileId);
+      const subtitle = exception ? await resolveSubtitleOverride(exception.provider,exception.fileId) : await getReviewedSubtitleById(animeId, reviewedFileId,
         (provider, key) => rejected.some(r => r.provider === provider && (r.sourceKey === key
           || (provider === "aniall" && !r.sourceKey.startsWith("reviewed:")))),
         assignment?.bundleKey || "");
@@ -118,7 +128,7 @@ export async function GET(request: NextRequest) {
     }
 
     // 1. URL이 전달된 경우 (기존 프록시 또는 외부 URL)
-    if (!reviewedFileId && rawUrl) {
+    if (!localFileId && !reviewedFileId && rawUrl) {
       const fetchUrl = rawUrl.startsWith("http://") || rawUrl.startsWith("https://")
         ? rawUrl
         : new URL(rawUrl, request.url).toString();
@@ -143,7 +153,7 @@ export async function GET(request: NextRequest) {
     }
 
     // 2. title과 ep로 검색
-    if (!reviewedFileId && !content && title) {
+    if (!localFileId && !reviewedFileId && !content && title) {
       // 카이란 단독 검색 시도
       if (subName && subName.includes("카이란")) {
         const kairan = await findKairanSubtitle(title, ep, 5000);
@@ -195,7 +205,7 @@ export async function GET(request: NextRequest) {
         "Content-Type": "text/vtt; charset=utf-8",
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, OPTIONS",
-        "Cache-Control": reviewedFileId ? "private, no-store" : "public, max-age=3600",
+        "Cache-Control": (reviewedFileId || localFileId) ? "private, no-store" : "public, max-age=3600",
       },
     });
   } catch (err) {

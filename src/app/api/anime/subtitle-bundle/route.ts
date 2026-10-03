@@ -6,6 +6,8 @@ import {
   saveSubtitleBundleAssignment,
   type SubtitleBundleProvider,
 } from "@/lib/db";
+import {parseBundleScope} from '@/lib/subtitleLocalIdentity';
+import {resolveSubtitleOverride} from '@/lib/subtitleOverrides';
 
 function validAnimeId(value: unknown) {
   const id = typeof value === "string" ? value.trim() : "";
@@ -34,12 +36,17 @@ export async function PUT(request: NextRequest) {
   const provider = validProvider(body?.provider);
   const bundleKey = typeof body?.bundleKey === "string" ? body.bundleKey.trim() : "";
   const label = typeof body?.label === "string" ? body.label.trim() : "";
+  const fileId = typeof body?.fileId === 'string' ? body.fileId : '';
 
-  if (!animeId || !provider || !bundleKey || bundleKey.length > 2000 || label.length > 1000) {
+  if (!animeId || !provider || !parseBundleScope(bundleKey) || label.length > 1000 || !fileId || fileId.length>4000) {
     return NextResponse.json({ success: false, message: "자막 묶음 정보가 올바르지 않습니다." }, { status: 400 });
   }
 
-  const saved = await saveSubtitleBundleAssignment(user.username, animeId, provider, bundleKey, label);
+  const subtitle=await resolveSubtitleOverride(provider,fileId);
+  if(!subtitle || subtitle.sourceBundleKey!==bundleKey) return NextResponse.json({success:false,
+    message:'선택한 묶음이 없거나 변경되었습니다. 로컬 검색에서 다시 선택해 주세요.'},{status:409});
+
+  const saved = await saveSubtitleBundleAssignment(user.username, animeId, provider, bundleKey, subtitle.sourceBundleLabel.slice(0,1000));
   if (!saved) return NextResponse.json({ success: false, message: "자막 묶음을 저장하지 못했습니다." }, { status: 500 });
 
   const assignment = await getSubtitleBundleAssignment(user.username, animeId);

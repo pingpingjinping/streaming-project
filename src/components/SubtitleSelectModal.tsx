@@ -1,4 +1,5 @@
 "use client";
+import SubtitleEpisodeExceptions from "./SubtitleEpisodeExceptions";
 
 import { useState, useRef, useEffect, DragEvent, ChangeEvent } from "react";
 import { createPortal } from "react-dom";
@@ -46,6 +47,9 @@ export interface SubtitleOption {
   localArchive?: boolean;
   localArchiveTrackKey?: string;
   reviewedFileId?: string;
+  localFileId?: string;
+  episodeConfirmed?: boolean;
+  episodeException?: boolean;
   sourceBundleKey?: string;
   sourceBundleLabel?: string;
   bundleAssigned?: boolean;
@@ -122,6 +126,7 @@ export default function SubtitleSelectModal({
   const [savedStartEpisode, setSavedStartEpisode] = useState<number | null>(null);
   const [savingStartEpisode, setSavingStartEpisode] = useState(false);
   const [startEpisodeNotice, setStartEpisodeNotice] = useState<string | null>(null);
+  const [exceptionCandidate,setExceptionCandidate]=useState<SubtitleOption|null>(null);
   const [bundleAssignment, setBundleAssignment] = useState<BundleAssignment | null>(null);
   const [savingBundleKey, setSavingBundleKey] = useState("");
   const [bundleNotice, setBundleNotice] = useState<string | null>(null);
@@ -146,6 +151,7 @@ export default function SubtitleSelectModal({
       setSearchError(null);
       setFileError(null);
       setFileNotice(null);
+      setExceptionCandidate(null);
     }
   }, [isOpen, animeTitle, episodeNumber]);
 
@@ -240,12 +246,14 @@ export default function SubtitleSelectModal({
           animeId,
           provider: subtitle.sourceProvider,
           bundleKey: subtitle.sourceBundleKey,
+          fileId:subtitle.reviewedFileId || subtitle.localFileId,
           label: subtitle.sourceBundleLabel || subtitle.sourceMatchedTitle || subtitle.matchedTitle || animeTitle,
         }),
       });
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.message || "자막 묶음을 지정하지 못했습니다.");
       setBundleAssignment(data.assignment || null);
+      window.dispatchEvent(new CustomEvent("subtitle-settings-changed",{detail:{animeId}}));
       onSelectSubtitle({ ...subtitle, bundleAssigned: true });
       onClose();
     } catch (error) {
@@ -267,6 +275,7 @@ export default function SubtitleSelectModal({
       if (!response.ok || !data.success) throw new Error(data.message || "묶음 지정을 해제하지 못했습니다.");
       setBundleAssignment(null);
       setBundleNotice("작품 전체 묶음 지정을 해제했어. 다시 자동 매칭으로 돌아가.");
+      window.dispatchEvent(new CustomEvent("subtitle-settings-changed",{detail:{animeId}}));
     } catch (error) {
       setBundleNotice(error instanceof Error ? error.message : "묶음 지정을 해제하지 못했습니다.");
     } finally {
@@ -309,6 +318,7 @@ export default function SubtitleSelectModal({
           localArchive: true,
           localArchiveTrackKey: subtitle.localArchiveTrackKey,
           reviewedFileId: subtitle.reviewedFileId,
+          localFileId:subtitle.localFileId,episodeConfirmed:subtitle.episodeConfirmed,episodeException:subtitle.episodeException,
           sourceBundleKey: subtitle.sourceBundleKey,
           sourceBundleLabel: subtitle.sourceBundleLabel,
           bundleAssigned: Boolean(subtitle.bundleAssigned),
@@ -449,6 +459,7 @@ export default function SubtitleSelectModal({
         localArchive: Boolean(s.localArchive),
         localArchiveTrackKey: s.localArchiveTrackKey,
         reviewedFileId: s.reviewedFileId,
+        localFileId:s.localFileId,episodeConfirmed:s.episodeConfirmed,episodeException:s.episodeException,
         sourceBundleKey: s.sourceBundleKey,
         sourceBundleLabel: s.sourceBundleLabel,
         bundleAssigned: Boolean(s.bundleAssigned),
@@ -502,6 +513,7 @@ export default function SubtitleSelectModal({
         localArchive: Boolean(s.localArchive),
         localArchiveTrackKey: s.localArchiveTrackKey,
         reviewedFileId: s.reviewedFileId,
+        localFileId:s.localFileId,episodeConfirmed:s.episodeConfirmed,episodeException:s.episodeException,
         sourceBundleKey: s.sourceBundleKey,
         sourceBundleLabel: s.sourceBundleLabel,
         bundleAssigned: Boolean(s.bundleAssigned),
@@ -680,7 +692,7 @@ export default function SubtitleSelectModal({
                   {isLoadingLocalArchives && <span className="text-xs text-emerald-300">검색 중…</span>}
                 </div>
                 <p className="mb-2 text-[11px] leading-relaxed text-slate-400">
-                  현재 화만 바꾸거나, 로컬 ZIP/묶음을 작품 전체에 지정할 수 있어. 작품 전체 지정은 다음 화에도 자동 적용되고 같은 묶음은 다른 시즌에서 숨겨져.
+                  작품·시즌별 묶음을 지정하면 회차가 확인된 자막을 다음 화에도 찾아. OVA·특전은 별도로 고르거나 회차별 예외로 저장할 수 있어.
                 </p>
                 {bundleAssignment && (
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs">
@@ -695,10 +707,14 @@ export default function SubtitleSelectModal({
                   </div>
                 )}
                 {bundleNotice && <p className="mb-2 text-[11px] text-emerald-200">{bundleNotice}</p>}
+                <SubtitleEpisodeExceptions animeId={animeId} animeTitle={animeTitle} currentEpisode={episodeNumber || 1}
+                  candidate={exceptionCandidate} onCancel={()=>setExceptionCandidate(null)} onSaved={(subtitle,ep)=>{
+                    if(ep===(episodeNumber || 1)) {onSelectSubtitle(subtitle);onClose();}
+                  }} />
                 {visibleLocalArchiveOptions.length ? (
                   <div className="space-y-2">
                     {visibleLocalArchiveOptions.map((subtitle, index) => (
-                      <div key={`${subtitle.name}-${index}`} className="flex items-center gap-2">
+                      <div key={`${subtitle.name}-${index}`} className="flex flex-wrap items-center gap-2">
                         <button type="button"
                           onClick={() => { onSelectSubtitle(subtitle); onClose(); }}
                           className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-500/20 bg-slate-900/70 px-3 py-2 text-left hover:border-emerald-400/50 hover:bg-slate-900">
@@ -717,6 +733,8 @@ export default function SubtitleSelectModal({
                               : savingBundleKey === `${subtitle.sourceProvider}:${subtitle.sourceBundleKey}` ? "지정 중…" : "작품 전체 지정"}
                           </button>
                         )}
+                        {(subtitle.reviewedFileId || subtitle.localFileId) && <button type="button" onClick={()=>setExceptionCandidate(subtitle)}
+                          className="shrink-0 rounded-lg border border-amber-500/40 px-2.5 py-2 text-[11px] font-bold text-amber-200">예외 만들기</button>}
                         <button type="button" onClick={() => changeRejection(subtitleSource(subtitle), true)}
                           disabled={Boolean(savingRejection)}
                           className="shrink-0 rounded-lg px-2 py-2 text-[11px] text-slate-400 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50">이 자막은 아니야</button>
@@ -856,7 +874,7 @@ export default function SubtitleSelectModal({
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                         <button type="button" onClick={() => changeRejection(creatorSource(c), true)}
                           disabled={Boolean(savingRejection)}
                           className="rounded-lg px-2 py-2 text-[11px] text-slate-400 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50">이 자막은 아니야</button>
@@ -1032,6 +1050,8 @@ export default function SubtitleSelectModal({
                           : savingBundleKey === `${sub.sourceProvider}:${sub.sourceBundleKey}` ? "지정 중…" : "작품 전체 지정"}
                       </button>
                     )}
+                    {sub.localArchive && (sub.reviewedFileId || sub.localFileId) && <button type="button" onClick={()=>{setExceptionCandidate(sub);setActiveTab("creators");}}
+                      className="rounded-lg border border-amber-500/40 px-3 py-2 text-[11px] font-bold text-amber-200">예외 만들기</button>}
                     <button type="button" onClick={() => changeRejection(subtitleSource(sub), true)}
                       disabled={Boolean(savingRejection)}
                       className="rounded-lg px-2 py-2 text-[11px] text-slate-400 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50">이 자막은 아니야</button>
