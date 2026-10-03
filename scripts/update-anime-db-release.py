@@ -21,6 +21,37 @@ ASSET_NAME = "anime_four_sources_multilingual_prepared.zip"
 MAX_ASSET_SIZE = 128 * 1024 * 1024
 EXPECTED_SOURCES = {"AniList", "ReAnime", "Onnada", "Anissia"}
 STATE_FILE = Path.home() / ".local/state/streaming-project/anime-db-release.sha256"
+SUBTITLE_STATE_FILE = Path.home() / ".local/state/streaming-project/anime-db-reviewed-subtitles-v1.sha256"
+
+
+def has_reviewed_registry(db_path):
+    with sqlite3.connect(Path(db_path).resolve().as_uri() + "?mode=ro", uri=True) as db:
+        exists = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='subtitle_runtime_metadata'").fetchone()
+        if not exists:
+            return False
+        metadata = {key: json.loads(value) for key, value in db.execute("SELECT key,value FROM subtitle_runtime_metadata")}
+        if metadata.get("format_version") != 1 or metadata.get("completed_bundles") != 1109:
+            raise RuntimeError("Unsupported or incomplete reviewed subtitle registry")
+        return True
+
+
+def run_importers(db_path, repo, catalog_current=False):
+    reviewed = has_reviewed_registry(db_path)
+    subtitle_importer = Path(repo) / "scripts/import-reviewed-subtitles.py"
+    if reviewed and not subtitle_importer.is_file():
+        raise RuntimeError("Release contains reviewed subtitles; update the repository to install import-reviewed-subtitles.py")
+    if not catalog_current:
+        subprocess.run(["python3", str(Path(repo) / "scripts/import-anime-db.py"), str(db_path)], check=True, cwd=repo)
+    if reviewed:
+        subprocess.run(["python3", str(subtitle_importer), str(db_path)], check=True, cwd=repo)
+    return reviewed
+
+
+def write_state(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(value + "\n", encoding="ascii")
+    temporary.replace(path)
 
 
 def api_json(url, token):
@@ -119,10 +150,11 @@ def main():
         raise SystemExit(f"Release asset is not ready: {asset.get('state')}")
 
     digest = asset.get("digest") or ""
+    previous = STATE_FILE.read_text(encoding="ascii").strip() if STATE_FILE.exists() else ""
+    subtitle_previous = SUBTITLE_STATE_FILE.read_text(encoding="ascii").strip() if SUBTITLE_STATE_FILE.exists() else ""
     if digest.startswith("sha256:"):
         digest = digest.removeprefix("sha256:")
-        previous = STATE_FILE.read_text(encoding="ascii").strip() if STATE_FILE.exists() else ""
-        if previous and hmac.compare_digest(previous, digest):
+        if previous and hmac.compare_digest(previous, digest) and subtitle_previous and hmac.compare_digest(subtitle_previous, digest):
             print(f"Anime DB is already current (Release updated {asset.get('updated_at')}).")
             return
 
@@ -140,13 +172,13 @@ def main():
 
         repo = Path(__file__).resolve().parents[1]
         subprocess.run(["docker", "compose", "up", "-d", "db"], check=True, cwd=repo)
-        importer = Path(__file__).resolve().with_name("import-anime-db.py")
-        subprocess.run(["python3", str(importer), str(db_path)], check=True, cwd=repo)
+        reviewed = run_importers(db_path, repo, catalog_current=hmac.compare_digest(previous, actual_digest))
+        print("Reviewed subtitle registry imported." if reviewed else "Legacy release has no reviewed subtitle registry.")
 
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    temporary_state = STATE_FILE.with_suffix(".tmp")
-    temporary_state.write_text(actual_digest + "\n", encoding="ascii")
-    temporary_state.replace(STATE_FILE)
+    # Mark complete only after both import transactions succeed. A missing subtitle
+    # marker forces one download even when the catalog digest is already current.
+    write_state(STATE_FILE, actual_digest)
+    write_state(SUBTITLE_STATE_FILE, actual_digest)
     print(f"Imported Release DB updated {asset.get('updated_at')}.")
 
 

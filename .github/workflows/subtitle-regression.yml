@@ -5,6 +5,7 @@ on:
     paths:
       - 'src/**'
       - 'scripts/test-*.cjs'
+      - 'scripts/*.py'
       - 'package*.json'
       - '.github/workflows/subtitle-regression.yml'
   push:
@@ -12,6 +13,7 @@ on:
     paths:
       - 'src/**'
       - 'scripts/test-*.cjs'
+      - 'scripts/*.py'
       - 'package*.json'
       - '.github/workflows/subtitle-regression.yml'
 
@@ -25,6 +27,10 @@ jobs:
       NEXT_TELEMETRY_DISABLED: '1'
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s scripts -p test_reviewed_db_import.py -v
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
