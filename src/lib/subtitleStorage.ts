@@ -146,6 +146,8 @@ export interface AnissiaArchiveSubtitle {
   archiveFilename: string;
   localArchiveTrackKey: string;
   localArchiveTrackLabel: string;
+  sourceBundleKey: string;
+  sourceBundleLabel: string;
 }
 
 interface AnissiaArchiveIndexEntry {
@@ -397,6 +399,8 @@ export async function getAnissiaArchiveSubtitles(
             animeNo: recordNumber(candidate.entry.record, ["animeNo", "anime_no", "anissiaNo"]) || folderParts.animeNo,
             archiveFilename: filename,
             ...anissiaTrackIdentity(candidate.creator, filename, subtitle.orig_filename, episode),
+            sourceBundleKey: anissiaTrackIdentity(candidate.creator, filename, subtitle.orig_filename, episode).localArchiveTrackKey,
+            sourceBundleLabel: folderParts.title || candidate.title,
           });
         };
 
@@ -439,6 +443,8 @@ export async function getAniAllArchiveSubtitle(blogTitle: string, episode: numbe
   const folder = numbered[0] || folders.find(name => !/^[1-9]\d*__/.test(name) && normalizeBlogTitle(name) === wanted);
   if (!folder) return null;
   const folderTitle = folder.replace(/^[1-9]\d*__/, "");
+  const sourceBundleKey = postId ? `post:${postId}` : `folder:${folder}`;
+  const sourceBundleLabel = folderTitle;
   const dir = path.join(corpus, folder);
   const files = (await readdir(dir)).filter((name) => name.toLowerCase().endsWith(".zip")).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   for (const filename of files) {
@@ -455,7 +461,7 @@ export async function getAniAllArchiveSubtitle(blogTitle: string, episode: numbe
       const subtitle = decodeSubtitleFile(zip.getEntries()[entry.index].getData(), entry.filename);
       if (subtitle?.content) {
         return { blogTitle: folderTitle, name: subtitle.filename, orig_filename: subtitle.orig_filename, content: subtitle.content,
-          format: subtitle.format, is_ass: subtitle.is_ass };
+          format: subtitle.format, is_ass: subtitle.is_ass, sourceBundleKey, sourceBundleLabel };
       }
     } catch {}
   }
@@ -472,7 +478,7 @@ export async function getAniAllArchiveSubtitle(blogTitle: string, episode: numbe
     if (info.isFile() && info.size > 0 && info.size <= 2 * 1024 * 1024) {
       const subtitle = decodeSubtitleFile(await readFile(filePath), filename);
       if (subtitle?.content) return { blogTitle: folderTitle, name: subtitle.filename, orig_filename: subtitle.orig_filename,
-        content: subtitle.content, format: subtitle.format, is_ass: subtitle.is_ass };
+        content: subtitle.content, format: subtitle.format, is_ass: subtitle.is_ass, sourceBundleKey, sourceBundleLabel };
     }
   }
   return null;
