@@ -11,4 +11,6 @@ yarn-error.log*
 *.zip
 # Runtime subtitle folders and migration backups are bind-mounted, not image contents.
 subtitle-data/
+data/subtitles/
 subtitle-backup-*/
+.subtitle-cache-tools/

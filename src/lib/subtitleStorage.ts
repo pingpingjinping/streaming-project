@@ -129,46 +129,7 @@ export async function deleteUploadedSubtitle(userId: string, animeId: string, ep
   await deleteLegacyUploadedSubtitle(userId, animeId, episode);
 }
 
-export async function getVerifiedSubtitleCache(animeId: string, episode: number) {
-  const dir = path.join(root, "verified", safeSegment(animeId), episodeName(episode));
-  let names: string[];
-  try { names = await readdir(dir); } catch (error: any) {
-    if (error?.code === "ENOENT") return null;
-    throw error;
-  }
-  const entries = await Promise.all(names.filter((name) => name.endsWith(".json")).map(async (name) => {
-    try {
-      const metadata = JSON.parse(await readFile(path.join(dir, name), "utf8"));
-      return { name, metadata, time: Date.parse(metadata.verifiedAt) || 0 };
-    } catch { return null; }
-  }));
-  const latest = entries.filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
-    .sort((a, b) => b.time - a.time)[0];
-  if (!latest) return null;
-  const format = latest.metadata.format === "ASS" ? "ASS" : "VTT";
-  const hash = latest.name.slice(0, -5);
-  const content = await readFile(path.join(dir, `${hash}.${formatOf(format)}`), "utf8");
-  return { name: latest.metadata.filename, orig_filename: latest.metadata.filename, content,
-    format, is_ass: format === "ASS", sourceProvider: latest.metadata.sourceProvider,
-    sourceCreatorWebsite: latest.metadata.sourceUrl, sourceMatchedTitle: latest.metadata.matchedTitle, isCached: true };
-}
-
-export async function saveVerifiedSubtitleCache(input: {
-  animeId: string; episodeNumber: number; filename: string; content: string; format: "ASS" | "VTT";
-  sourceProvider: "aniall" | "anissia"; sourceUrl: string; matchedTitle: string;
-}) {
-  const animeId = safeSegment(input.animeId);
-  const ep = episodeName(input.episodeNumber);
-  const hash = createHash("sha256").update(`${animeId}\n${ep}\n${input.sourceProvider}\n${input.sourceUrl}\n${input.matchedTitle}`).digest("hex");
-  const dir = path.join(root, "verified", animeId, ep);
-  await atomicWrite(path.join(dir, `${hash}.${formatOf(input.format)}`), input.content);
-  await atomicWrite(path.join(dir, `${hash}.json`), JSON.stringify({
-    filename: input.filename, format: input.format, sourceProvider: input.sourceProvider,
-    sourceUrl: input.sourceUrl, matchedTitle: input.matchedTitle, verifiedAt: new Date().toISOString(),
-  }));
-}
-
-
+export { getVerifiedSubtitleCache, saveVerifiedSubtitleCache } from "@/lib/subtitleCache";
 
 export interface AnissiaArchiveSubtitle {
   name: string;
