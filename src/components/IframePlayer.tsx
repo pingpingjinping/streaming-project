@@ -192,6 +192,14 @@ export default function IframePlayer({
   const [currentSubIndex, setCurrentSubIndex] = useState(0);
   const [creators, setCreators] = useState<CreatorInfo[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [subtitleSettingsRevision,setSubtitleSettingsRevision]=useState(0);
+  useEffect(()=>{
+    const changed=(event:Event)=>{
+      if((event as CustomEvent).detail?.animeId===animeId)setSubtitleSettingsRevision(value=>value+1);
+    };
+    window.addEventListener('subtitle-settings-changed',changed);
+    return()=>window.removeEventListener('subtitle-settings-changed',changed);
+  },[animeId]);
   const [cues, setCues] = useState<SubtitleCue[]>([]);
   const [firstDialogue, setFirstDialogue] = useState<SubtitleCue | null>(null);
   const [loadingSubs, setLoadingSubs] = useState(false);
@@ -506,6 +514,9 @@ export default function IframePlayer({
               localArchive: Boolean(s.localArchive),
               localArchiveTrackKey: s.localArchiveTrackKey,
               reviewedFileId: s.reviewedFileId,
+              localFileId:s.localFileId,episodeException:s.episodeException,episodeConfirmed:s.episodeConfirmed,
+              sourceFolderKey:s.sourceFolderKey,sourceFolderLabel:s.sourceFolderLabel,
+              sourceBundleKey:s.sourceBundleKey,sourceBundleLabel:s.sourceBundleLabel,bundleAssigned:s.bundleAssigned,
             }));
             setSubtitles(list);
             setCurrentSubIndex(needsManualChoice ? -1 : 0);
@@ -522,7 +533,7 @@ export default function IframePlayer({
     return () => {
       isCancelled = true;
     };
-  }, [animeTitle, episodeNumber, animeId, initialSubUrl, initialCreator, showNotice]);
+  }, [animeTitle, episodeNumber, animeId, initialSubUrl, initialCreator, showNotice,subtitleSettingsRevision]);
 
   // 6. Load SubtitlesOctopus library script
   useEffect(() => {

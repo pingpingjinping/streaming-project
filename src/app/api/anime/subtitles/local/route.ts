@@ -81,9 +81,12 @@ export async function GET(request: NextRequest) {
       canonicalTitle: resolvedTitle, postUrl: selectedFolder ? `https://aniall.tistory.com/${selectedFolder[1]}` : "", confidence: 0 });
 
     const aniallSubtitles = [];
-    for (const candidate of [...candidates.values()].slice(0, 20)) {
+    const selectedAniAll = !allowReassignmentSearch && bundleAssignment?.provider==='aniall'
+      && (assignedScope?.type==='local' || assignedScope?.type==='folder');
+    const aniallCandidates = selectedAniAll ? [...candidates.values()].slice(0,1) : [...candidates.values()].slice(0,20);
+    for (const candidate of aniallCandidates) {
       const found=await getAniAllArchiveSubtitles(candidate.blogTitle,episode,parseSeason(candidate.canonicalTitle),sourceEpisodeStart,candidate.postUrl,
-        {manualSearch:true,bundleKey:!allowReassignmentSearch && (assignedScope?.type==='local' || assignedScope?.type==='folder') && bundleAssignment?.provider==='aniall' ? bundleAssignment.bundleKey : undefined});
+        {manualSearch:allowReassignmentSearch,bundleKey:!allowReassignmentSearch && (assignedScope?.type==='local' || assignedScope?.type==='folder') && bundleAssignment?.provider==='aniall' ? bundleAssignment.bundleKey : undefined});
       for(const subtitle of found) {
       if (claimedByOtherAnime("aniall", subtitle.sourceBundleKey)) continue;
       const displayName = `[로컬 AniAll · ${candidate.blogTitle}] ${subtitle.orig_filename}`;
@@ -108,7 +111,7 @@ export async function GET(request: NextRequest) {
       sourceEpisode,
       null,
       parseSeason(resolvedTitle) || parseSeason(title),
-      { folderNameQuery: assignedAnissiaLabel || title, maxResults: 50, localEpisode: episode,manualSearch:true,
+      { folderNameQuery: assignedAnissiaLabel || title, maxResults: 50, localEpisode: episode,manualSearch:allowReassignmentSearch,
         bundleKey:assignedAnissiaLabel ? bundleAssignment?.bundleKey : undefined },
     );
     const anissiaSubtitles = anissiaArchives
@@ -136,17 +139,22 @@ export async function GET(request: NextRequest) {
           ? bundleAssignment.provider : undefined,
       isRejected: (provider, key) => isRejected(provider, key)
         || (provider === "aniall" && rejected.some(r => r.provider === "aniall" && !r.sourceKey.startsWith("reviewed:"))),
-      keyword: params.get("mode") === "search" ? title : "", manualSearch: true });
+      keyword: params.get("mode") === "search" ? title : "", manualSearch: allowReassignmentSearch });
     const reviewedVisible = reviewed.subtitles
       .filter(s => !claimedByOtherAnime(s.sourceProvider, s.sourceBundleKey))
       .map(s => ({ ...s,
         bundleAssigned: bundleAssignment?.provider === s.sourceProvider && bundleSelectionMatches(bundleAssignment.bundleKey,s.sourceBundleKey) }));
     const reviewedAniAll = reviewedVisible.filter(s => s.sourceProvider === "aniall");
     const reviewedNaver = reviewedVisible.filter(s => s.sourceProvider === "naver");
-    const subtitles = sourcePriority === "aniall"
+    const ordered = sourcePriority === "aniall"
       ? [...reviewedAniAll, ...aniallSubtitles, ...anissiaSubtitles, ...reviewedNaver]
       : [...anissiaSubtitles, ...reviewedAniAll, ...aniallSubtitles, ...reviewedNaver];
 
+    // The recommendations tab applies a file to the current episode. Broad
+    // browsing (including unknown/other episodes) belongs only to manual search.
+    const eligible = allowReassignmentSearch ? ordered : ordered.filter(s=>s.episodeConfirmed
+      && (!bundleAssignment || s.sourceProvider===bundleAssignment.provider));
+    const subtitles = [...new Map(eligible.map(s=>[`${s.sourceProvider}:${'reviewedFileId' in s ? s.reviewedFileId : s.localFileId}`,s])).values()];
     return NextResponse.json({ success: true, anime_title: title, episode, count: subtitles.length, subtitles,
       bundleAssignment },
       { headers: { "Cache-Control": "no-store" } });
