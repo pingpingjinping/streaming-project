@@ -26,7 +26,7 @@ export interface CreatorInfo {
   matchScore?: number;
   matchedTitle?: string;
   verifiedMatch?: boolean;
-  sourceProvider?: "aniall" | "anissia";
+  sourceProvider?: "aniall" | "anissia" | "naver";
   localArchive?: boolean;
 }
 
@@ -41,10 +41,11 @@ export interface SubtitleOption {
   verifiedMatch?: boolean;
   sourceCreatorWebsite?: string;
   sourceMatchedTitle?: string;
-  sourceProvider?: "aniall" | "anissia";
+  sourceProvider?: "aniall" | "anissia" | "naver";
   isCached?: boolean;
   localArchive?: boolean;
   localArchiveTrackKey?: string;
+  reviewedFileId?: string;
 }
 
 const creatorKey = (creator: CreatorInfo) => `${creator.website}\n${creator.matchedTitle || ""}`;
@@ -56,7 +57,7 @@ const creatorSource = (creator: CreatorInfo): RejectedSource => ({
 });
 const subtitleSource = (subtitle: SubtitleOption): RejectedSource => ({
   provider: subtitle.localArchive ? subtitle.sourceProvider || "local" : subtitle.sourceCreatorWebsite ? subtitle.sourceProvider || "anissia" : "local",
-  sourceKey: subtitle.localArchive && subtitle.sourceProvider === "anissia"
+  sourceKey: subtitle.reviewedFileId ? `reviewed:${subtitle.reviewedFileId}` : subtitle.localArchive && subtitle.sourceProvider === "anissia"
     ? subtitle.name
     : subtitle.sourceCreatorWebsite || (subtitle.localArchive ? subtitle.name : subtitle.url || subtitle.name),
 });
@@ -97,7 +98,7 @@ export default function SubtitleSelectModal({
   const [searchResults, setSearchResults] = useState<SubtitleOption[]>([]);
   const [searchCreators, setSearchCreators] = useState<CreatorInfo[]>([]);
   const [catalogTitles, setCatalogTitles] = useState<Array<{ title: string; sources: string[] }>>([]);
-  const [localFolders, setLocalFolders] = useState<Array<{ folderName: string; provider: "aniall" | "anissia" }>>([]);
+  const [localFolders, setLocalFolders] = useState<Array<{ folderName: string; provider: "aniall" | "anissia" | "naver" }>>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isSearchingLocal, setIsSearchingLocal] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -232,6 +233,7 @@ export default function SubtitleSelectModal({
           sourceMatchedTitle: subtitle.sourceMatchedTitle,
           localArchive: true,
           localArchiveTrackKey: subtitle.localArchiveTrackKey,
+          reviewedFileId: subtitle.reviewedFileId,
         })));
       })
       .catch((error) => {
@@ -368,6 +370,7 @@ export default function SubtitleSelectModal({
         isCached: Boolean(s.isCached),
         localArchive: Boolean(s.localArchive),
         localArchiveTrackKey: s.localArchiveTrackKey,
+        reviewedFileId: s.reviewedFileId,
       }));
 
       // The server has already grouped these in the configured provider order.
@@ -399,7 +402,7 @@ export default function SubtitleSelectModal({
       const folderData = await folderRes.json();
       if (folderRes.ok && folderData.success) setLocalFolders(folderData.folders || []);
       const res = await fetch(
-        `/api/anime/subtitles/local?title=${encodeURIComponent(keyword)}&ep=${searchEp}&animeId=${encodeURIComponent(animeId)}`
+        `/api/anime/subtitles/local?mode=search&title=${encodeURIComponent(keyword)}&ep=${searchEp}&animeId=${encodeURIComponent(animeId)}`
       );
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.message || "로컬 자막 검색 실패");
@@ -417,6 +420,7 @@ export default function SubtitleSelectModal({
         sourceMatchedTitle: s.sourceMatchedTitle,
         localArchive: Boolean(s.localArchive),
         localArchiveTrackKey: s.localArchiveTrackKey,
+        reviewedFileId: s.reviewedFileId,
       }));
       setSearchResults(subs);
       if (subs.length === 0) setSearchError("해당 회차의 로컬 자막은 없거나 읽을 수 없어. 위 폴더 후보에서 제목을 골라 확인해 봐.");
@@ -708,7 +712,7 @@ export default function SubtitleSelectModal({
                         <div className="flex flex-col gap-1">
                           <div className="flex flex-wrap items-center gap-2">
                         <span className="font-bold text-white text-sm">{c.name}</span>
-                            <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${c.sourceProvider === "aniall" ? "bg-amber-500/15 text-amber-200" : "bg-cyan-500/15 text-cyan-200"}`}>{c.sourceProvider === "aniall" ? "AniAll" : "애니시아"}</span>
+                            <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${c.sourceProvider === "aniall" ? "bg-amber-500/15 text-amber-200" : "bg-cyan-500/15 text-cyan-200"}`}>{c.sourceProvider === "aniall" ? "AniAll" : c.sourceProvider === "naver" ? "네이버" : "애니시아"}</span>
                             {c.localArchive && <span className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-bold text-emerald-300">Pi 로컬</span>}
                             {c.matchedTitle && <span className="text-xs font-semibold text-slate-300">· {c.matchedTitle}</span>}
                             {c.verifiedMatch ? (
@@ -846,7 +850,7 @@ export default function SubtitleSelectModal({
                         onClick={() => handleLocalSearch(folder.folderName)}
                         className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-xs hover:bg-white/10">
                         <span className="text-white">{folder.folderName}</span>
-                        <span className="shrink-0 text-slate-400">{folder.provider === "aniall" ? "AniAll" : "Anissia"}</span>
+                        <span className="shrink-0 text-slate-400">{folder.provider === "aniall" ? "AniAll" : folder.provider === "naver" ? "Naver" : "Anissia"}</span>
                       </button>
                     ))}
                   </div>
@@ -884,7 +888,7 @@ export default function SubtitleSelectModal({
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-2">
                         <span className="font-bold text-white text-xs">{sub.name}</span>
-                        {sub.sourceProvider && <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${sub.sourceProvider === "aniall" ? "bg-amber-500/15 text-amber-200" : "bg-cyan-500/15 text-cyan-200"}`}>{sub.sourceProvider === "aniall" ? "AniAll" : "애니시아"}</span>}
+                        {sub.sourceProvider && <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${sub.sourceProvider === "aniall" ? "bg-amber-500/15 text-amber-200" : "bg-cyan-500/15 text-cyan-200"}`}>{sub.sourceProvider === "aniall" ? "AniAll" : sub.sourceProvider === "naver" ? "네이버" : "애니시아"}</span>}
                         {sub.localArchive && <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">Pi 로컬</span>}
                         {sub.verifiedMatch ? (
                           <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">DB 연결 확인</span>
@@ -902,7 +906,7 @@ export default function SubtitleSelectModal({
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-400 line-clamp-1">
-                        {sub.matchedTitle ? `${sub.sourceProvider === "aniall" ? "DB 작품명" : "애니시아"}: ${sub.matchedTitle} · ` : ""}자막 내용 {sub.content?.length || 0}자 포함
+                        {sub.matchedTitle ? `${sub.sourceProvider === "anissia" ? "애니시아" : "DB 작품명"}: ${sub.matchedTitle} · ` : ""}자막 내용 {sub.content?.length || 0}자 포함
                       </p>
                     </div>
 

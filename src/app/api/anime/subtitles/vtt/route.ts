@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { searchAllSubtitlesParallel, findKairanSubtitle } from "@/lib/subtitles";
 import { assertSafeProxyUrl, UnsafeProxyUrlError } from "@/lib/proxyGuard";
+import { getReviewedSubtitleById } from "@/lib/reviewedSubtitleStorage";
+import { getSubtitleRejections } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
 
 function toSeconds(tStr: string): number {
@@ -92,14 +94,27 @@ export async function GET(request: NextRequest) {
   const ep = parseInt(searchParams.get("ep") || "1", 10) || 1;
   const subName = searchParams.get("name")?.trim();
   const rawUrl = searchParams.get("url")?.trim();
+  const reviewedFileId = searchParams.get("reviewedFileId") || "";
+  const animeId = searchParams.get("animeId") || "";
   const offset = parseFloat(searchParams.get("offset") || "0") || 0;
 
   try {
     let content = "";
     let isAss = false;
 
+    if (reviewedFileId) {
+      const rejected = await getSubtitleRejections(animeId);
+      const subtitle = await getReviewedSubtitleById(animeId, reviewedFileId,
+        (provider, key) => rejected.some(r => r.provider === provider && (r.sourceKey === key
+          || (provider === "aniall" && !r.sourceKey.startsWith("reviewed:")))));
+      if (!subtitle) return new NextResponse("WEBVTT\n\n", { status: 404,
+        headers: { "Content-Type": "text/vtt; charset=utf-8", "Cache-Control": "no-store" } });
+      content = subtitle.content;
+      isAss = subtitle.is_ass;
+    }
+
     // 1. URL이 전달된 경우 (기존 프록시 또는 외부 URL)
-    if (rawUrl) {
+    if (!reviewedFileId && rawUrl) {
       const fetchUrl = rawUrl.startsWith("http://") || rawUrl.startsWith("https://")
         ? rawUrl
         : new URL(rawUrl, request.url).toString();
@@ -124,7 +139,7 @@ export async function GET(request: NextRequest) {
     }
 
     // 2. title과 ep로 검색
-    if (!content && title) {
+    if (!reviewedFileId && !content && title) {
       // 카이란 단독 검색 시도
       if (subName && subName.includes("카이란")) {
         const kairan = await findKairanSubtitle(title, ep, 5000);
@@ -176,7 +191,7 @@ export async function GET(request: NextRequest) {
         "Content-Type": "text/vtt; charset=utf-8",
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, OPTIONS",
-        "Cache-Control": "public, max-age=3600",
+        "Cache-Control": reviewedFileId ? "private, no-store" : "public, max-age=3600",
       },
     });
   } catch (err) {

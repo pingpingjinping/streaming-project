@@ -11,6 +11,7 @@ import { assertSafeProxyUrl, UnsafeProxyUrlError } from "@/lib/proxyGuard";
 import { getSessionUser } from "@/lib/auth";
 import { getAniAllMatches, getManualSubtitleLink, getSubtitleSourcePriority, getSubtitleEpisodeStart, getSubtitleRejections } from "@/lib/db";
 import { getAniAllArchiveSubtitle, getAnissiaArchiveSubtitles, getUploadedSubtitles, getVerifiedSubtitleCache } from "@/lib/subtitleStorage";
+import { getReviewedSubtitles } from "@/lib/reviewedSubtitleStorage";
 import { getReanimeMatch } from "@/lib/reanimeMatches";
 
 export async function GET(request: NextRequest) {
@@ -81,7 +82,18 @@ export async function GET(request: NextRequest) {
 
     const sourcePriority = await getSubtitleSourcePriority();
 
+    const findReviewedLocal = async (source: "aniall" | "naver", includeUnknown = true) => {
+      const reviewed = await getReviewedSubtitles({ animeId: animeIdParam, episode: ep, sourceEpisode,
+        season: parseSeason(comparisonTitle) || parseSeason(searchTarget), source, isRejected: (provider, key) => isRejected(provider, key)
+          || (provider === "aniall" && rejections.some(r => r.provider === "aniall" && !r.sourceKey.startsWith("reviewed:"))) });
+      if (!reviewed.subtitles.length || (!includeUnknown && reviewed.subtitles.every(s => !s.episodeConfirmed))) return null;
+      return NextResponse.json({ success: true, anime_title: title, episode: ep,
+        count: reviewed.subtitles.length, subtitles: reviewed.subtitles, creators: [], local_archive: true,
+        needs_manual_subtitle_choice: reviewed.needsManualChoice }, { headers: { "Cache-Control": "no-store" } });
+    };
     const findAniAllLocal = async () => {
+      const reviewed = await findReviewedLocal("aniall", false);
+      if (reviewed) return reviewed;
       const matches = (await getAniAllMatches(comparisonTitle, animeIdParam))
         .filter((match) => !isRejected("aniall", match.postUrl))
         .sort((a, b) => b.confidence - a.confidence);
@@ -179,6 +191,12 @@ export async function GET(request: NextRequest) {
       const localResponse = await resolveLocal();
       if (localResponse) return localResponse;
     }
+
+    const reviewedNaver = await findReviewedLocal("naver", false);
+    if (reviewedNaver) return reviewedNaver;
+    // Unknown historical episodes must not hide a known weekly file from either local source.
+    const reviewedManual = await findReviewedLocal("aniall") || await findReviewedLocal("naver");
+    if (reviewedManual) return reviewedManual;
 
     const cached = animeIdParam && !sourceEpisodeStart ? await getVerifiedSubtitleCache(animeIdParam, ep) : null;
     if (cached && !isRejected(cached.sourceProvider,

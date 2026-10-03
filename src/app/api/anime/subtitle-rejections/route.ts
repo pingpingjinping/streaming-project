@@ -6,8 +6,8 @@ function validAnimeId(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 100;
 }
 
-function validSource(provider: unknown, sourceKey: unknown): provider is "aniall" | "anissia" | "local" {
-  return (provider === "aniall" || provider === "anissia" || provider === "local") &&
+function validSource(provider: unknown, sourceKey: unknown): provider is "aniall" | "anissia" | "naver" | "local" {
+  return (provider === "aniall" || provider === "anissia" || provider === "local" || provider === "naver") &&
     typeof sourceKey === "string" && sourceKey.trim().length > 0 && sourceKey.length <= 4096;
 }
 

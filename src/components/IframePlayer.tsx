@@ -502,6 +502,10 @@ export default function IframePlayer({
               verifiedMatch: s.verifiedMatch,
               sourceCreatorWebsite: s.sourceCreatorWebsite,
               sourceMatchedTitle: s.sourceMatchedTitle,
+              sourceProvider: s.sourceProvider,
+              localArchive: Boolean(s.localArchive),
+              localArchiveTrackKey: s.localArchiveTrackKey,
+              reviewedFileId: s.reviewedFileId,
             }));
             setSubtitles(list);
             setCurrentSubIndex(needsManualChoice ? -1 : 0);

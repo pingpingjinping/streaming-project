@@ -55,7 +55,7 @@ export interface CreatorInfo {
   matchedTitle?: string;
   matchScore?: number;
   verifiedMatch?: boolean;
-  sourceProvider?: "aniall" | "anissia";
+  sourceProvider?: "aniall" | "anissia" | "naver";
   localArchive?: boolean;
 }
 
@@ -101,10 +101,11 @@ interface SubtitleItem {
   url?: string;
   sourceCreatorWebsite?: string;
   sourceMatchedTitle?: string;
-  sourceProvider?: "aniall" | "anissia";
+  sourceProvider?: "aniall" | "anissia" | "naver";
   isCached?: boolean;
   localArchive?: boolean;
   localArchiveTrackKey?: string;
+  reviewedFileId?: string;
 }
 
 const creatorIdentity = (creator: CreatorInfo) => `${creator.website}\n${creator.matchedTitle || ""}`;
@@ -949,6 +950,9 @@ export default function Player(props: PlayerProps) {
         return "";
       }
       const offsetVal = parseFloat(String(offset)) || 0;
+      if (subData.reviewedFileId) {
+        return `/api/anime/subtitles/vtt?animeId=${encodeURIComponent(animeId)}&reviewedFileId=${encodeURIComponent(subData.reviewedFileId)}&offset=${offsetVal}&_t=${Date.now()}`;
+      }
       const rawUrl = subData.url;
 
       if (rawUrl && !rawUrl.startsWith("blob:") && !rawUrl.startsWith("data:")) {
@@ -973,7 +977,7 @@ export default function Player(props: PlayerProps) {
 
       return "";
     },
-    [animeTitle]
+    [animeTitle, animeId]
   );
 
   // 6. 브라우저/비디오에 자동 등록된 네이티브 자막 트랙 전체 숨김
@@ -2091,6 +2095,7 @@ export default function Player(props: PlayerProps) {
       isCached: option.isCached,
       localArchive: option.localArchive,
       localArchiveTrackKey: option.localArchiveTrackKey,
+      reviewedFileId: option.reviewedFileId,
     };
     try {
       const trackPreferenceKey = `anissia-local-track:${animeId}`;
@@ -3487,7 +3492,7 @@ export default function Player(props: PlayerProps) {
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const fetchedList: SubtitleItem[] = (data.subtitles || []).map((s: any) => ({
-          name: `${s.localArchive ? `[Pi 로컬 · ${s.sourceProvider === "anissia" ? "Anissia" : "AniAll"}]` : s.sourceProvider === "aniall" ? "[AniAll]" : "[애니시아]"} ${s.name} (${s.format})`,
+          name: `${s.localArchive ? `[Pi 로컬 · ${s.sourceProvider === "anissia" ? "Anissia" : s.sourceProvider === "naver" ? "Naver" : "AniAll"}]` : s.sourceProvider === "aniall" ? "[AniAll]" : "[애니시아]"} ${s.name} (${s.format})`,
           format: s.format,
           is_ass: s.is_ass,
           content: s.content,
@@ -3497,6 +3502,7 @@ export default function Player(props: PlayerProps) {
           isCached: Boolean(s.isCached),
           localArchive: Boolean(s.localArchive),
           localArchiveTrackKey: s.localArchiveTrackKey,
+          reviewedFileId: s.reviewedFileId,
         }));
 
         const combined = [...fetchedList, ...newSubs];
