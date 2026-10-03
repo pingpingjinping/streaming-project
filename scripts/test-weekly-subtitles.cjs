@@ -34,7 +34,40 @@ put('anissia_subtitles/1236__충돌 제목/1화/제작자/subtitle.zip', archive
 put('anissia_subtitles/1236__충돌 제목/1화/제작자/finish.txt', JSON.stringify({ animeNo: 1237 }));
 put('anissia_subtitles/1238__회차 충돌/1화/제작자/subtitle.zip', archive('wrong episode', '12.srt'));
 put('anissia_subtitles/기존 작품명/1화/제작자/subtitle.zip', archive('plain folder'));
+const flatWork = '카미츠바키시 건설 중';
+put(`anissia_subtitles/${flatWork}/finish.txt`, JSON.stringify({ subject: flatWork, episode: 12, name: '제작자' }));
+for (const episode of [1, 12]) put(`anissia_subtitles/${flatWork}/${flatWork} ${episode}화 (ver.가라오케) [SubsPlease, Erai, ASW, ToonsHub].ass`,
+  `[Script Info]\nTitle: episode ${episode}\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,flat episode ${episode}\n`);
+put(`anissia_subtitles/${flatWork}/카미츠바키 페스 24 THE DAY THE EARTH STOOD STILL.ass`, '[Script Info]\nTitle: festival');
+put('anissia_subtitles/깨진 완료 마커/finish.txt', 'download finished');
+put('anissia_subtitles/깨진 완료 마커/01.srt', '1\n00:00:01,000 --> 00:00:04,000\nmarker fallback\n');
+fs.mkdirSync(path.join(root, 'anissia_subtitles/zz_scan_noise'), {recursive:true});
 const storage = require('../src/lib/subtitleStorage.ts');
+test('Anissia index does not lose works after 30000 unrelated directory entries', async () => {
+  const promises = require('node:fs/promises'), original = promises.readdir;
+  promises.readdir = async (directory, options) => {
+    if (directory === path.join(root, 'anissia_subtitles/zz_scan_noise')) return Array.from({length:30010}, (_,i) => ({
+      name:`noise-${i}.txt`, isFile:()=>true, isDirectory:()=>false,
+    }));
+    const entries = await original(directory, options);
+    if (directory === path.join(root, 'anissia_subtitles')) entries.sort((a,b) => Number(a.name === 'zz_scan_noise') - Number(b.name === 'zz_scan_noise'));
+    return entries;
+  };
+  try { assert.equal((await storage.getAnissiaArchiveSubtitles(['기존 작품명'], 1)).length, 1); }
+  finally {promises.readdir = original;}
+});
+test('flat work folders use each subtitle episode instead of the last download marker', async () => {
+  for(const episode of [1,12]) {
+    const subtitles = await storage.getAnissiaArchiveSubtitles([flatWork], episode);
+    assert.equal(subtitles.length, 1);
+    assert.ok(subtitles[0].content.includes(`flat episode ${episode}`));
+  }
+  assert.equal((await storage.getAnissiaArchiveSubtitles([flatWork], 2)).length, 0);
+});
+test('invalid finish metadata does not hide explicitly numbered local subtitles', async () => {
+  const subtitles = await storage.getAnissiaArchiveSubtitles(['깨진 완료 마커'], 1);
+  assert.equal(subtitles.length, 1);assert.ok(subtitles[0].content.includes('marker fallback'));
+});
 test('weekly Anissia ID works without finish metadata or identical title', async () => {
   const subtitles = await storage.getAnissiaArchiveSubtitles(['번역명'], 1, 1234);
   assert.equal(subtitles.length, 1);
