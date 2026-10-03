@@ -1032,7 +1032,7 @@ export default function SubtitleSelectModal({
                           : savingBundleKey === `${sub.sourceProvider}:${sub.sourceBundleKey}` ? "지정 중…" : "작품 전체 지정"}
                       </button>
                     )}
-                    <button type="button" onClick={() => changeRejection(subtitleSource(sub), true)
+                    <button type="button" onClick={() => changeRejection(subtitleSource(sub), true)}
                       disabled={Boolean(savingRejection)}
                       className="rounded-lg px-2 py-2 text-[11px] text-slate-400 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50">이 자막은 아니야</button>
                     <button
