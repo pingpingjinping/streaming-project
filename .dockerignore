@@ -9,3 +9,6 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 *.zip
+# Runtime subtitle folders and migration backups are bind-mounted, not image contents.
+subtitle-data/
+subtitle-backup-*/
