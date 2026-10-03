@@ -187,11 +187,10 @@ async function loadAnissiaArchiveIndex(): Promise<AnissiaArchiveIndexEntry[]> {
   const corpus = path.join(root, "anissia_subtitles");
   const finishPaths: string[] = [];
   const archiveDirs = new Set<string>();
-  const finishDirs = new Set<string>();
   const pending: Array<{ dir: string; depth: number }> = [{ dir: corpus, depth: 0 }];
-  let inspected = 0;
-
-  while (pending.length && inspected < 30000) {
+  // Count-independent traversal: migrated libraries can contain over 50,000
+  // files. Truncating here silently omits works based on filesystem order.
+  while (pending.length) {
     const current = pending.pop()!;
     let entries;
     try {
@@ -204,14 +203,11 @@ async function loadAnissiaArchiveIndex(): Promise<AnissiaArchiveIndexEntry[]> {
       archiveDirs.add(current.dir);
     }
     for (const entry of entries) {
-      inspected++;
-      if (inspected >= 30000) break;
       if (entry.name.startsWith(".") || entry.name === "__MACOSX") continue;
       const fullPath = path.join(current.dir, entry.name);
       if (entry.isDirectory() && current.depth < 10) pending.push({ dir: fullPath, depth: current.depth + 1 });
       else if (entry.isFile() && entry.name.toLowerCase() === "finish.txt") {
         finishPaths.push(fullPath);
-        finishDirs.add(current.dir);
       }
     }
   }
@@ -228,6 +224,9 @@ async function loadAnissiaArchiveIndex(): Promise<AnissiaArchiveIndexEntry[]> {
       return null;
     }
   }));
+
+  const finishDirs = new Set(indexed.filter((entry) => entry !== null)
+    .map((entry) => path.dirname(entry!.finishPath)));
 
   // Manually saved Anissia archives may not have finish.txt. Infer metadata
   // from the same title/episode/creator directory layout and ZIP filename.
@@ -350,8 +349,11 @@ export async function getAnissiaArchiveSubtitles(
       : animeNo && recordAnimeNo ? recordAnimeNo === animeNo : exactTitleMatch;
     if (!folderNameMatch) continue;
 
-    const recordEpisode = recordValue(entry.record, ["episode", "episodeNumber", "episode_number", "episodeNo", "ep"]);
-    const episodeFolder = folderParts.episode || path.basename(path.dirname(path.dirname(entry.finishPath)));
+    // A marker at the work root describes the last download, not every file
+    // in a flattened multi-episode folder. Require per-file episode evidence.
+    const recordEpisode = folderParts.episode
+      ? recordValue(entry.record, ["episode", "episodeNumber", "episode_number", "episodeNo", "ep"]) : "";
+    const episodeFolder = folderParts.episode;
     if ([readEpisodeEvidence(recordEpisode), readEpisodeEvidence(episodeFolder)].some(e => !evidenceAgrees(e, request))) continue;
 
     const titleSeason = parseSeason(recordTitle) || parseSeason(folderTitle);
@@ -373,8 +375,9 @@ export async function getAnissiaArchiveSubtitles(
       .sort((a, b) => Number(b.toLowerCase() === "subtitle.zip") - Number(a.toLowerCase() === "subtitle.zip") ||
         a.localeCompare(b, undefined, { numeric: true }));
     const loose = files.filter((name) => /\.(ass|ssa|smi|srt|vtt)$/i.test(name));
-    const recordEpisode = recordValue(candidate.entry.record, ["episode", "episodeNumber", "episode_number", "episodeNo", "ep"]);
-    const episodeFolder = folderParts.episode || path.basename(path.dirname(path.dirname(candidate.entry.finishPath)));
+    const recordEpisode = folderParts.episode
+      ? recordValue(candidate.entry.record, ["episode", "episodeNumber", "episode_number", "episodeNo", "ep"]) : "";
+    const episodeFolder = folderParts.episode;
     const outer = [readEpisodeEvidence(candidate.title), readEpisodeEvidence(recordEpisode), readEpisodeEvidence(episodeFolder)];
 
     for (const filename of [...archives, ...loose]) {
