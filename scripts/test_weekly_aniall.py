@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import json
 import subprocess
@@ -66,6 +67,21 @@ class WeeklyAniAllTests(unittest.TestCase):
             state["success"]["aniall:100"]["files"] = [relative]
             file.unlink()
             self.assertEqual(weekly.pending_posts(state, {"posts": {}}, target), [])
+
+    def test_title_folder_requires_exact_manifest_identity_and_unchanged_bytes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target=Path(folder);relative="aniall_subtitles/제목/all.zip";file=target/relative
+            file.parent.mkdir(parents=True);file.write_bytes(b"downloaded")
+            item={"source":"aniall","post_id":"100","title":"제목","source_url":"https://aniall.tistory.com/100"}
+            state={"success":{"aniall:100":{"item":item,"files":[relative]}}}
+            self.assertEqual(weekly.pending_posts(state,{"posts":{}},target),[])
+            record={"sha256":hashlib.sha256(b"downloaded").hexdigest(),"sources":[{"source":"aniall","id":"100"}]}
+            (target/".weekly-subtitle-sources.json").write_text(json.dumps({"version":1,"files":{relative:record}}))
+            self.assertEqual(len(weekly.pending_posts(state,{"posts":{}},target)),1)
+            state["success"]["aniall:100"]["item"]={**item,"post_id":"101","source_url":"https://aniall.tistory.com/101"}
+            self.assertEqual(weekly.pending_posts(state,{"posts":{}},target),[])
+            state["success"]["aniall:100"]["item"]=item;file.write_bytes(b"changed")
+            self.assertEqual(weekly.pending_posts(state,{"posts":{}},target),[])
 
     def test_failed_import_does_not_checkpoint_and_dry_run_does_not_import(self):
         with tempfile.TemporaryDirectory() as folder:

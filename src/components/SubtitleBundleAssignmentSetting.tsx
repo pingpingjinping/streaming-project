@@ -208,7 +208,7 @@ export default function SubtitleBundleAssignmentSetting({
                 onClick={() => searchLocal(folder.folderName)}
                 className="flex max-w-full items-center gap-1 rounded-lg border border-white/10 bg-slate-900/70 px-2.5 py-1.5 text-[11px] text-slate-300 hover:border-emerald-500/40 hover:text-white">
                 <FolderOpen className="h-3 w-3 shrink-0" />
-                <span className="truncate">{folder.folderName}</span>
+                <span className="min-w-0 whitespace-normal break-words [overflow-wrap:anywhere] text-left">{folder.folderName}</span>
               </button>
             ))}
           </div>
@@ -223,11 +223,11 @@ export default function SubtitleBundleAssignmentSetting({
               && assignment.bundleKey === item.sourceBundleKey);
             return (
               <div key={key} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-slate-900/70 p-3">
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-semibold text-white">
+                <div className="min-w-0 w-full">
+                  <p className="whitespace-normal break-words [overflow-wrap:anywhere] leading-relaxed text-xs font-semibold text-white">
                     {item.sourceBundleLabel || item.sourceMatchedTitle || item.matchedTitle || item.name}
                   </p>
-                  <p className="mt-0.5 truncate text-[11px] text-slate-400">
+                  <p className="mt-0.5 whitespace-normal break-words [overflow-wrap:anywhere] text-[11px] text-slate-400">
                     {item.sourceProvider === "aniall" ? "AniAll" : item.sourceProvider === "naver" ? "Naver" : "Anissia"} · {item.name}
                   </p>
                 </div>

@@ -5,7 +5,7 @@ const path = require('node:path');
 const ts = require('typescript');
 const out = path.join(__dirname, '../.subtitle-cache-tools');
 fs.mkdirSync(out, {recursive: true});
-for (const name of ['subtitleCodec', 'subtitleCache', 'subtitleEpisodes']) {
+for (const name of ['subtitleCodec', 'subtitleCache', 'subtitleEpisodes', 'subtitleSourceManifest']) {
   const source = fs.readFileSync(path.join(__dirname, `../src/lib/${name}.ts`), 'utf8');
   const compiled = ts.transpileModule(source, {compilerOptions: {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true,

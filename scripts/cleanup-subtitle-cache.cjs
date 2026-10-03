@@ -7,6 +7,7 @@ const AdmZip = require('adm-zip');
 const {cacheRoot, subtitleContentHash, pruneVerifiedSubtitleCacheHashes} = require('./subtitleCache.cjs');
 const {decodeSubtitleFile} = require('./subtitleCodec.cjs');
 const {readEpisodeEvidence, selectEpisodeEntries} = require('./subtitleEpisodes.cjs');
+const {readSubtitleSourceManifest,sourceDigestMatches}=require('./subtitleSourceManifest.cjs');
 const validEpisode = value => Number.isSafeInteger(value) && value > 0 && value <= 10000;
 const titleKey = value => String(value || '').normalize('NFKC').trim().toLowerCase();
 
@@ -47,6 +48,7 @@ async function cleanupPending(root = cacheRoot()) {
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   const result = {jobs: 0, removed: 0, deferred: 0, filesRead: 0};
   const realRoot = await fs.realpath(root);
+  const sourceFiles=await readSubtitleSourceManifest(root);
   for (const name of names) {
     const jobPath = path.join(pending, name);
     try {
@@ -64,7 +66,7 @@ async function cleanupPending(root = cacheRoot()) {
       // No matching cached work: do not even open the newly downloaded ZIP.
       for (const relative of scoped.length ? job.files : []) {
         if (typeof relative !== 'string' || relative.includes('\\') || relative.split('/').some(p => ['..','.',''].includes(p))
-            || !relative.startsWith(`${provider}_subtitles/${sourceId}__`)) throw new Error('Invalid file path');
+            || !(relative.startsWith(`${provider}_subtitles/${sourceId}__`) || sourceFiles[relative]?.sources.some(s=>s.source===provider && s.id===sourceId))) throw new Error('Invalid file path');
         const filename = path.join(root, relative), resolved = await fs.realpath(filename);
         if (!resolved.startsWith(realRoot + path.sep)) throw new Error('File escaped subtitle storage');
         const info = await fs.stat(resolved);
@@ -72,7 +74,7 @@ async function cleanupPending(root = cacheRoot()) {
         const isZip = /\.zip$/i.test(relative);
         if (!isZip && !/\.(ass|ssa|srt|smi|vtt)$/i.test(relative)) continue;
         if (!isZip && info.size > 2000000) continue;
-        const data = await fs.readFile(resolved); result.filesRead++;
+        const data = await fs.readFile(resolved);if(!sourceDigestMatches(sourceFiles[relative],data))throw new Error('Downloaded file hash changed'); result.filesRead++;
         signatures.push({resolved, size: info.size, mtimeMs: info.mtimeMs, ctimeMs: info.ctimeMs, ino: info.ino});
         const zip = isZip ? new AdmZip(data) : null;
         const entries = zip ? zip.getEntries().map(e => ({filename: e.entryName, entry: e}))

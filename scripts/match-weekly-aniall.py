@@ -4,6 +4,7 @@
 No crawl, catalog download, reviewed registry write, or episode assignment.
 Existing monthly match criteria and protected importers are reused unchanged.
 """
+import hashlib
 import argparse
 import importlib.util
 import json
@@ -29,6 +30,8 @@ exporter = load_module("aniall_export", "export-aniall-auto-matches.py")
 
 def pending_posts(queue_state, checkpoint, target):
     posts = {}
+    manifest_path=target / ".weekly-subtitle-sources.json"
+    manifest=json.loads(manifest_path.read_text()) if manifest_path.exists() else {"files": {}}
     for entry in queue_state.get("success", {}).values():
         item = entry.get("item") or {}
         post_id = str(item.get("post_id") or "")
@@ -40,8 +43,8 @@ def pending_posts(queue_state, checkpoint, target):
         if post_id in checkpoint.get("posts", {}):
             continue
         files = entry.get("files") or []
-        # Old title-only corpus folders belong to the existing monthly/review
-        # pipeline. Restrict this checkpoint to the new post-ID layout.
+        # Title folders require explicit file provenance; untouched legacy
+        # corpus files remain outside this weekly checkpoint.
         if not files:
             continue
         eligible = True
@@ -49,10 +52,15 @@ def pending_posts(queue_state, checkpoint, target):
             path = Path(relative)
             if (path.is_absolute() or ".." in path.parts or len(path.parts) < 3
                     or path.parts[0] != "aniall_subtitles"
-                    or not path.parts[1].startswith(f"{post_id}__")
                     or not (target / path).is_file()):
                 eligible = False
                 break
+            record=manifest.get("files", {}).get(path.as_posix())
+            if not path.parts[1].startswith(f"{post_id}__"):
+                if (not record or not any(s.get("source")=="aniall" and str(s.get("id"))==post_id for s in record.get("sources", []))
+                    or hashlib.sha256((target/path).read_bytes()).hexdigest()!=record.get("sha256")):
+                    eligible=False
+                    break
         if eligible:
             posts[post_id] = {"post_id": post_id, "title": title, "post_url": url}
     return [posts[key] for key in sorted(posts, key=int)]

@@ -714,13 +714,14 @@ export default function SubtitleSelectModal({
                 {visibleLocalArchiveOptions.length ? (
                   <div className="space-y-2">
                     {visibleLocalArchiveOptions.map((subtitle, index) => (
-                      <div key={`${subtitle.name}-${index}`} className="flex flex-wrap items-center gap-2">
+                      <div key={`${subtitle.name}-${index}`} className="flex min-w-0 flex-col gap-2">
                         <button type="button"
                           onClick={() => { onSelectSubtitle(subtitle); onClose(); }}
-                          className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-500/20 bg-slate-900/70 px-3 py-2 text-left hover:border-emerald-400/50 hover:bg-slate-900">
-                          <span className="min-w-0 truncate text-sm font-semibold text-white">{subtitle.name}</span>
+                          className="flex w-full min-w-0 flex-col items-start gap-2 rounded-xl border border-emerald-500/20 bg-slate-900/70 px-3 py-2 text-left hover:border-emerald-400/50 hover:bg-slate-900">
+                          <span className="w-full min-w-0 whitespace-normal break-words [overflow-wrap:anywhere] text-sm font-semibold leading-relaxed text-white">{subtitle.name}</span>
                           <span className="shrink-0 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-bold text-emerald-300">현재 화 적용</span>
                         </button>
+                        <div className="flex flex-wrap items-center gap-2">
                         {subtitle.sourceProvider && subtitle.sourceBundleKey && (
                           <button type="button" onClick={() => assignBundle(subtitle)}
                             disabled={Boolean(savingBundleKey) || Boolean(bundleAssignment
@@ -738,6 +739,7 @@ export default function SubtitleSelectModal({
                         <button type="button" onClick={() => changeRejection(subtitleSource(subtitle), true)}
                           disabled={Boolean(savingRejection)}
                           className="shrink-0 rounded-lg px-2 py-2 text-[11px] text-slate-400 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50">이 자막은 아니야</button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1010,11 +1012,11 @@ export default function SubtitleSelectModal({
                 {visibleSearchResults.map((sub, idx) => (
                   <div
                     key={idx}
-                    className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-slate-900/60 p-4 hover:border-purple-500/40 transition"
+                    className="flex min-w-0 flex-col items-stretch gap-3 rounded-2xl border border-white/10 bg-slate-900/60 p-4 hover:border-purple-500/40 transition"
                   >
-                    <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-white text-xs">{sub.name}</span>
+                    <div className="flex min-w-0 flex-col gap-1">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="w-full min-w-0 whitespace-normal break-words [overflow-wrap:anywhere] font-bold leading-relaxed text-white text-xs">{sub.name}</span>
                         {sub.sourceProvider && <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${sub.sourceProvider === "aniall" ? "bg-amber-500/15 text-amber-200" : "bg-cyan-500/15 text-cyan-200"}`}>{sub.sourceProvider === "aniall" ? "AniAll" : sub.sourceProvider === "naver" ? "네이버" : "애니시아"}</span>}
                         {sub.localArchive && <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">Pi 로컬</span>}
                         {sub.verifiedMatch ? (
@@ -1032,7 +1034,7 @@ export default function SubtitleSelectModal({
                           {sub.format}
                         </span>
                       </div>
-                      <p className="text-[11px] text-slate-400 line-clamp-1">
+                      <p className="text-[11px] text-slate-400 whitespace-normal break-words [overflow-wrap:anywhere]">
                         {sub.matchedTitle ? `${sub.sourceProvider === "anissia" ? "애니시아" : "DB 작품명"}: ${sub.matchedTitle} · ` : ""}자막 내용 {sub.content?.length || 0}자 포함
                       </p>
                     </div>
@@ -1123,7 +1125,7 @@ export default function SubtitleSelectModal({
                   {uploadedSubOptions.map((option, index) => (
                     <div key={option.name + index} className="flex items-center justify-between gap-3 rounded-xl bg-slate-900/80 p-3">
                       <div className="min-w-0">
-                        <div className="truncate text-xs font-semibold text-white">{option.name}</div>
+                        <div className="whitespace-normal break-words [overflow-wrap:anywhere] text-xs font-semibold leading-relaxed text-white">{option.name}</div>
                         <div className="mt-1 text-[11px] text-emerald-400">형식: {option.format} · Pi에 저장됨</div>
                       </div>
                       <button
