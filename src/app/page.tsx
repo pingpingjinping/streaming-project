@@ -1,3 +1,4 @@
+import {getLinkedReanimeCatalog} from "@/lib/linkedReanimeCatalog";
 import Navbar from "@/components/Navbar";
 import AnimeCard from "@/components/AnimeCard";
 import HistoryList, { HistoryItem } from "@/components/HistoryList";
@@ -47,6 +48,7 @@ interface SearchParams {
   period?: "day" | "week" | "month" | "all";
   day?: string;
   scope?: string;
+  linked?: string;
 }
 
 function anissiaIdFromUrl(query: string): number | null {
@@ -95,12 +97,16 @@ export default async function HomePage({
   const period = params.period || "day";
   const day = params.day !== undefined ? parseInt(params.day, 10) : new Date().getDay();
 
+  const linkedOnly=activeSource==="reanime" && params.linked==="1" && tab!=="favorites" && tab!=="history";
   let items: AnimeListItem[] = [];
   let historyItems: HistoryItem[] = [];
   let has_next = false;
   let total_pages = 1;
 
-  if (q) {
+  if(linkedOnly) {
+    const result=await getLinkedReanimeCatalog({q,page,year,sort});
+    items=result.items;has_next=result.has_next;total_pages=result.total_pages;
+  } else if (q) {
     const sources = searchScope === "all" ? enabledSources : [activeSource];
     const labels: Record<string, string> = {
       anissia: "애니시아",
@@ -302,6 +308,7 @@ export default async function HomePage({
     if (q) p.set("q", q);
     if (q && searchScope === "all") p.set("scope", "all");
     if (genre) p.set("genre", genre);
+    if(linkedOnly)p.set("linked","1");
     if (year) p.set("year", year);
     if (sort) p.set("sort", sort);
     if (typeLang) p.set("type", typeLang);
@@ -314,6 +321,7 @@ export default async function HomePage({
       else p.set(k, String(v));
     });
 
+    if(newParams.tab && newParams.tab!=="list" && newParams.tab!=="search")p.delete("linked");
     return `/?${p.toString()}`;
   };
 
@@ -386,6 +394,11 @@ export default async function HomePage({
     } else if (tab === "list") {
       sectionTitle = "🎭 카테고리 필터 탐색";
     }
+  }
+
+  if(linkedOnly) {
+    sectionTitle=q?`🔗 DB 연결 작품 검색: ${q}`:'🔗 DB 연결된 ReAnime 작품';
+    sectionSubtitle='작품 DB에서 연결이 확정된 작품만 표시합니다. 자막 파일 보유 여부와는 별개의 기준입니다.';
   }
 
   return (
@@ -686,6 +699,17 @@ export default async function HomePage({
         )}
 
         {/* Category Filters (Only on 'list' tab) - 스트리밍 사이트별 완전 맞춤형 탐색 UI */}
+        {activeSource==='reanime' && tab!=='favorites' && tab!=='history' && (
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <Link href={buildUrl({tab:'list',linked:linkedOnly?'':'1',genre:'',scope:'',page:1})}
+              aria-pressed={linkedOnly}
+              className={`rounded-xl border px-3 py-2 text-xs font-bold ${linkedOnly?'border-emerald-500/50 bg-emerald-500/15 text-emerald-200':'border-white/15 text-slate-300 hover:border-emerald-500/50'}`}>
+              {linkedOnly?'✓ DB 연결 작품만':'DB 연결 작품만 보기'}
+            </Link>
+            {linkedOnly && <span className="text-xs text-slate-400">확정된 작품 연결 기준 · 검색·연도·정렬 적용</span>}
+          </div>
+        )}
+
         {tab === "list" && (
           <div className="mt-6 rounded-2xl border border-purple-500/20 bg-slate-900/60 p-5 backdrop-blur-md">
             {activeSource === "anissia" ? (
@@ -766,7 +790,7 @@ export default async function HomePage({
                     <span className="flex h-6 items-center rounded-full bg-gradient-to-r from-purple-600 to-indigo-600 px-2.5 text-[11px] font-extrabold text-white shadow-sm">
                       ReAnime 글로벌 카탈로그
                     </span>
-                    <span className="text-xs text-slate-400">22,000+ 편의 작품 탐색</span>
+                    <span className="text-xs text-slate-400">{linkedOnly ? "작품 DB에서 연결 확정된 작품 탐색" : "22,000+ 편의 작품 탐색"}</span>
                   </div>
                   {genre && (
                     <div className="flex items-center gap-1.5 text-xs text-purple-300">
@@ -784,6 +808,8 @@ export default async function HomePage({
 
                 <form method="get" action="/" className="flex flex-wrap items-end gap-2 border-t border-white/5 pt-3">
                   <input type="hidden" name="tab" value="list" />
+                  {linkedOnly && <input type="hidden" name="linked" value="1" />}
+                  {q && <input type="hidden" name="q" value={q} />}
                   <input type="hidden" name="genre" value={genre} />
                   <input type="hidden" name="page" value="1" />
                   <label className="flex flex-col gap-1 text-[11px] font-semibold text-slate-400">
@@ -842,7 +868,7 @@ export default async function HomePage({
                 </div>
 
                 {/* ReAnime 장르 칩 그리드 */}
-                <div className="flex items-start gap-2 text-xs pt-1">
+                {!linkedOnly && <div className="flex items-start gap-2 text-xs pt-1">
                   <span className="font-bold text-purple-400 mr-1 min-w-[36px] pt-1">장르:</span>
                   <div className="flex flex-wrap items-center gap-1.5">
                     <Link
@@ -870,7 +896,7 @@ export default async function HomePage({
                       </Link>
                     ))}
                   </div>
-                </div>
+                </div>}
               </div>
             ) : activeSource === "ohli24" ? (
               /* =================== 2. Ohli24(애니24) 전용 맞춤 탐색 =================== */
@@ -1059,7 +1085,7 @@ export default async function HomePage({
                   <AnimeCard key={`${anime.id}-${idx}`} anime={anime} />
                 ))}
               </div>
-            ) : activeSource === "reanime" && tab !== "favorites" ? (
+            ) : activeSource === "reanime" && !linkedOnly && tab !== "favorites" ? (
               <ReanimeFeedFallback tab={tab} q={q} genre={genre} page={page} />
             ) : (
               <div className="flex min-h-[300px] flex-col items-center justify-center text-slate-400">

@@ -96,7 +96,9 @@ export default function Navbar() {
     e.preventDefault();
     if (keyword.trim()) {
       const scopeParam = searchScope === "all" ? "&scope=all" : "";
-      router.push(`/?tab=search&q=${encodeURIComponent(keyword.trim())}${scopeParam}`);
+      const linkedParam=activeSource==='reanime' && searchScope!=='all'
+        && new URLSearchParams(window.location.search).get('linked')==='1'?'&linked=1':'';
+      router.push(`/?tab=search&q=${encodeURIComponent(keyword.trim())}${scopeParam}${linkedParam}`);
     }
   };
 
