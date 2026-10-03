@@ -383,13 +383,19 @@ export async function initDb() {
   }
 
   // User playback overrides only; reviewed work/episode tables are immutable here.
-  await sql`CREATE TABLE IF NOT EXISTS subtitle_episode_overrides (
+  try {
+    await sql`CREATE TABLE IF NOT EXISTS subtitle_episode_overrides (
     user_id VARCHAR(100) NOT NULL, anime_id VARCHAR(100) NOT NULL,
     episode_number INT NOT NULL CHECK (episode_number BETWEEN 1 AND 10000),
     provider VARCHAR(16) NOT NULL, file_id TEXT NOT NULL, label TEXT NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, anime_id, episode_number)
-  )`;
+    )`;
+  } catch (error: any) {
+    // Concurrent first requests can race on the PostgreSQL type catalog.
+    // Another successful CREATE already provided the same table in this case.
+    if (error?.code !== '23505' && error?.code !== '42P07') throw error;
+  }
 
   isInitialized = true;
 }

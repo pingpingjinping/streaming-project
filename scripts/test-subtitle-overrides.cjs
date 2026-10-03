@@ -137,7 +137,7 @@ test('Postgres persists scoped ownership and episode exceptions without modifyin
   const previous=db.getDb;
   try {
     await admin.unsafe(`CREATE SCHEMA ${schema}`);
-    sql=postgres(url,{max:1,connection:{search_path:schema}});db.getDb=()=>sql;
+    sql=postgres(url,{max:5,connection:{search_path:schema}});db.getDb=()=>sql;
     await sql.unsafe(`CREATE TABLE anime_subtitle_archives(dataset_key text,pack_id text,sha256 text);
       CREATE TABLE anime_subtitle_files(dataset_key text,pid text,source text,pack_id text,zip_relative_path text,
         member_path text,sha256 text,work_title_ko text,reanime_id text,target_source text,target_id text,content_extension text,work_confirmed boolean);
@@ -161,6 +161,7 @@ test('Postgres persists scoped ownership and episode exceptions without modifyin
     // The production settings module uses a real isolated Postgres connection.
     const exports={},code=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../src/lib/db.ts'),'utf8'),{compilerOptions}).outputText;
     vm.runInNewContext(code,{exports,require:id=>id==='postgres'?()=>sql:require(id),process:{env:{DATABASE_URL:url}},console,Buffer,setTimeout,clearTimeout});
+    await Promise.all([exports.getSubtitleEpisodeOverrides('alice','re_tv'),exports.getSubtitleEpisodeOverrides('bob','re_tv')]);
     assert.equal(await exports.saveSubtitleBundleAssignment('alice','re_tv','aniall',tvKey,'TV'),true);
     assert.equal(await exports.saveSubtitleBundleAssignment('alice','re_ova','aniall',ovaKey,'OVA'),true);
     assert.equal((await exports.getSubtitleBundleAssignments('alice')).length,2);
