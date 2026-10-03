@@ -488,5 +488,21 @@ export async function getAniAllArchiveSubtitle(blogTitle: string, episode: numbe
       }
     } catch {}
   }
+  // New weekly downloads can be loose files; they do not need repacking or registry rewrites.
+  const loose = (await readdir(dir)).filter(name => /\.(?:ass|ssa|srt|smi|vtt)$/i.test(name))
+    .map(filename => ({ filename }));
+  const selected = selectEpisodeEntries(loose,
+    { episode, sourceEpisode: (startEpisodeOverride || 1) + episode - 1, season: seasonNumber ?? 1 },
+    [readEpisodeEvidence(folder)]);
+  if (selected.length === 1) {
+    const filename = selected[0].filename;
+    const filePath = path.join(dir, filename);
+    const info = await stat(filePath);
+    if (info.isFile() && info.size > 0 && info.size <= 2 * 1024 * 1024) {
+      const subtitle = decodeSubtitleFile(await readFile(filePath), filename);
+      if (subtitle?.content) return { blogTitle: folder, name: subtitle.filename, orig_filename: subtitle.orig_filename,
+        content: subtitle.content, format: subtitle.format, is_ass: subtitle.is_ass };
+    }
+  }
   return null;
 }

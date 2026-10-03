@@ -1,0 +1,191 @@
+const ts = require('typescript');
+const Module = require('node:module');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const assert = require('node:assert/strict');
+const { test, after } = require('node:test');
+const { createHash } = require('node:crypto');
+const resolve = Module._resolveFilename;
+Module._resolveFilename = function(id, ...args) {
+  return resolve.call(this, id.startsWith('@/') ? path.join(__dirname, '../src', id.slice(2)) : id, ...args);
+};
+require.extensions['.ts'] = (module, filename) => module._compile(ts.transpileModule(fs.readFileSync(filename,'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+}).outputText, filename);
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reviewed-subtitles-'));
+process.env.SUBTITLE_STORAGE_DIR = root;
+delete process.env.DATABASE_URL;
+const AdmZip = require('adm-zip');
+const db = require('../src/lib/db.ts');
+const auth = require('../src/lib/auth.ts');
+const storage = require('../src/lib/reviewedSubtitleStorage.ts');
+const oldDb = db.getDb, oldUser = auth.getSessionUser;
+after(() => { db.getDb = oldDb; auth.getSessionUser = oldUser; fs.rmSync(root, {recursive:true,force:true}); });
+const digest = b => createHash('sha256').update(b).digest('hex');
+const srt = text => Buffer.from(`1\n00:00:01,000 --> 00:00:04,000\n${text}\n\n2\n00:00:05,000 --> 00:00:07,000\n검수 자막\n`);
+function pack(name, files, physical) {
+  const zip = new AdmZip();
+  for (const [member, bytes] of Object.entries(files)) zip.addFile(member, bytes);
+  const buffer = zip.toBuffer();
+  const p = path.join(root, physical || `aniall_subtitles/작품/${name}.zip`);
+  fs.mkdirSync(path.dirname(p), {recursive:true}); fs.writeFileSync(p,buffer);
+  return Object.entries(files).map(([member, bytes],i) => ({ pid:`${name}-${i}`,source:'aniall',pack_id:name,
+    zip_relative_path:`aniall/작품/${name}.zip`,member_path:member,sha256:digest(bytes),archive_sha256:digest(buffer),
+    work_title_ko:'검수 작품',reanime_id:'review-test',target_source:'AniList',target_id:'123',
+    content_extension:'.srt',confirmed_episodes:[] }));
+}
+const findRows = rows => { db.getDb = () => async () => rows; };
+const request = overrides => ({animeId:'re_review-test',episode:1,sourceEpisode:1,season:1,...overrides});
+test('mixed ZIP only reads members returned by the current work binding', async () => {
+  const rows = pack('mixed', {'S01E01.srt':srt('TV'), 'OVA/01.srt':srt('OVA'), 'S02E01.srt':srt('season two')});
+  findRows([rows[0]]);
+  const result = await storage.getReviewedSubtitles(request());
+  assert.equal(result.subtitles.length,1); assert.equal(result.needsManualChoice,false);
+  assert.ok(result.subtitles[0].content.includes('TV'));
+  assert.equal(result.subtitles[0].reviewedFileId,`reviewed_v6_1109:${rows[0].pid}`);
+});
+test('registered path with truncated suffix is decoded by content and retains exact PID', async () => {
+  const rows = pack('truncated', {'원본_a/Show - 01.sm':srt('truncated')});
+  rows[0].confirmed_episodes=[1]; findRows(rows);
+  assert.ok((await storage.getReviewedSubtitles(request())).subtitles[0].content.includes('truncated'));
+});
+test('archive relocated under source folder or flattened is found by name AND hash', async () => {
+  const rows = pack('flat', {'01.srt':srt('same bytes')}, 'aniall_subtitles/flat.zip');
+  assert.ok((await storage.readReviewedFile(rows[0])).content.includes('same bytes'));
+});
+test('same filename with a different archive digest is never accepted', async () => {
+  const rows = pack('different', {'01.srt':srt('wrong archive')}); rows[0].archive_sha256='f'.repeat(64);
+  assert.equal(await storage.readReviewedFile(rows[0]),null);
+});
+test('member digest mismatch does not choose a nearby file', async () => {
+  const rows = pack('member-digest', {'01.srt':srt('one'), '02.srt':srt('two')}); rows[0].sha256=rows[1].sha256;
+  assert.equal(await storage.readReviewedFile(rows[0]),null);
+});
+test('archive symlink outside storage and parent traversal are refused', async () => {
+  const rows = pack('unsafe', {'01.srt':srt('safe')});
+  assert.equal(await storage.readReviewedFile({...rows[0],zip_relative_path:'../unsafe.zip'}),null);
+  assert.equal(await storage.readReviewedFile({...rows[0],member_path:'../01.srt'}),null);
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(),'outside-subtitles-'));
+  try {
+    const p=path.join(root,'aniall_subtitles/작품/unsafe.zip');
+    fs.renameSync(p,path.join(outside,'unsafe.zip')); fs.symlinkSync(path.join(outside,'unsafe.zip'),p);
+    assert.equal(await storage.readReviewedFile(rows[0]),null);
+  } finally { fs.rmSync(outside,{recursive:true,force:true}); }
+});
+test('confirmed local episode wins over filename and a configured source offset', async () => {
+  const rows = pack('confirmed', {'13.srt':srt('confirmed first')}); rows[0].confirmed_episodes=[1]; findRows(rows);
+  assert.ok((await storage.getReviewedSubtitles(request({sourceEpisode:25,season:2}))).subtitles[0].content.includes('confirmed first'));
+  assert.equal((await storage.getReviewedSubtitles(request({episode:13,sourceEpisode:13}))).subtitles.length,0);
+});
+test('offset is applied once to an unassigned file without changing episode rows', async () => {
+  const rows = pack('offset', {'13.srt':srt('source 13'), '24.srt':srt('source 24')}); findRows(rows);
+  const before=JSON.stringify(rows);
+  const result=await storage.getReviewedSubtitles(request({sourceEpisode:13,season:2}));
+  assert.equal(result.subtitles.length,1); assert.ok(result.subtitles[0].content.includes('source 13'));
+  assert.equal(JSON.stringify(rows),before);
+});
+test('unnumbered file and conflicting confirmed episodes require manual choice', async () => {
+  for (const name of ['unnumbered','conflicting']) {
+    const rows=pack(name, {'subtitle.srt':srt(name)});
+    if(name==='conflicting') rows[0].confirmed_episodes=[1,2];
+    findRows(rows); const result=await storage.getReviewedSubtitles(request());
+    assert.equal(result.subtitles.length,1); assert.equal(result.needsManualChoice,true);
+    assert.equal(result.subtitles[0].episodeConfirmed,false);
+  }
+});
+test('competing relative and absolute season numbering stays manual', async () => {
+  const rows=pack('schemes', {'Season 2/01.srt':srt('relative'), 'Season 2/13.srt':srt('absolute')}); findRows(rows);
+  const result=await storage.getReviewedSubtitles(request({sourceEpisode:13,season:2}));
+  assert.equal(result.subtitles.length,2); assert.equal(result.needsManualChoice,true);
+});
+test('same-episode variants require choice, identical content deduplicates', async () => {
+  const rows=pack('variants', {'01.srt':srt('one'), '01ns.srt':srt('other'), '01_tv.srt':srt('one')}); findRows(rows);
+  const result=await storage.getReviewedSubtitles(request());
+  assert.equal(result.subtitles.length,2); assert.equal(result.needsManualChoice,true);
+});
+test('rejected stable PID stays rejected regardless of display name', async () => {
+  const rows=pack('reject', {'01.srt':srt('rejected')}); findRows(rows);
+  assert.equal((await storage.getReviewedSubtitles(request({isRejected:(p,k)=>p==='aniall'&&k===`reviewed:reviewed_v6_1109:${rows[0].pid}`}))).subtitles.length,0);
+});
+test('missing registry is a legacy fallback, other database errors are visible', async () => {
+  db.getDb=()=>async()=>{throw Object.assign(new Error('missing'),{code:'42P01'});};
+  assert.deepEqual(await storage.findReviewedFiles('re_review-test'),[]);
+  db.getDb=()=>async()=>{throw new Error('connection failed');};
+  await assert.rejects(storage.findReviewedFiles('re_review-test'),/connection failed/);
+});
+test('missing physical ZIP and unsupported binary SUB never fabricate content', async () => {
+  const rows=pack('unsupported', {'01.sub':Buffer.from([0,1,2,3])});
+  assert.equal(await storage.readReviewedFile(rows[0]),null);
+  assert.equal(await storage.readReviewedFile({...rows[0],zip_relative_path:'aniall/작품/missing.zip'}),null);
+});
+test('Naver exact-ID VTT route reads the selected file and does not web-search on missing PID', async () => {
+  const rows=pack('vtt', {'01.srt':srt('selected naver')}, 'naver_subtitles/작품/vtt.zip');
+  rows[0].source='naver'; rows[0].zip_relative_path='naver/작품/vtt.zip'; findRows(rows);
+  auth.getSessionUser=async()=>({username:'test'});
+  const oldReject=db.getSubtitleRejections; db.getSubtitleRejections=async()=>[];
+  const oldFetch=global.fetch; global.fetch=async()=>{throw new Error('must not search web');};
+  try {
+    const {GET}=require('../src/app/api/anime/subtitles/vtt/route.ts');
+    const {NextRequest}=require('next/server');
+    const url=`http://localhost/api/anime/subtitles/vtt?animeId=re_review-test&reviewedFileId=reviewed_v6_1109:${rows[0].pid}&offset=2`;
+    const response=await GET(new NextRequest(url));
+    assert.equal(response.status,200); assert.match(await response.text(),/00:00:03\.000 --> 00:00:06\.000/);
+    assert.equal(response.headers.get('cache-control'),'private, no-store');
+    const missing=await GET(new NextRequest(url.replace(rows[0].pid,'nonexistent')));
+    assert.equal(missing.status,404);
+  } finally { global.fetch=oldFetch; db.getSubtitleRejections=oldReject; }
+});
+test('weekly loose AniAll files coexist with archive folders, applying start once', async () => {
+  const folder=path.join(root,'aniall_subtitles/주간 작품 시즌2'); fs.mkdirSync(folder,{recursive:true});
+  fs.writeFileSync(path.join(folder,'13.srt'),srt('weekly first'));
+  const legacy=require('../src/lib/subtitleStorage.ts');
+  assert.ok((await legacy.getAniAllArchiveSubtitle('주간 작품 시즌2',1,2,13)).content.includes('weekly first'));
+  assert.equal(await legacy.getAniAllArchiveSubtitle('주간 작품 시즌2',1,2,null),null);
+});
+
+test('Postgres selects only current exact work links and relevant confirmed episodes', {skip:!process.env.REVIEWED_TEST_DATABASE_URL}, async () => {
+  process.env.DATABASE_URL=process.env.REVIEWED_TEST_DATABASE_URL;
+  db.getDb=oldDb;
+  const sql=oldDb();
+  try {
+    // This isolated Actions service verifies the SQL against PostgreSQL, including old historical origins.
+    await sql.unsafe(`
+      CREATE TABLE anime_subtitle_archives(dataset_key text,pack_id text,sha256 text);
+      CREATE TABLE anime_subtitle_files(dataset_key text,pid text,source text,pack_id text,zip_relative_path text,
+        member_path text,sha256 text,work_title_ko text,reanime_id text,target_source text,target_id text,
+        content_extension text,work_confirmed boolean);
+      CREATE TABLE anime_subtitle_file_origins(dataset_key text,pid text,file_id text);
+      CREATE TABLE anime_subtitle_confirmed_episodes(dataset_key text,file_id text,target_source text,target_id text,target_episode int,status text);
+      CREATE TABLE anime_subtitle_work_reanime_links(dataset_key text,target_source text,target_id text,reanime_id text,automatic_eligible boolean);
+      INSERT INTO anime_subtitle_archives VALUES('reviewed_v6_1109','p','${'a'.repeat(64)}');
+      INSERT INTO anime_subtitle_files VALUES
+        ('reviewed_v6_1109','current','aniall','p','aniall/작품/a.zip','01.srt','${'b'.repeat(64)}','정상 작품','test-work','AniList','1','.srt',true),
+        ('reviewed_v6_1109','held','aniall','p','aniall/미확정/a.zip','02.srt','${'b'.repeat(64)}','정상 작품','test-work','AniList','1','.srt',false),
+        ('reviewed_v6_1109','manual-link','naver','p','naver/a.zip','03.srt','${'b'.repeat(64)}','정상 작품','test-work','AniList','2','.srt',true),
+        ('reviewed_v6_1109','other','aniall','p','aniall/b.zip','01.srt','${'b'.repeat(64)}','다른 작품','other-work','AniList','3','.srt',true),
+        ('reviewed_v6_1109','no-reanime','naver','p','naver/c.zip','01.srt','${'b'.repeat(64)}','연결 없음',NULL,'AniList','4','.srt',true);
+      INSERT INTO anime_subtitle_work_reanime_links VALUES
+        ('reviewed_v6_1109','AniList','1','test-work',true),
+        ('reviewed_v6_1109','AniList','2','test-work',false),
+        ('reviewed_v6_1109','AniList','3','other-work',true);
+      INSERT INTO anime_subtitle_file_origins VALUES('reviewed_v6_1109','current','origin');
+      INSERT INTO anime_subtitle_confirmed_episodes VALUES
+        ('reviewed_v6_1109','origin','AniList','1',1,'confirmed_episode'),
+        ('reviewed_v6_1109','origin','ReAnime','test-work',1,'confirmed_episode'),
+        ('reviewed_v6_1109','origin','AniList','999',12,'confirmed_episode'),
+        ('reviewed_v6_1109','origin','AniList','1',2,'candidate');
+    `);
+    const rows=await storage.findReviewedFiles('re_test-work');
+    assert.deepEqual(rows.map(r=>r.pid),['current']);
+    assert.deepEqual(rows[0].confirmed_episodes,[1]);
+    assert.deepEqual(await storage.findReviewedFiles('re_nonexistent'),[]);
+    const manual=await storage.findReviewedFiles('re_nonexistent','연결 없음');
+    assert.deepEqual(manual.map(r=>r.pid),['no-reanime']);
+    assert.equal(manual[0].reanime_id,null);
+    assert.equal((await storage.findReviewedFiles('re_test-work','정상 작품')).length,2);
+    assert.equal((await storage.findReviewedTitles('정상')).length,2);
+  } finally {
+    await sql.end(); db.getDb=()=>null; delete process.env.DATABASE_URL;
+  }
+});

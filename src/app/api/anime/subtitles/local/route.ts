@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { getAniAllMatches, searchAniAllMatchesByTitleFragment, getSubtitleEpisodeStart, getSubtitleRejections, getSubtitleSourcePriority } from "@/lib/db";
 import { getAniAllArchiveSubtitle, getAnissiaArchiveSubtitles, searchLocalSubtitleFolders } from "@/lib/subtitleStorage";
+import { findReviewedTitles, getReviewedSubtitles } from "@/lib/reviewedSubtitleStorage";
 import { parseSeason, resolveKoreanTitle } from "@/lib/subtitles";
 
 export async function GET(request: NextRequest) {
@@ -18,7 +19,8 @@ export async function GET(request: NextRequest) {
 
   try {
     if (params.get("mode") === "folders") {
-      const folders = await searchLocalSubtitleFolders(title);
+      const [legacy, reviewed] = await Promise.all([searchLocalSubtitleFolders(title), findReviewedTitles(title)]);
+      const folders = [...new Map([...legacy, ...reviewed].map(f => [`${f.provider}:${f.folderName}`, f])).values()].slice(0, 200);
       return NextResponse.json({ success: true, folders },
         { headers: { "Cache-Control": "no-store" } });
     }
@@ -85,9 +87,16 @@ export async function GET(request: NextRequest) {
         verifiedMatch: true,
         localArchive: true,
       }));
+    const reviewed = await getReviewedSubtitles({ animeId, episode, sourceEpisode,
+      season: parseSeason(resolvedTitle) || parseSeason(title),
+      isRejected: (provider, key) => isRejected(provider, key)
+        || (provider === "aniall" && rejected.some(r => r.provider === "aniall" && !r.sourceKey.startsWith("reviewed:"))),
+      keyword: params.get("mode") === "search" ? title : "", manualSearch: true });
+    const reviewedAniAll = reviewed.subtitles.filter(s => s.sourceProvider === "aniall");
+    const reviewedNaver = reviewed.subtitles.filter(s => s.sourceProvider === "naver");
     const subtitles = sourcePriority === "aniall"
-      ? [...aniallSubtitles, ...anissiaSubtitles]
-      : [...anissiaSubtitles, ...aniallSubtitles];
+      ? [...reviewedAniAll, ...aniallSubtitles, ...anissiaSubtitles, ...reviewedNaver]
+      : [...anissiaSubtitles, ...reviewedAniAll, ...aniallSubtitles, ...reviewedNaver];
 
     return NextResponse.json({ success: true, anime_title: title, episode, count: subtitles.length, subtitles },
       { headers: { "Cache-Control": "no-store" } });
