@@ -23,8 +23,10 @@ const normalizeBlogTitle = (value: string) => value.normalize("NFKC").toLocaleLo
 function anissiaFolderParts(finishPath: string) {
   const relative = path.relative(path.join(root, "anissia_subtitles"), path.dirname(finishPath));
   const parts = relative.split(path.sep).filter(Boolean);
+  const identity = parts[0]?.match(/^([1-9]\d*)__([\s\S]+)$/);
   return {
-    title: parts[0] || "",
+    title: identity?.[2] || parts[0] || "",
+    animeNo: identity && Number.isSafeInteger(Number(identity[1])) ? Number(identity[1]) : null,
     episode: parts[1] || "",
     creator: parts[2] || "",
   };
@@ -373,14 +375,16 @@ export async function getAnissiaArchiveSubtitles(
   const matched: Array<{ entry: AnissiaArchiveIndexEntry; title: string; creator: string; website: string; order: number }> = [];
 
   for (const entry of index) {
-    const recordAnimeNo = recordNumber(entry.record, ["animeNo", "anime_no", "anissiaNo"]);
     const folderParts = anissiaFolderParts(entry.finishPath);
+    const metadataAnimeNo = recordNumber(entry.record, ["animeNo", "anime_no", "anissiaNo"]);
+    if (metadataAnimeNo && folderParts.animeNo && metadataAnimeNo !== folderParts.animeNo) continue;
+    const recordAnimeNo = metadataAnimeNo || folderParts.animeNo;
     const folderTitle = folderParts.title || path.basename(path.dirname(path.dirname(path.dirname(entry.finishPath))));
     const recordTitle = recordValue(entry.record, ["subject", "animeTitle", "workTitle", "title", "anime_name", "work"]) || folderTitle;
     const exactTitleMatch = [recordTitle, folderTitle].some((value) => wantedTitles.has(normalizeBlogTitle(value)));
     const folderNameMatch = folderNameQuery
       ? normalizeBlogTitle(folderTitle).includes(folderNameQuery)
-      : Boolean(animeNo && recordAnimeNo === animeNo) || exactTitleMatch;
+      : animeNo && recordAnimeNo ? recordAnimeNo === animeNo : exactTitleMatch;
     if (!folderNameMatch) continue;
 
     const recordEpisode = recordValue(entry.record, ["episode", "episodeNumber", "episode_number", "episodeNo", "ep"]);
@@ -429,7 +433,7 @@ export async function getAnissiaArchiveSubtitles(
             website: candidate.website,
             matchedTitle: candidate.title,
             updatedAt: candidate.entry.updatedAt,
-            animeNo: recordNumber(candidate.entry.record, ["animeNo", "anime_no", "anissiaNo"]),
+            animeNo: recordNumber(candidate.entry.record, ["animeNo", "anime_no", "anissiaNo"]) || folderParts.animeNo,
             archiveFilename: filename,
             ...anissiaTrackIdentity(candidate.creator, filename, subtitle.orig_filename, episode),
           });
@@ -458,7 +462,7 @@ export async function getAnissiaArchiveSubtitles(
   return results;
 }
 
-export async function getAniAllArchiveSubtitle(blogTitle: string, episode: number, seasonNumber: number | null = null, startEpisodeOverride: number | null = null) {
+export async function getAniAllArchiveSubtitle(blogTitle: string, episode: number, seasonNumber: number | null = null, startEpisodeOverride: number | null = null, postUrl: string = "") {
   const corpus = path.join(root, "aniall_subtitles");
   let folders: string[];
   try { folders = await readdir(corpus); } catch (error: any) {
@@ -466,8 +470,14 @@ export async function getAniAllArchiveSubtitle(blogTitle: string, episode: numbe
     throw error;
   }
   const wanted = normalizeBlogTitle(blogTitle);
-  const folder = folders.find((name) => normalizeBlogTitle(name) === wanted);
+  const postId = postUrl.match(/^https?:\/\/aniall\.tistory\.com\/([1-9]\d*)(?:[/?#]|$)/i)?.[1];
+  // Numbered weekly folders require their actual post binding. An unmatched
+  // new post must not bypass DB review through the legacy title fallback.
+  const numbered = postId ? folders.filter(name => name.startsWith(`${postId}__`)) : [];
+  if (numbered.length > 1) return null;
+  const folder = numbered[0] || folders.find(name => !/^[1-9]\d*__/.test(name) && normalizeBlogTitle(name) === wanted);
   if (!folder) return null;
+  const folderTitle = folder.replace(/^[1-9]\d*__/, "");
   const dir = path.join(corpus, folder);
   const files = (await readdir(dir)).filter((name) => name.toLowerCase().endsWith(".zip")).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   for (const filename of files) {
@@ -478,12 +488,12 @@ export async function getAniAllArchiveSubtitle(blogTitle: string, episode: numbe
       const { zip, entries } = inspectSubtitleArchive(await readFile(filePath));
       const request = { episode, sourceEpisode: (startEpisodeOverride || 1) + episode - 1, season: seasonNumber ?? 1 };
       const selected = selectEpisodeEntries(entries, request,
-        [readEpisodeEvidence(folder), readEpisodeEvidence(filename, true)]);
+        [readEpisodeEvidence(folderTitle), readEpisodeEvidence(filename, true)]);
       if (selected.length !== 1) continue;
       const entry = selected[0];
       const subtitle = decodeSubtitleFile(zip.getEntries()[entry.index].getData(), entry.filename);
       if (subtitle?.content) {
-        return { blogTitle: folder, name: subtitle.filename, orig_filename: subtitle.orig_filename, content: subtitle.content,
+        return { blogTitle: folderTitle, name: subtitle.filename, orig_filename: subtitle.orig_filename, content: subtitle.content,
           format: subtitle.format, is_ass: subtitle.is_ass };
       }
     } catch {}
@@ -493,14 +503,14 @@ export async function getAniAllArchiveSubtitle(blogTitle: string, episode: numbe
     .map(filename => ({ filename }));
   const selected = selectEpisodeEntries(loose,
     { episode, sourceEpisode: (startEpisodeOverride || 1) + episode - 1, season: seasonNumber ?? 1 },
-    [readEpisodeEvidence(folder)]);
+    [readEpisodeEvidence(folderTitle)]);
   if (selected.length === 1) {
     const filename = selected[0].filename;
     const filePath = path.join(dir, filename);
     const info = await stat(filePath);
     if (info.isFile() && info.size > 0 && info.size <= 2 * 1024 * 1024) {
       const subtitle = decodeSubtitleFile(await readFile(filePath), filename);
-      if (subtitle?.content) return { blogTitle: folder, name: subtitle.filename, orig_filename: subtitle.orig_filename,
+      if (subtitle?.content) return { blogTitle: folderTitle, name: subtitle.filename, orig_filename: subtitle.orig_filename,
         content: subtitle.content, format: subtitle.format, is_ass: subtitle.is_ass };
     }
   }

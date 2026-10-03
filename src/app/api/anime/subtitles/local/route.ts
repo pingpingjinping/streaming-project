@@ -41,17 +41,20 @@ export async function GET(request: NextRequest) {
     });
     const candidates = new Map<string, { blogTitle: string; canonicalTitle: string; postUrl: string; confidence: number }>();
     for (const match of matches) {
-      if (!candidates.has(match.blogTitle)) candidates.set(match.blogTitle, {
+      const key = match.postUrl || match.blogTitle;
+      if (!candidates.has(key)) candidates.set(key, {
         blogTitle: match.blogTitle, canonicalTitle: match.canonicalTitle,
         postUrl: match.postUrl, confidence: match.confidence,
       });
     }
     // Also permit a folder whose name directly matches the entered title.
-    if (!candidates.has(title)) candidates.set(title, { blogTitle: title, canonicalTitle: resolvedTitle, postUrl: "", confidence: 0 });
+    const selectedFolder = title.match(/^([1-9]\d*)__([\s\S]+)$/);
+    if (!candidates.has(title)) candidates.set(title, { blogTitle: selectedFolder?.[2] || title,
+      canonicalTitle: resolvedTitle, postUrl: selectedFolder ? `https://aniall.tistory.com/${selectedFolder[1]}` : "", confidence: 0 });
 
     const aniallSubtitles = [];
     for (const candidate of [...candidates.values()].slice(0, 20)) {
-      const subtitle = await getAniAllArchiveSubtitle(candidate.blogTitle, episode, parseSeason(candidate.canonicalTitle), sourceEpisodeStart);
+      const subtitle = await getAniAllArchiveSubtitle(candidate.blogTitle, episode, parseSeason(candidate.canonicalTitle), sourceEpisodeStart, candidate.postUrl);
       if (!subtitle) continue;
       const displayName = `[로컬 AniAll · ${candidate.blogTitle}] ${subtitle.orig_filename}`;
       if (isRejected(candidate.postUrl ? "aniall" : "local", candidate.postUrl || displayName)) continue;

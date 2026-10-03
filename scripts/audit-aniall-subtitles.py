@@ -136,7 +136,11 @@ def extract_meta(raw: str) -> dict:
 
     season = None
     season_range = None
-    range_match = re.search(r"(?<!\d)(\d{1,2})\s*[-~–]\s*(\d{1,2})\s*기\b", s)
+    range_match = re.search(
+        r"(?:\bseason|\bs|시즌)\s*0*(\d{1,2})\s*[-~–+&]\s*"
+        r"(?:(?:season|s|시즌)\s*)?0*(\d{1,2})\b", s, flags=re.I)
+    if not range_match:
+        range_match = re.search(r"(?<!\d)(\d{1,2})\s*기?\s*[-~–+&]\s*(\d{1,2})\s*기\b", s)
     if range_match:
         season_range = [int(range_match.group(1)), int(range_match.group(2))]
     season_patterns = (
@@ -437,6 +441,11 @@ def _candidate_meta(row: dict, alias: str) -> dict:
 
 def build_reference_index(db: sqlite3.Connection):
     catalog, aliases = build_catalog(db)
+    return build_catalog_reference_index(catalog, aliases)
+
+
+def build_catalog_reference_index(catalog, aliases):
+    """Use the same conservative matcher for SQLite audits and Pi catalog rows."""
     extra_aliases = defaultdict(list)
     for _normalized, alias, korean in aliases:
         extra_aliases[korean].append(alias)

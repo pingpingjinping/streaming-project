@@ -1,5 +1,15 @@
 # Reviewed subtitle registry
 
+## Weekly downloads
+
+New Anissia downloads use `animeNo__title/episode/creator`; the reader accepts the work ID without requiring `finish.txt`, and refuses mismatching explicit IDs. Existing plain-title folders remain supported.
+
+New AniAll downloads use `postId__blogTitle`, isolating same-title posts. Numbered folders require the actual matched post URL; an unresolved post cannot bypass review via the title-only fallback. Old title-only folders and reviewed archive IDs remain supported.
+
+The Pi weekly wrapper imports published AniAll mappings, then runs `scripts/match-weekly-aniall.py` against the current PostgreSQL catalog. Only successfully downloaded posts in the new numbered layout that are absent from `subtitle-data/aniall-weekly-matching.json` are processed. The existing monthly matcher and protected importers decide exact matches and review candidates. Fuzzy scores never become automatic confirmations. The checkpoint includes unresolved decisions and is committed only after both imports succeed. Unresolved posts can still be reviewed by the monthly pipeline. No reviewed registry or confirmed episode row is changed.
+
+For a preview: `python3 scripts/match-weekly-aniall.py --dry-run`. Both repositories must be updated before enabling the weekly service. The 60-second viewing cache remains separate under `subtitle-data/verified`; there is no cross-directory content deduplication.
+
 `scripts/update-anime-db-release.py` imports the canonical db-v1 catalog and its completed reviewed subtitle registry. Existing catalog digest state alone does not suppress the first registry import; the separate subtitle marker is written only after both importers succeed. Run `python3 scripts/import-reviewed-subtitles.py DATABASE --dry-run` to validate without applying, or run the existing release updater for normal imports into `anime_subtitle_*` tables.
 
 The playback reader now queries current `work_confirmed`, `target_source`, `target_id` and eligible exact ReAnime links. It never promotes historical candidates or held work rows. Confirmed episode rows relevant to the file's current work take priority; unassigned files use the existing filename/season/start-episode algorithm without writing new episode rows. Multiple distinct candidates and unknown episodes require an explicit choice. Source priority remains AniAll/Anissia, with reviewed Naver as a local fallback before web lookup. Existing uploads and Anissia track preferences remain effective.
