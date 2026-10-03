@@ -124,7 +124,7 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      if (!bestLocal) return findReviewedLocal("aniall");
+      if (!bestLocal) return null;
       return NextResponse.json({
         success: true, anime_title: title, resolved_title: resolvedTitle, episode: ep, count: 1,
         subtitles: [{ ...bestLocal.subtitle, sourceProvider: "aniall", sourceCreatorWebsite: bestLocal.match.postUrl,
@@ -192,8 +192,11 @@ export async function GET(request: NextRequest) {
       if (localResponse) return localResponse;
     }
 
-    const reviewedNaver = await findReviewedLocal("naver");
+    const reviewedNaver = await findReviewedLocal("naver", false);
     if (reviewedNaver) return reviewedNaver;
+    // Unknown historical episodes must not hide a known weekly file from either local source.
+    const reviewedManual = await findReviewedLocal("aniall") || await findReviewedLocal("naver");
+    if (reviewedManual) return reviewedManual;
 
     const cached = animeIdParam && !sourceEpisodeStart ? await getVerifiedSubtitleCache(animeIdParam, ep) : null;
     if (cached && !isRejected(cached.sourceProvider,

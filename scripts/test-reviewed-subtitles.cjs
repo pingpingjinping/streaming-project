@@ -144,6 +144,69 @@ test('weekly loose AniAll files coexist with archive folders, applying start onc
   assert.equal(await legacy.getAniAllArchiveSubtitle('주간 작품 시즌2',1,2,null),null);
 });
 
+
+async function withAutomaticRoute(rows, run) {
+  const patches=[];
+  const patch=(obj,key,value)=>{ patches.push([obj,key,obj[key]]); obj[key]=value; };
+  const subtitles=require('../src/lib/subtitles.ts');
+  const reanime=require('../src/lib/reanimeMatches.ts');
+  const local=require('../src/lib/subtitleStorage.ts');
+  patch(db,'getDb',()=>async()=>rows);
+  patch(db,'getSubtitleEpisodeStart',async()=>null);
+  patch(db,'getSubtitleRejections',async()=>[]);
+  patch(db,'getSubtitleSourcePriority',async()=> 'aniall');
+  patch(db,'getAniAllMatches',async()=>[]);
+  patch(db,'getManualSubtitleLink',async()=>null);
+  patch(auth,'getSessionUser',async()=>({username:'test'}));
+  patch(subtitles,'resolveKoreanTitle',async title=>title);
+  patch(reanime,'getReanimeMatch',async()=>null);
+  patch(local,'getUploadedSubtitles',async()=>[]);
+  patch(local,'getAnissiaArchiveSubtitles',async()=>[]);
+  patch(local,'getVerifiedSubtitleCache',async()=>null);
+  const oldFetch=global.fetch; global.fetch=async()=>{throw new Error('local route must not search web');};
+  try {
+    const {GET}=require('../src/app/api/anime/subtitles/route.ts');
+    const {NextRequest}=require('next/server');
+    const get=async ep=> (await GET(new NextRequest(`http://localhost/api/anime/subtitles?animeId=re_review-test&title=${encodeURIComponent('검수 작품')}&ep=${ep}`))).json();
+    await run(get,local);
+  } finally {
+    global.fetch=oldFetch;
+    for(const [obj,key,value] of patches.reverse()) obj[key]=value;
+  }
+}
+test('automatic route prefers a known weekly AniAll file over unknown historical episodes',async()=>{
+  const rows=pack('old-unknown', {'subtitle.srt':srt('old unknown')});
+  const folder=path.join(root,'aniall_subtitles/검수 작품');fs.mkdirSync(folder,{recursive:true});
+  fs.writeFileSync(path.join(folder,'03.srt'),srt('new weekly episode three'));
+  await withAutomaticRoute(rows,async get=>{
+    const result=await get(3);
+    assert.ok(result.success);assert.ok(result.subtitles[0].content.includes('new weekly episode three'));
+    assert.equal(Boolean(result.needs_manual_subtitle_choice),false);
+  });
+});
+test('automatic route prefers known Anissia or Naver episodes over unknown reviewed AniAll files',async()=>{
+  const oldRows=pack('old-manual', {'subtitle.srt':srt('old unknown')});
+  const naver=pack('new-naver', {'05.srt':srt('known naver')},'naver_subtitles/작품/new-naver.zip');
+  naver[0].source='naver';naver[0].zip_relative_path='naver/작품/new-naver.zip';
+  await withAutomaticRoute([...oldRows,...naver],async(get,local)=>{
+    const naverResult=await get(5);
+    assert.equal(naverResult.subtitles[0].sourceProvider,'naver');
+    assert.ok(naverResult.subtitles[0].content.includes('known naver'));
+    local.getAnissiaArchiveSubtitles=async()=>[{creator:'existing',localArchiveTrackKey:'existing-track',localArchiveTrackLabel:'TV',
+      archiveFilename:'01.zip',orig_filename:'01.srt',content:'WEBVTT\n\nexisting Anissia',format:'VTT',is_ass:false,website:'',matchedTitle:'검수 작품',updatedAt:''}];
+    const anissiaResult=await get(4);
+    assert.equal(anissiaResult.subtitles[0].sourceProvider,'anissia');
+    assert.ok(anissiaResult.subtitles[0].content.includes('existing Anissia'));
+  });
+});
+test('automatic route surfaces competing reviewed variants without choosing file order',async()=>{
+  const rows=pack('auto-choice', {'06.srt':srt('version a'), '06ns.srt':srt('version b')});
+  await withAutomaticRoute(rows,async get=>{
+    const result=await get(6);
+    assert.equal(result.count,2);assert.equal(result.needs_manual_subtitle_choice,true);
+  });
+});
+
 test('Postgres selects only current exact work links and relevant confirmed episodes', {skip:!process.env.REVIEWED_TEST_DATABASE_URL}, async () => {
   process.env.DATABASE_URL=process.env.REVIEWED_TEST_DATABASE_URL;
   db.getDb=oldDb;
@@ -179,7 +242,7 @@ test('Postgres selects only current exact work links and relevant confirmed epis
     const rows=await storage.findReviewedFiles('re_test-work');
     assert.deepEqual(rows.map(r=>r.pid),['current']);
     assert.deepEqual(rows[0].confirmed_episodes,[1]);
-    assert.deepEqual(await storage.findReviewedFiles('re_nonexistent'),[]);
+    assert.equal((await storage.findReviewedFiles('re_nonexistent')).length,0);
     const manual=await storage.findReviewedFiles('re_nonexistent','연결 없음');
     assert.deepEqual(manual.map(r=>r.pid),['no-reanime']);
     assert.equal(manual[0].reanime_id,null);
