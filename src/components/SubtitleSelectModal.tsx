@@ -46,10 +46,20 @@ export interface SubtitleOption {
   localArchive?: boolean;
   localArchiveTrackKey?: string;
   reviewedFileId?: string;
+  sourceBundleKey?: string;
+  sourceBundleLabel?: string;
+  bundleAssigned?: boolean;
 }
 
 const creatorKey = (creator: CreatorInfo) => `${creator.website}\n${creator.matchedTitle || ""}`;
 type RejectedSource = { provider: string; sourceKey: string };
+type BundleAssignment = {
+  animeId: string;
+  provider: "aniall" | "anissia" | "naver";
+  bundleKey: string;
+  label: string;
+  exclusive: boolean;
+};
 const rejectionId = (provider: string, sourceKey: string) => JSON.stringify([provider, sourceKey]);
 const creatorSource = (creator: CreatorInfo): RejectedSource => ({
   provider: creator.localArchive ? creator.sourceProvider || "local" : creator.website ? creator.sourceProvider || "anissia" : "local",
@@ -112,6 +122,9 @@ export default function SubtitleSelectModal({
   const [savedStartEpisode, setSavedStartEpisode] = useState<number | null>(null);
   const [savingStartEpisode, setSavingStartEpisode] = useState(false);
   const [startEpisodeNotice, setStartEpisodeNotice] = useState<string | null>(null);
+  const [bundleAssignment, setBundleAssignment] = useState<BundleAssignment | null>(null);
+  const [savingBundleKey, setSavingBundleKey] = useState("");
+  const [bundleNotice, setBundleNotice] = useState<string | null>(null);
 
   // File upload states
   const [uploadedSub, setUploadedSub] = useState<SubtitleOption | null>(null);
@@ -169,6 +182,21 @@ export default function SubtitleSelectModal({
     return () => { cancelled = true; };
   }, [isOpen, animeId]);
 
+  useEffect(() => {
+    if (!isOpen || !animeId) return;
+    let cancelled = false;
+    setBundleNotice(null);
+    fetch(`/api/anime/subtitle-bundle?animeId=${encodeURIComponent(animeId)}`, { cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.message || "묶음 지정을 불러오지 못했습니다.");
+        return data;
+      })
+      .then((data) => { if (!cancelled) setBundleAssignment(data.assignment || null); })
+      .catch((error) => { if (!cancelled) setBundleNotice(error.message || "묶음 지정을 불러오지 못했습니다."); });
+    return () => { cancelled = true; };
+  }, [isOpen, animeId]);
+
   const isRejected = ({ provider, sourceKey }: RejectedSource) =>
     rejectedSources.some((entry) => rejectionId(entry.provider, entry.sourceKey) === rejectionId(provider, sourceKey));
   const visibleCreators = creators.filter((creator) => !isRejected(creatorSource(creator)));
@@ -196,6 +224,53 @@ export default function SubtitleSelectModal({
       setCreatorError(error instanceof Error ? error.message : "선택을 저장하지 못했습니다.");
     } finally {
       setSavingRejection("");
+    }
+  };
+
+  const assignBundle = async (subtitle: SubtitleOption) => {
+    if (!subtitle.localArchive || !subtitle.sourceProvider || !subtitle.sourceBundleKey || savingBundleKey) return;
+    const key = `${subtitle.sourceProvider}:${subtitle.sourceBundleKey}`;
+    setSavingBundleKey(key);
+    setBundleNotice(null);
+    try {
+      const response = await fetch("/api/anime/subtitle-bundle", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          animeId,
+          provider: subtitle.sourceProvider,
+          bundleKey: subtitle.sourceBundleKey,
+          label: subtitle.sourceBundleLabel || subtitle.sourceMatchedTitle || subtitle.matchedTitle || animeTitle,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.message || "자막 묶음을 지정하지 못했습니다.");
+      setBundleAssignment(data.assignment || null);
+      onSelectSubtitle({ ...subtitle, bundleAssigned: true });
+      onClose();
+    } catch (error) {
+      setBundleNotice(error instanceof Error ? error.message : "자막 묶음을 지정하지 못했습니다.");
+    } finally {
+      setSavingBundleKey("");
+    }
+  };
+
+  const clearBundleAssignment = async () => {
+    if (!bundleAssignment || savingBundleKey) return;
+    setSavingBundleKey("clear");
+    setBundleNotice(null);
+    try {
+      const response = await fetch(`/api/anime/subtitle-bundle?animeId=${encodeURIComponent(animeId)}`, {
+        method: "DELETE",
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.message || "묶음 지정을 해제하지 못했습니다.");
+      setBundleAssignment(null);
+      setBundleNotice("작품 전체 묶음 지정을 해제했어. 다시 자동 매칭으로 돌아가.");
+    } catch (error) {
+      setBundleNotice(error instanceof Error ? error.message : "묶음 지정을 해제하지 못했습니다.");
+    } finally {
+      setSavingBundleKey("");
     }
   };
 
@@ -234,6 +309,9 @@ export default function SubtitleSelectModal({
           localArchive: true,
           localArchiveTrackKey: subtitle.localArchiveTrackKey,
           reviewedFileId: subtitle.reviewedFileId,
+          sourceBundleKey: subtitle.sourceBundleKey,
+          sourceBundleLabel: subtitle.sourceBundleLabel,
+          bundleAssigned: Boolean(subtitle.bundleAssigned),
         })));
       })
       .catch((error) => {
@@ -371,6 +449,9 @@ export default function SubtitleSelectModal({
         localArchive: Boolean(s.localArchive),
         localArchiveTrackKey: s.localArchiveTrackKey,
         reviewedFileId: s.reviewedFileId,
+        sourceBundleKey: s.sourceBundleKey,
+        sourceBundleLabel: s.sourceBundleLabel,
+        bundleAssigned: Boolean(s.bundleAssigned),
       }));
 
       // The server has already grouped these in the configured provider order.
@@ -421,6 +502,9 @@ export default function SubtitleSelectModal({
         localArchive: Boolean(s.localArchive),
         localArchiveTrackKey: s.localArchiveTrackKey,
         reviewedFileId: s.reviewedFileId,
+        sourceBundleKey: s.sourceBundleKey,
+        sourceBundleLabel: s.sourceBundleLabel,
+        bundleAssigned: Boolean(s.bundleAssigned),
       }));
       setSearchResults(subs);
       if (subs.length === 0) setSearchError("해당 회차의 로컬 자막은 없거나 읽을 수 없어. 위 폴더 후보에서 제목을 골라 확인해 봐.");
@@ -596,8 +680,21 @@ export default function SubtitleSelectModal({
                   {isLoadingLocalArchives && <span className="text-xs text-emerald-300">검색 중…</span>}
                 </div>
                 <p className="mb-2 text-[11px] leading-relaxed text-slate-400">
-                  스폰서판·논스폰서판처럼 같은 화에 여러 버전이 있으면, 여기서 고른 버전을 다음 화에서도 이어서 사용해.
+                  현재 화만 바꾸거나, 로컬 ZIP/묶음을 작품 전체에 지정할 수 있어. 작품 전체 지정은 다음 화에도 자동 적용되고 같은 묶음은 다른 시즌에서 숨겨져.
                 </p>
+                {bundleAssignment && (
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs">
+                    <div className="min-w-0">
+                      <span className="font-bold text-emerald-200">작품 전체 지정됨</span>
+                      <span className="ml-2 text-slate-300">{bundleAssignment.provider} · {bundleAssignment.label || bundleAssignment.bundleKey}</span>
+                    </div>
+                    <button type="button" onClick={clearBundleAssignment} disabled={Boolean(savingBundleKey)}
+                      className="shrink-0 rounded-lg border border-slate-600 px-2.5 py-1.5 font-semibold text-slate-300 hover:bg-white/5 disabled:opacity-50">
+                      지정 해제
+                    </button>
+                  </div>
+                )}
+                {bundleNotice && <p className="mb-2 text-[11px] text-emerald-200">{bundleNotice}</p>}
                 {visibleLocalArchiveOptions.length ? (
                   <div className="space-y-2">
                     {visibleLocalArchiveOptions.map((subtitle, index) => (
@@ -606,8 +703,20 @@ export default function SubtitleSelectModal({
                           onClick={() => { onSelectSubtitle(subtitle); onClose(); }}
                           className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-500/20 bg-slate-900/70 px-3 py-2 text-left hover:border-emerald-400/50 hover:bg-slate-900">
                           <span className="min-w-0 truncate text-sm font-semibold text-white">{subtitle.name}</span>
-                          <span className="shrink-0 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-bold text-emerald-300">Pi 로컬 적용</span>
+                          <span className="shrink-0 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-bold text-emerald-300">현재 화 적용</span>
                         </button>
+                        {subtitle.sourceProvider && subtitle.sourceBundleKey && (
+                          <button type="button" onClick={() => assignBundle(subtitle)}
+                            disabled={Boolean(savingBundleKey) || Boolean(bundleAssignment
+                              && bundleAssignment.provider === subtitle.sourceProvider
+                              && bundleAssignment.bundleKey === subtitle.sourceBundleKey)}
+                            className="shrink-0 rounded-lg bg-purple-600 px-2.5 py-2 text-[11px] font-bold text-white hover:bg-purple-500 disabled:bg-emerald-950/50 disabled:text-emerald-300">
+                            {bundleAssignment && bundleAssignment.provider === subtitle.sourceProvider
+                              && bundleAssignment.bundleKey === subtitle.sourceBundleKey
+                              ? "작품 지정됨"
+                              : savingBundleKey === `${subtitle.sourceProvider}:${subtitle.sourceBundleKey}` ? "지정 중…" : "작품 전체 지정"}
+                          </button>
+                        )}
                         <button type="button" onClick={() => changeRejection(subtitleSource(subtitle), true)}
                           disabled={Boolean(savingRejection)}
                           className="shrink-0 rounded-lg px-2 py-2 text-[11px] text-slate-400 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50">이 자막은 아니야</button>
@@ -910,8 +1019,20 @@ export default function SubtitleSelectModal({
                       </p>
                     </div>
 
-                    <div className="flex shrink-0 items-center gap-2">
-                    <button type="button" onClick={() => changeRejection(subtitleSource(sub), true)}
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    {sub.localArchive && sub.sourceProvider && sub.sourceBundleKey && (
+                      <button type="button" onClick={() => assignBundle(sub)}
+                        disabled={Boolean(savingBundleKey) || Boolean(bundleAssignment
+                          && bundleAssignment.provider === sub.sourceProvider
+                          && bundleAssignment.bundleKey === sub.sourceBundleKey)}
+                        className="rounded-lg bg-emerald-600 px-3 py-2 text-[11px] font-bold text-white hover:bg-emerald-500 disabled:bg-emerald-950/50 disabled:text-emerald-300">
+                        {bundleAssignment && bundleAssignment.provider === sub.sourceProvider
+                          && bundleAssignment.bundleKey === sub.sourceBundleKey
+                          ? "작품 지정됨"
+                          : savingBundleKey === `${sub.sourceProvider}:${sub.sourceBundleKey}` ? "지정 중…" : "작품 전체 지정"}
+                      </button>
+                    )}
+                    <button type="button" onClick={() => changeRejection(subtitleSource(sub), true)
                       disabled={Boolean(savingRejection)}
                       className="rounded-lg px-2 py-2 text-[11px] text-slate-400 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50">이 자막은 아니야</button>
                     <button
@@ -921,7 +1042,7 @@ export default function SubtitleSelectModal({
                       }}
                       className="rounded-xl bg-purple-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-purple-500 active:scale-95"
                     >
-                      선택
+                      현재 화 선택
                     </button>
                     </div>
                   </div>
