@@ -40,7 +40,7 @@ export default function SourceSelectModal({
     loading: true,
   });
   const [anikotoHealth, setAnikotoHealth] = useState<SourceHealth>({
-    baseUrl: "https://anikoto.to",
+    baseUrl: "https://anikoto.cz",
     isHealthy: true,
     loading: true,
   });
