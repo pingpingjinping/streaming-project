@@ -110,3 +110,7 @@ Next.js 15 App Router와 Vercel Serverless, Neon Postgres를 기반으로 구축
 # 선택: 외부 소스 미러 도메인 변경 시
 # LINKKF_BASE_URL=https://...
 ```
+
+## 아이폰 기본 전체화면 자막
+
+선택한 사이트 자막을 외부 영상의 한국어 트랙으로 연결하는 선택형 userscript를 제공합니다. 설치 범위와 실기기 확인 방법은 [아이폰 전체화면 자막 안내](docs/IPHONE_NATIVE_SUBTITLES.md)를 참고하세요. 미연결 시 기존 웹 전체화면을 사용할 수 있습니다.

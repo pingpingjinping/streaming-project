@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -25,6 +25,8 @@ import { EpisodeItem } from "./Player";
 import SubtitleSelectModal, { CreatorInfo, SubtitleOption } from "./SubtitleSelectModal";
 import type { ServerSource } from "@/lib/providers/types";
 import { usePlayerFullscreen } from "./usePlayerFullscreen";
+import { useIframeSubtitleBridge } from "./useIframeSubtitleBridge";
+import { isAppleTouchDevice } from "@/lib/playerFullscreen";
 
 interface SubtitleCue {
   start: number;
@@ -86,9 +88,8 @@ export default function IframePlayer({
   const currentBlobUrlRef = useRef<string | null>(null);
 
   // States
-  const { mode: fullscreenMode, isFullscreen, toggleFullscreen } = usePlayerFullscreen(containerRef);
-  const fullscreenRef = useRef(isFullscreen);
-  fullscreenRef.current = isFullscreen;
+  const { mode: fullscreenMode, isFullscreen: isPageFullscreen, toggleFullscreen: togglePageFullscreen } = usePlayerFullscreen(containerRef);
+  const fullscreenRef = useRef(isPageFullscreen);
   const [currentVideoTime, setCurrentVideoTime] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
   const [syncOffset, setSyncOffset] = useState(0.0);
@@ -353,6 +354,50 @@ export default function IframePlayer({
     flushCue();
     return list;
   }, []);
+
+  const [nativeCaptionHelp, setNativeCaptionHelp] = useState(false);
+  useEffect(() => { setNativeCaptionHelp(isAppleTouchDevice(navigator)); }, []);
+  const selectedSubtitle = subtitles[currentSubIndex];
+  const nativePayload = useMemo(() => ({
+    enabled: isSubEnabled,
+    label: selectedSubtitle?.name || "한국어",
+    cues: nativeCaptionHelp && selectedSubtitle?.content
+      ? selectedSubtitle.is_ass ? parseAssToCues(selectedSubtitle.content) : parseVttToCues(selectedSubtitle.content)
+      : [],
+    offset: syncOffset,
+  }), [selectedSubtitle, nativeCaptionHelp, isSubEnabled, syncOffset, parseAssToCues, parseVttToCues]);
+  const subtitleBridge = useIframeSubtitleBridge(iframeRef, embedUrl, nativePayload);
+  const isFullscreen = isPageFullscreen || subtitleBridge.nativeFullscreen;
+  fullscreenRef.current = isFullscreen;
+  const fullscreenRequestRef = useRef(false);
+  const toggleFullscreen = useCallback(async () => {
+    if (fullscreenRequestRef.current) return;
+    fullscreenRequestRef.current = true;
+    try {
+      if (subtitleBridge.nativeFullscreen) {
+        await subtitleBridge.requestFullscreen();
+      } else if (isPageFullscreen) {
+        await togglePageFullscreen();
+      } else if (isAppleTouchDevice(navigator) && subtitleBridge.applied && subtitleBridge.nativeSupported) {
+        // Some Safari versions require the iframe's own trusted click. If a
+        // delegated request is denied, retain the subtitle-preserving web mode.
+        if (!await subtitleBridge.requestFullscreen()) await togglePageFullscreen();
+      } else {
+        await togglePageFullscreen();
+      }
+    } finally { fullscreenRequestRef.current = false; }
+  }, [subtitleBridge.nativeFullscreen, subtitleBridge.applied, subtitleBridge.nativeSupported, subtitleBridge.requestFullscreen, isPageFullscreen, togglePageFullscreen]);
+  useEffect(() => {
+    if (subtitleBridge.nativeFullscreen && fullscreenMode === "web") void togglePageFullscreen();
+  }, [subtitleBridge.nativeFullscreen, fullscreenMode, togglePageFullscreen]);
+  const handledFallbackRef = useRef(0);
+  useEffect(() => {
+    const request = subtitleBridge.fallbackRequest;
+    if (request !== handledFallbackRef.current) {
+      handledFallbackRef.current = request;
+      if (request && !fullscreenRef.current) void togglePageFullscreen();
+    }
+  }, [subtitleBridge.fallbackRequest, togglePageFullscreen]);
 
   // 3. Load saved sync setting from DB
   useEffect(() => {
@@ -1091,6 +1136,15 @@ export default function IframePlayer({
           </div>
         )}
       </div>
+
+      {nativeCaptionHelp && <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+        <a href="/userscripts/walnutpi-native-subtitles.user.js" target="_blank" rel="noopener noreferrer"
+          className="text-purple-300 hover:text-purple-200 underline underline-offset-4">아이폰 전체화면 자막 스크립트</a>
+        <span>{subtitleBridge.error ? "영상 자막 연결 실패 · 웹 전체화면 사용 가능"
+          : subtitleBridge.applied ? "영상 자막 연결됨"
+          : subtitleBridge.connected ? "영상 자막 적용 중…"
+          : "미연결 · 웹 전체화면 사용 가능"}</span>
+      </div>}
 
       {/* Layer 3: Subtitle Control Toolbar (플레이어 하단) */}
       <div className="rounded-2xl border border-purple-500/20 bg-slate-900/70 p-3 sm:p-4 backdrop-blur-md space-y-3">
