@@ -42,3 +42,18 @@ export function toReanimeId(rawId: string | number): string {
 export function stripReanimeId(id: string): string {
   return id.replace(new RegExp(`^${REANIME_PREFIX}`), "");
 }
+
+export const ANIKOTO_PREFIX = "ak_";
+
+export function isAnikotoId(id: string): boolean {
+  return typeof id === "string" && id.startsWith(ANIKOTO_PREFIX);
+}
+
+export function toAnikotoId(rawId: string | number): string {
+  const str = String(rawId);
+  return str.startsWith(ANIKOTO_PREFIX) ? str : `${ANIKOTO_PREFIX}${str}`;
+}
+
+export function stripAnikotoId(id: string): string {
+  return id.replace(new RegExp(`^${ANIKOTO_PREFIX}`), "");
+}
