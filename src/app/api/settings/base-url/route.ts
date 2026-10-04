@@ -9,6 +9,9 @@ import {
   getReanimeBaseUrl,
   setReanimeBaseUrl,
   DEFAULT_REANIME_URL,
+  getAnikotoBaseUrl,
+  setAnikotoBaseUrl,
+  DEFAULT_ANIKOTO_URL,
 } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
 import { assertSafeProxyUrl, UnsafeProxyUrlError } from "@/lib/proxyGuard";
@@ -118,14 +121,14 @@ export async function GET(request: NextRequest) {
     }
 
     const currentBaseUrl = isAnikoto
-      ? "https://anikoto.to"
+      ? await getAnikotoBaseUrl()
       : isReanime
       ? await getReanimeBaseUrl()
       : isOhli24
       ? await getOhli24BaseUrl()
       : await getLinkkfBaseUrl();
     const defaultUrl = isAnikoto
-      ? "https://anikoto.to"
+      ? DEFAULT_ANIKOTO_URL
       : isReanime
       ? DEFAULT_REANIME_URL
       : isOhli24
@@ -178,11 +181,13 @@ export async function POST(request: NextRequest) {
     const rawUrl = body.baseUrl?.trim();
     const force = Boolean(body.force);
     const rawProvider = body.provider;
-    const provider: "linkkf" | "ohli24" | "reanime" =
+    const provider: "linkkf" | "ohli24" | "reanime" | "anikoto" =
       rawProvider === "reanime"
         ? "reanime"
         : rawProvider === "ohli24"
         ? "ohli24"
+        : rawProvider === "anikoto"
+        ? "anikoto"
         : "linkkf";
 
     if (!rawUrl) {
@@ -201,6 +206,8 @@ export async function POST(request: NextRequest) {
     const defaultUrl =
       provider === "reanime"
         ? DEFAULT_REANIME_URL
+        : provider === "anikoto"
+        ? DEFAULT_ANIKOTO_URL
         : provider === "ohli24"
         ? DEFAULT_OHLI24_URL
         : DEFAULT_LINKKF_URL;
@@ -248,6 +255,8 @@ export async function POST(request: NextRequest) {
     const saved =
       provider === "reanime"
         ? await setReanimeBaseUrl(formatted)
+        : provider === "anikoto"
+        ? await setAnikotoBaseUrl(formatted)
         : provider === "ohli24"
         ? await setOhli24BaseUrl(formatted)
         : await setLinkkfBaseUrl(formatted);
@@ -265,7 +274,13 @@ export async function POST(request: NextRequest) {
     }
 
     const providerLabel =
-      provider === "reanime" ? "ReAnime" : provider === "ohli24" ? "Ohli24" : "Linkkf";
+      provider === "reanime"
+        ? "ReAnime"
+        : provider === "anikoto"
+        ? "Anikoto"
+        : provider === "ohli24"
+        ? "Ohli24"
+        : "Linkkf";
 
     return NextResponse.json({
       success: true,
