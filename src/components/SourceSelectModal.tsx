@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { X, Check, Globe, RefreshCw, Radio, Sparkles } from "lucide-react";
 
-export type StreamingSource = "anissia" | "reanime" | "linkkf" | "ohli24";
+export type StreamingSource = "anissia" | "reanime" | "anikoto" | "linkkf" | "ohli24";
 
 interface SourceSelectModalProps {
   isOpen: boolean;
@@ -28,7 +28,7 @@ export default function SourceSelectModal({
 }: SourceSelectModalProps) {
   const [mounted, setMounted] = useState(false);
   const [selectedSource, setSelectedSource] = useState<StreamingSource>(currentSource);
-  const [enabledSources, setEnabledSources] = useState<StreamingSource[]>(["anissia", "reanime", "ohli24", "linkkf"]);
+  const [enabledSources, setEnabledSources] = useState<StreamingSource[]>(["anissia", "reanime", "anikoto", "ohli24", "linkkf"]);
   const [anissiaHealth, setAnissiaHealth] = useState<SourceHealth>({
     baseUrl: "https://api.anissia.net",
     isHealthy: true,
@@ -36,6 +36,11 @@ export default function SourceSelectModal({
   });
   const [reanimeHealth, setReanimeHealth] = useState<SourceHealth>({
     baseUrl: "https://reanime.to",
+    isHealthy: true,
+    loading: true,
+  });
+  const [anikotoHealth, setAnikotoHealth] = useState<SourceHealth>({
+    baseUrl: "https://anikoto.to",
     isHealthy: true,
     loading: true,
   });
@@ -115,6 +120,25 @@ export default function SourceSelectModal({
         })
         .catch(() => {
           setReanimeHealth((prev) => ({ ...prev, isHealthy: false, loading: false }));
+        });
+
+      // Anikoto 헬스체크
+      fetch("/api/settings/base-url?provider=anikoto")
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.success) {
+            setAnikotoHealth({
+              baseUrl: data.baseUrl,
+              isHealthy: data.isHealthy,
+              latencyMs: data.latencyMs,
+              loading: false,
+            });
+          } else {
+            setAnikotoHealth((prev) => ({ ...prev, isHealthy: false, loading: false }));
+          }
+        })
+        .catch(() => {
+          setAnikotoHealth((prev) => ({ ...prev, isHealthy: false, loading: false }));
         });
 
       // Linkkf 헬스체크
@@ -342,7 +366,58 @@ export default function SourceSelectModal({
             </div>
           </div>
 
-          {/* 2. Linkkf Card */}
+          {/* 3. Anikoto Card */}
+          <div
+            style={{ display: enabledSources.includes("anikoto") ? undefined : "none" }}
+            onClick={() => setSelectedSource("anikoto")}
+            className={`cursor-pointer rounded-2xl border p-4 transition-all ${
+              selectedSource === "anikoto"
+                ? "border-purple-500 bg-purple-950/40 shadow-lg shadow-purple-900/20"
+                : "border-white/10 bg-slate-900/60 hover:border-white/20 hover:bg-slate-900/90"
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div
+                  className={`flex h-5 w-5 items-center justify-center rounded-full border transition ${
+                    selectedSource === "anikoto"
+                      ? "border-purple-500 bg-purple-600 text-white"
+                      : "border-slate-500 bg-slate-800"
+                  }`}
+                >
+                  {selectedSource === "anikoto" && <Check className="h-3 w-3 stroke-[3]" />}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-sm text-white">Anikoto</span>
+                    <span className="rounded bg-indigo-500/20 px-1.5 py-0.5 text-[10px] font-medium text-indigo-300">
+                      예비
+                    </span>
+                  </div>
+                  <div className="text-xs text-slate-400 mt-0.5">
+                    해외 스트림 예비 소스 • 필요할 때 수동 선택
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5 text-[11px] shrink-0">
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    anikotoHealth.loading
+                      ? "bg-slate-400 animate-pulse"
+                      : anikotoHealth.isHealthy
+                      ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]"
+                      : "bg-rose-500"
+                  }`}
+                />
+                <span className={anikotoHealth.isHealthy ? "text-emerald-400" : "text-rose-400"}>
+                  {anikotoHealth.loading ? "확인중..." : anikotoHealth.isHealthy ? "정상 연결" : "연결 불안정"}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* 4. Linkkf Card */}
           <div
             style={{ display: enabledSources.includes("linkkf") ? undefined : "none" }}
             onClick={() => setSelectedSource("linkkf")}
