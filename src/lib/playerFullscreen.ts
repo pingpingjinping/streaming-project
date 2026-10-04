@@ -1,5 +1,13 @@
 export type PlayerFullscreenMode = "inline" | "native" | "web";
 
+// Fit the complete picture inside the available viewport, with no crop or stretch.
+export function containedPlayerSize(width: number, height: number, ratio = 16 / 9) {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+  const aspect = Number.isFinite(ratio) && ratio > 0 ? ratio : 16 / 9;
+  const fittedWidth = Math.min(width, height * aspect);
+  return { width: fittedWidth, height: fittedWidth / aspect };
+}
+
 type FullscreenDocument = Document & {
   webkitFullscreenElement?: Element | null;
   webkitExitFullscreen?: () => void | Promise<void>;

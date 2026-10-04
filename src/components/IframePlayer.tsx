@@ -27,6 +27,7 @@ import type { ServerSource } from "@/lib/providers/types";
 import { usePlayerFullscreen } from "./usePlayerFullscreen";
 import { useIframeSubtitleBridge } from "./useIframeSubtitleBridge";
 import { isAppleTouchDevice } from "@/lib/playerFullscreen";
+import { useContainedPlayerFrame } from "./useContainedPlayerFrame";
 
 interface SubtitleCue {
   start: number;
@@ -79,6 +80,7 @@ export default function IframePlayer({
   initialSubUrl = "",
 }: IframePlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const mediaFrameRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hudTextRef = useRef<HTMLDivElement>(null);
@@ -89,6 +91,7 @@ export default function IframePlayer({
 
   // States
   const { mode: fullscreenMode, isFullscreen: isPageFullscreen, toggleFullscreen: togglePageFullscreen } = usePlayerFullscreen(containerRef);
+  useContainedPlayerFrame(containerRef, mediaFrameRef, isPageFullscreen);
   const fullscreenRef = useRef(isPageFullscreen);
   const [currentVideoTime, setCurrentVideoTime] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
@@ -565,8 +568,8 @@ export default function IframePlayer({
             currentBlobUrlRef.current = null;
           }
 
-          const w = containerRef.current?.clientWidth || window.innerWidth || 1920;
-          const h = containerRef.current?.clientHeight || window.innerHeight || 1080;
+          const w = mediaFrameRef.current?.clientWidth || 1920;
+          const h = mediaFrameRef.current?.clientHeight || 1080;
           if (canvasRef.current) {
             canvasRef.current.width = w;
             canvasRef.current.height = h;
@@ -590,8 +593,8 @@ export default function IframePlayer({
               isOctopusActiveRef.current = true;
               setIsOctopusActive(true);
               try {
-                const cw = containerRef.current?.clientWidth || window.innerWidth || 1920;
-                const ch = containerRef.current?.clientHeight || window.innerHeight || 1080;
+                const cw = mediaFrameRef.current?.clientWidth || 1920;
+                const ch = mediaFrameRef.current?.clientHeight || 1080;
                 octopusRef.current?.resize(cw, ch);
                 octopusRef.current?.setIsPaused(false, lastCurrentTimeRef.current + syncOffsetRef.current);
               } catch {}
@@ -783,8 +786,8 @@ export default function IframePlayer({
 
       if (octopusRef.current && typeof octopusRef.current.resize === "function") {
         try {
-          const w = isFs ? window.innerWidth : containerRef.current?.clientWidth || window.innerWidth || 1920;
-          const h = isFs ? window.innerHeight : containerRef.current?.clientHeight || window.innerHeight || 1080;
+          const w = mediaFrameRef.current?.clientWidth || 1920;
+          const h = mediaFrameRef.current?.clientHeight || 1080;
           if (canvasRef.current) {
             canvasRef.current.width = w;
             canvasRef.current.height = h;
@@ -812,6 +815,10 @@ export default function IframePlayer({
     document.addEventListener("MSFullscreenChange", handleFullscreenChange);
     window.addEventListener("resize", syncOctopusCanvasSize);
     window.visualViewport?.addEventListener("resize", syncOctopusCanvasSize);
+    // CSS fullscreen and rotation change the contained frame without a native
+    // fullscreen event. Size libass from that same frame after layout settles.
+    const mediaObserver = typeof ResizeObserver === "function" ? new ResizeObserver(syncOctopusCanvasSize) : null;
+    if (mediaFrameRef.current) mediaObserver?.observe(mediaFrameRef.current);
     const layoutTimer = setTimeout(syncOctopusCanvasSize, 100);
 
     const handleUnload = () => {
@@ -830,6 +837,7 @@ export default function IframePlayer({
       document.removeEventListener("MSFullscreenChange", handleFullscreenChange);
       window.removeEventListener("resize", syncOctopusCanvasSize);
       window.visualViewport?.removeEventListener("resize", syncOctopusCanvasSize);
+      mediaObserver?.disconnect();
       clearTimeout(layoutTimer);
       resizeTimers.forEach(clearTimeout);
       window.removeEventListener("beforeunload", handleUnload);
@@ -1047,64 +1055,68 @@ export default function IframePlayer({
         ref={containerRef}
         className={`overflow-hidden bg-black ${
           fullscreenMode === "web"
-            ? "fixed inset-0 z-50 h-[100dvh] w-screen"
+            ? "player-fullscreen-viewport fixed inset-0 z-50 w-screen"
             : fullscreenMode === "native"
-              ? "relative h-screen w-screen"
+              ? "player-fullscreen-viewport relative w-screen"
               : "relative aspect-video w-full rounded-2xl border border-purple-500/30"
         }`}
       >
-        {/* Layer 1: Sandboxed FlixCloud Iframe */}
-        {embedUrl && !embedUrl.includes("reanime.to/watch") ? (
-          <iframe
-            ref={iframeRef}
-            src={embedUrl}
-            title="Anime Player"
-            className="absolute inset-0 h-full w-full border-0 z-0"
-            allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-            sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
-            referrerPolicy="no-referrer-when-downgrade"
+        {/* Keep video and all subtitle layers inside one contained 16:9 frame. */}
+        <div ref={mediaFrameRef} className="relative h-full w-full shrink-0 overflow-hidden">
+          {/* Layer 1: Sandboxed FlixCloud Iframe */}
+          {embedUrl && !embedUrl.includes("reanime.to/watch") ? (
+            <iframe
+              ref={iframeRef}
+              src={embedUrl}
+              title="Anime Player"
+              className="absolute inset-0 h-full w-full border-0 z-0"
+              allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+              sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+              referrerPolicy="no-referrer-when-downgrade"
+            />
+          ) : (
+            <div className="absolute inset-0 z-0 flex flex-col items-center justify-center bg-black/90 p-6 text-center">
+              <Loader2 className="h-8 w-8 animate-spin text-purple-400 mb-3" />
+              <p className="text-sm font-semibold text-slate-300">
+                영상 스트림 플레이어를 불러오는 중입니다...
+              </p>
+            </div>
+          )}
+
+          {/* Layer 2a: SubtitlesOctopus ASS Canvas (WASM libass) */}
+          <canvas
+            ref={canvasRef}
+            className={`absolute inset-0 h-full w-full pointer-events-none z-10 ${
+              isSubEnabled && isOctopusActive ? "block" : "hidden"
+            }`}
           />
-        ) : (
-          <div className="absolute inset-0 z-0 flex flex-col items-center justify-center bg-black/90 p-6 text-center">
-            <Loader2 className="h-8 w-8 animate-spin text-purple-400 mb-3" />
-            <p className="text-sm font-semibold text-slate-300">
-              영상 스트림 플레이어를 불러오는 중입니다...
-            </p>
+
+          {/* Layer 2b-Top: Top Subtitle HUD Overlay (상단 설명/가사 자막) */}
+          <div className="absolute inset-0 pointer-events-none z-20 flex flex-col justify-start items-center pt-[5%] overflow-hidden">
+            <div
+              ref={topHudTextRef}
+              className={`font-black text-amber-300 text-center max-w-[88%] px-4 py-1.5 rounded-xl transition-all duration-75 select-none whitespace-pre-line ${subSizeClasses[subSize]}`}
+              style={{
+                textShadow:
+                  "-2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, -3px 0 0 #000, 3px 0 0 #000, 0 -3px 0 #000, 0 3px 0 #000, 0 4px 14px rgba(0, 0, 0, 0.95)",
+                display: "none",
+              }}
+            />
           </div>
-        )}
 
-        {/* Layer 2a: SubtitlesOctopus ASS Canvas (WASM libass) */}
-        <canvas
-          ref={canvasRef}
-          className={`absolute inset-0 h-full w-full pointer-events-none z-10 ${
-            isSubEnabled && isOctopusActive ? "block" : "hidden"
-          }`}
-        />
+          {/* Layer 2b: Text / VTT Subtitle HUD Overlay (하단 대사) */}
+          <div className="absolute inset-0 pointer-events-none z-20 flex flex-col justify-end items-center pb-[7.5%] overflow-hidden">
+            <div
+              ref={hudTextRef}
+              className={`font-black text-white text-center max-w-[88%] px-4 py-1.5 rounded-xl transition-all duration-75 select-none whitespace-pre-line ${subSizeClasses[subSize]}`}
+              style={{
+                textShadow:
+                  "-2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, -3px 0 0 #000, 3px 0 0 #000, 0 -3px 0 #000, 0 3px 0 #000, 0 4px 14px rgba(0, 0, 0, 0.95)",
+                display: "none",
+              }}
+            />
+          </div>
 
-        {/* Layer 2b-Top: Top Subtitle HUD Overlay (상단 설명/가사 자막) */}
-        <div className="absolute inset-0 pointer-events-none z-20 flex flex-col justify-start items-center pt-[5%] overflow-hidden">
-          <div
-            ref={topHudTextRef}
-            className={`font-black text-amber-300 text-center max-w-[88%] px-4 py-1.5 rounded-xl transition-all duration-75 select-none whitespace-pre-line ${subSizeClasses[subSize]}`}
-            style={{
-              textShadow:
-                "-2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, -3px 0 0 #000, 3px 0 0 #000, 0 -3px 0 #000, 0 3px 0 #000, 0 4px 14px rgba(0, 0, 0, 0.95)",
-              display: "none",
-            }}
-          />
-        </div>
-
-        {/* Layer 2b: Text / VTT Subtitle HUD Overlay (하단 대사) */}
-        <div className="absolute inset-0 pointer-events-none z-20 flex flex-col justify-end items-center pb-[7.5%] overflow-hidden">
-          <div
-            ref={hudTextRef}
-            className={`font-black text-white text-center max-w-[88%] px-4 py-1.5 rounded-xl transition-all duration-75 select-none whitespace-pre-line ${subSizeClasses[subSize]}`}
-            style={{
-              textShadow:
-                "-2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, -3px 0 0 #000, 3px 0 0 #000, 0 -3px 0 #000, 0 3px 0 #000, 0 4px 14px rgba(0, 0, 0, 0.95)",
-              display: "none",
-            }}
-          />
         </div>
 
         {/* Toast Notification Banner inside player */}
