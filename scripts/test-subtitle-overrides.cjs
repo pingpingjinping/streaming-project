@@ -147,6 +147,53 @@ test('assignments and exceptions belong to the signed-in user',async()=>{
   username='alice';
 });
 
+function loadSettingsDb(sql) {
+  const exports={},vm=require('node:vm');
+  const code=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../src/lib/db.ts'),'utf8'),{compilerOptions}).outputText;
+  vm.runInNewContext(code,{exports,require:id=>id==='postgres'?()=>sql:id==='./subtitleLocalIdentity'?identity:require(id),
+    process:{env:{DATABASE_URL:'postgres://test'}},console,Buffer,setTimeout,clearTimeout});
+  return exports;
+}
+
+test('concurrent cold DB requests wait for one complete initialization',async()=>{
+  const counts=new Map();let release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  const sql=async(strings)=>{
+    const query=strings.join('?').trim();
+    counts.set(query,(counts.get(query)||0)+1);
+    if(query.startsWith('CREATE TABLE IF NOT EXISTS anime_history'))await gate;
+    return [];
+  };
+  const api=loadSettingsDb(sql);let completed=0;
+  const requests=Array.from({length:5},()=>api.initDb().then(()=>{completed++;}));
+  assert.equal(completed,0);
+  assert.equal([...counts.values()].reduce((a,b)=>a+b,0),1);
+  release();await Promise.all(requests);
+  assert.equal(completed,5);
+  const createCounts=[...counts].filter(([query])=>query.startsWith('CREATE TABLE'));
+  assert.ok(createCounts.length>1);
+  assert.ok(createCounts.every(([,count])=>count===1));
+  const total=counts.size;await api.initDb();assert.equal(counts.size,total);
+  assert.ok([...counts.values()].every(count=>count===1));
+});
+
+test('a failed shared DB initialization rejects all callers and permits a later retry',async()=>{
+  const failure=Object.assign(new Error('temporary initialization failure'),{code:'XX000'});
+  let fail=true,attempts=0;
+  const sql=async(strings)=>{
+    const query=strings.join('?').trim();
+    if(query.startsWith('CREATE TABLE IF NOT EXISTS anime_history'))attempts++;
+    if(query.startsWith('CREATE TABLE IF NOT EXISTS subtitle_episode_overrides')&&fail)throw failure;
+    return [];
+  };
+  const api=loadSettingsDb(sql);
+  const results=await Promise.allSettled([api.initDb(),api.initDb()]);
+  assert.ok(results.every(result=>result.status==='rejected'&&result.reason===failure));
+  assert.equal(attempts,1);
+  fail=false;await api.initDb();assert.equal(attempts,2);
+  await api.initDb();assert.equal(attempts,2);
+});
+
 test('Postgres persists scoped ownership and episode exceptions without modifying reviewed rows',
   {skip:!process.env.REVIEWED_TEST_DATABASE_URL},async()=>{
   const postgres=require('postgres'),vm=require('node:vm');
