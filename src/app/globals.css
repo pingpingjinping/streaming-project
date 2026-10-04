@@ -58,6 +58,18 @@ body {
   z-index: 20 !important;
 }
 
+/* Subtitle-preserving fullscreen viewport, including Safari browser bars. */
+.player-fullscreen-viewport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 100vh;
+  height: 100dvh;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+    env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+}
+
 /* ArtPlayer custom wrapper */
 .artplayer-wrapper {
   position: relative;

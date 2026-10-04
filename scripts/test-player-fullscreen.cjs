@@ -16,6 +16,61 @@ function load(file, deps = {}, globals = {}) {
 const api = load('src/lib/playerFullscreen.ts');
 const android = {userAgent: 'Mozilla/5.0 (Linux; Android 16) Chrome/140', maxTouchPoints: 5};
 const iphone = {userAgent: 'Mozilla/5.0 (iPhone) Safari/604', maxTouchPoints: 5};
+test('portrait fits the complete 16:9 frame by width; landscape fits by height', () => {
+  for (const [width, height, expectedWidth, expectedHeight] of [
+    [390, 700, 390, 219.375],
+    [844, 390, 390 * 16 / 9, 390],
+    [750, 369, 369 * 16 / 9, 369], // landscape safe-area padding removed
+    [600, 500, 600, 337.5], // narrow landscape must still respect width
+  ]) {
+    const size = api.containedPlayerSize(width, height);
+    assert.ok(Math.abs(size.width - expectedWidth) < 1e-8);
+    assert.ok(Math.abs(size.height - expectedHeight) < 1e-8);
+    assert.ok(size.width <= width + 1e-8 && size.height <= height + 1e-8);
+    assert.ok(Math.abs(size.width / size.height - 16 / 9) < 1e-8);
+  }
+  assert.equal(api.containedPlayerSize(0, 800), null);
+  assert.equal(api.containedPlayerSize(Infinity, 800), null);
+});
+
+test('contained frame follows rotation, browser-bar resize and safe area, then restores inline dimensions', () => {
+  const window = Object.assign(new EventTarget(), {visualViewport: new EventTarget()});
+  const container = {clientWidth: 390, clientHeight: 700};
+  const frame = {style: {width: '', height: ''}};
+  let padding = {paddingLeft: '0px', paddingRight: '0px', paddingTop: '0px', paddingBottom: '0px'};
+  let observer, cleanup;
+  class ResizeObserver {
+    constructor(callback) {this.callback = callback; observer = this;}
+    observe(node) {assert.equal(node, container);}
+    disconnect() {this.disconnected = true;}
+  }
+  const {useContainedPlayerFrame} = load('src/components/useContainedPlayerFrame.ts', {
+    react: {useLayoutEffect(callback) {cleanup = callback();}}, '@/lib/playerFullscreen': api,
+  }, {window, ResizeObserver, getComputedStyle: () => padding});
+  const outer = {current: container}, media = {current: frame};
+  useContainedPlayerFrame(outer, media, true);
+  assert.equal(frame.style.width, '390px');
+  assert.equal(frame.style.height, '219.375px');
+  Object.assign(container, {clientWidth: 844, clientHeight: 390});
+  padding = {paddingLeft: '47px', paddingRight: '47px', paddingTop: '0px', paddingBottom: '21px'};
+  window.dispatchEvent(new Event('resize'));
+  assert.equal(parseFloat(frame.style.height), 369);
+  assert.ok(parseFloat(frame.style.width) < 750);
+  container.clientHeight = 340;
+  window.visualViewport.dispatchEvent(new Event('resize'));
+  assert.equal(parseFloat(frame.style.height), 319);
+  container.clientHeight = 390;
+  observer.callback();
+  assert.equal(parseFloat(frame.style.height), 369);
+  cleanup();
+  assert.equal(observer.disconnected, true);
+  assert.deepEqual(frame.style, {width: '', height: ''});
+  container.clientWidth = 300;
+  window.dispatchEvent(new Event('resize'));
+  assert.deepEqual(frame.style, {width: '', height: ''});
+  useContainedPlayerFrame(outer, media, false);
+  assert.equal(cleanup, undefined);
+});
 test('iPhone and desktop-mode iPad preserve overlays without requesting video/native fullscreen', async () => {
   let called = 0;
   const container = {requestFullscreen() {called++;}};
