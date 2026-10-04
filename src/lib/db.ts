@@ -1502,6 +1502,68 @@ export async function setOhli24BaseUrl(newUrl: string): Promise<boolean> {
   }
 }
 
+export const DEFAULT_ANIKOTO_URL = "https://anikoto.cz";
+let cachedAnikotoBaseUrl: { url: string; timestamp: number } | null = null;
+
+export async function getAnikotoBaseUrl(): Promise<string> {
+  if (cachedAnikotoBaseUrl && Date.now() - cachedAnikotoBaseUrl.timestamp < 30_000) {
+    return cachedAnikotoBaseUrl.url;
+  }
+
+  const sql = getDb();
+  if (sql) {
+    try {
+      await initDb();
+      const rows = await sql`
+        SELECT value FROM system_settings
+        WHERE key = 'anikoto_base_url'
+        LIMIT 1;
+      `;
+      if (rows.length > 0 && rows[0].value) {
+        const val = String(rows[0].value).trim().replace(/\/+$/, "");
+        if (val) {
+          cachedAnikotoBaseUrl = { url: val, timestamp: Date.now() };
+          return val;
+        }
+      }
+    } catch (e) {
+      console.warn("[getAnikotoBaseUrl error]:", e);
+    }
+  }
+
+  const envUrl = process.env.ANIKOTO_BASE_URL?.trim().replace(/\/+$/, "");
+  const finalUrl = envUrl || DEFAULT_ANIKOTO_URL;
+  cachedAnikotoBaseUrl = { url: finalUrl, timestamp: Date.now() };
+  return finalUrl;
+}
+
+export async function setAnikotoBaseUrl(newUrl: string): Promise<boolean> {
+  const sql = getDb();
+  if (!sql) return false;
+  await initDb();
+
+  let formatted = newUrl.trim();
+  if (!formatted.startsWith("http://") && !formatted.startsWith("https://")) {
+    formatted = `https://${formatted}`;
+  }
+  formatted = formatted.replace(/\/+$/, "");
+
+  try {
+    await sql`
+      INSERT INTO system_settings (key, value, updated_at)
+      VALUES ('anikoto_base_url', ${formatted}, CURRENT_TIMESTAMP)
+      ON CONFLICT (key) DO UPDATE SET
+        value = EXCLUDED.value,
+        updated_at = CURRENT_TIMESTAMP;
+    `;
+    cachedAnikotoBaseUrl = { url: formatted, timestamp: Date.now() };
+    return true;
+  } catch (e) {
+    console.error("[setAnikotoBaseUrl error]:", e);
+    return false;
+  }
+}
+
 export const DEFAULT_REANIME_URL = "https://reanime.to";
 let cachedReanimeBaseUrl: { url: string; timestamp: number } | null = null;
 
