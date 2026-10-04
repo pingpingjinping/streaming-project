@@ -154,6 +154,9 @@ export async function GET(request: NextRequest) {
     // Never resurrect a rejected or unreadable registered member through the raw reader.
     const registeredFiles = allowReassignmentSearch ? await findReviewedFiles(animeId, title) : [];
     const rawVisible = rawZipSubtitles.filter(raw => !isRejected(raw.sourceProvider, raw.name)
+      && !(raw.sourceProvider === "aniall" && rejected.some(r => r.provider === "aniall" && !r.sourceKey.startsWith("reviewed:")))
+      && !(raw.sourceProvider === "anissia" && rejected.some(r => r.provider === "anissia"
+        && r.sourceKey.endsWith(` · ${raw.archiveFilename} · ${raw.orig_filename}`)))
       && !registeredFiles.some(f => f.source === raw.sourceProvider && f.sha256 === raw.archiveMemberSha256)
       && !registered.some(s => s.sourceProvider === raw.sourceProvider
       && s.content === raw.content && s.format === raw.format));

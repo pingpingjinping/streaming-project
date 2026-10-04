@@ -5,6 +5,7 @@ import { decodeSubtitleFile } from './subtitles';
 import { inspectSubtitleArchive } from './subtitleUpload';
 import { readEpisodeEvidence, selectEpisodeEntries } from './subtitleEpisodes';
 import { bundleScopeKey, subtitleScope } from './subtitleLocalIdentity';
+import { readSubtitleSourceManifest, sourceDigestMatches } from './subtitleSourceManifest';
 import type { LocalProvider } from './subtitleLocalIdentity';
 
 const root = () => process.env.SUBTITLE_STORAGE_DIR || path.join(process.cwd(), 'data', 'subtitles');
@@ -61,6 +62,7 @@ export async function searchLocalZipSubtitles(query: string, episode: number, so
     choices = [{ folderName: path.posix.basename(archivePath), provider, entryType: 'zip', archivePath }];
   } else choices = (await searchLocalSubtitleEntries(query)).filter(c => c.entryType === 'zip');
   const results = [];
+  const manifest = await readSubtitleSourceManifest(root());
   for (const choice of choices.slice(0, 20)) {
     try {
       const base = await realpath(path.join(root(), `${choice.provider}_subtitles`));
@@ -69,7 +71,9 @@ export async function searchLocalZipSubtitles(query: string, episode: number, so
       if (!base.startsWith(storageRoot + path.sep) || !file.startsWith(base + path.sep)) continue;
       const info = await stat(file);
       if (!info.isFile() || !info.size || info.size > 100 * 1024 * 1024) continue;
-      const { zip, entries } = inspectSubtitleArchive(await readFile(file));
+      const archiveBytes = await readFile(file);
+      if (!sourceDigestMatches(manifest[choice.archivePath!], archiveBytes)) continue;
+      const { zip, entries } = inspectSubtitleArchive(archiveBytes);
       const exact = selectEpisodeEntries(entries, { episode, sourceEpisode, season: season || 1 },
         [readEpisodeEvidence(choice.folderName, true)]);
       for (const entry of [...exact, ...entries.filter(e => !exact.includes(e))]) {
@@ -79,6 +83,7 @@ export async function searchLocalZipSubtitles(query: string, episode: number, so
           if (!subtitle?.content) continue;
           results.push({ ...subtitle,
             name: `[로컬 ${choice.provider === 'anissia' ? 'Anissia' : choice.provider === 'aniall' ? 'AniAll' : 'Naver'} · ${choice.folderName}] ${subtitle.orig_filename}`,
+            archiveFilename: choice.folderName,
             sourceProvider: choice.provider, localArchive: true, verifiedMatch: false,
             sourceFolderLabel: choice.provider === 'anissia' && choice.archivePath!.split('/').length > 2
               ? choice.archivePath!.split('/')[1] : undefined,

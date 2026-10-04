@@ -115,3 +115,16 @@ test('rejected registered members do not reappear through the raw ZIP fallback',
     assert.equal(response.status, 200); assert.equal(result.subtitles.length, 0);
   } finally { auth.getSessionUser = original; reviewed.findReviewedFiles = originalFiles; }
 });
+
+test('a rejected legacy AniAll source does not return under the ZIP display name', async () => {
+  const auth = require('../src/lib/auth.ts'); const original = auth.getSessionUser;
+  const db = require('../src/lib/db.ts'); const originalRejections = db.getSubtitleRejections;
+  auth.getSessionUser = async () => ({ username: 'test' });
+  db.getSubtitleRejections = async () => [{ provider: 'aniall', sourceKey: 'https://aniall.tistory.com/123' }];
+  try {
+    const { GET } = require('../src/app/api/anime/subtitles/local/route.ts');
+    const { NextRequest } = require('next/server');
+    const response = await GET(new NextRequest('http://localhost/api/anime/subtitles/local?mode=search&title=RootSearch.zip.zip&archivePath=aniall_subtitles%2FRootSearch.zip.zip'));
+    assert.equal(response.status, 200); assert.equal((await response.json()).subtitles.length, 0);
+  } finally { auth.getSessionUser = original; db.getSubtitleRejections = originalRejections; }
+});
