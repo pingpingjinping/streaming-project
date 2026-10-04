@@ -72,6 +72,15 @@ body {
     env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
 }
 
+@media (orientation: landscape) {
+  .player-fullscreen-viewport {
+    /* Let the picture reach both vertical edges. The home-indicator inset
+       otherwise leaves a black strip only below the video. */
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+}
+
 /* ArtPlayer custom wrapper */
 .artplayer-wrapper {
   position: relative;
