@@ -1085,7 +1085,7 @@ export default function IframePlayer({
         {/* Native fullscreen already has browser/player exit controls. Web mode needs its own exit. */}
         {fullscreenMode === "web" && (
           <div
-            className="absolute top-0 right-0 z-30 pt-[max(0.5rem,env(safe-area-inset-top))] pr-[max(0.5rem,env(safe-area-inset-right))]"
+            className="absolute top-[max(0.25rem,env(safe-area-inset-top))] right-0.5 z-30"
           >
             {/* Top Right: Exit Fullscreen Button */}
             <div className="flex items-center justify-end pointer-events-auto">
@@ -1093,10 +1093,10 @@ export default function IframePlayer({
                 onClick={toggleFullscreen}
                 type="button"
                 aria-label="전체화면 종료"
-                className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-900/60 text-white backdrop-blur-md transition hover:bg-slate-800 active:scale-95 cursor-pointer"
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-900/60 text-white backdrop-blur-md transition hover:bg-slate-800 active:scale-95 cursor-pointer"
                 title="전체화면 종료"
               >
-                <Minimize2 className="h-4 w-4 text-purple-400" />
+                <Minimize2 className="h-3.5 w-3.5 text-purple-400" />
                 <span className="sr-only">전체화면 종료</span>
               </button>
             </div>
