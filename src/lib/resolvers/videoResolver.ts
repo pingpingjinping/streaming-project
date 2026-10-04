@@ -2,6 +2,7 @@ import { EpisodeStreamInfo, ServerSource } from "../providers/types";
 import { reanimeProvider } from "../providers/reanime";
 import { linkkfProvider } from "../providers/linkkf";
 import { ohli24Provider } from "../providers/ohli24";
+import { anikotoProvider } from "../providers/anikoto";
 import { getAnissiaStreamCache, setAnissiaStreamCache } from "../db";
 import { fetchAniListMeta } from "../providers/anissia";
 
@@ -118,7 +119,7 @@ export async function resolveAnissiaStream(
   episodeNumber: number,
   title?: string,
   originalTitle?: string,
-  requestedSource?: "rean" | "linkkf" | "ohli24"
+  requestedSource?: "rean" | "anikoto" | "linkkf" | "ohli24"
 ): Promise<EpisodeStreamInfo | null> {
   const serverSources: ServerSource[] = [];
 
@@ -272,7 +273,53 @@ export async function resolveAnissiaStream(
   }
 
   // ==========================================================
-  // Step 3: 2순위 Linkkf 자체자막 스트림 폴백
+  // Step 3: Anikoto 해외 스트림 폴백
+  // ==========================================================
+  try {
+    if (!requestedSource || requestedSource === "anikoto") {
+      const meta = await fetchAniListMeta(jpTitle || korTitle).catch(() => null);
+      const searchQueries = [
+        jpTitle,
+        meta?.romajiTitle || "",
+        korTitle,
+      ].filter((q, index, arr): q is string => Boolean(q && q.length >= 2) && arr.indexOf(q) === index);
+
+      for (const query of searchQueries) {
+        const searchRes = await anikotoProvider.searchAnime(query, 1);
+        if (!searchRes.items.length) continue;
+
+        const candidates = targetSeason
+          ? [
+              ...searchRes.items.filter((item) => parseSeason(item.title) === targetSeason),
+              ...searchRes.items.filter((item) => parseSeason(item.title) !== targetSeason),
+            ]
+          : searchRes.items;
+
+        for (const candidate of candidates.slice(0, 5)) {
+          const detail = await anikotoProvider.getAnimeDetail(candidate.id);
+          if (!detail?.sub_episodes?.length) continue;
+
+          const epItem = detail.sub_episodes.find((episode) => episode.number === episodeNumber);
+          if (!epItem?.watch_url) continue;
+
+          const stream = await anikotoProvider.getEpisodeStream(epItem.watch_url);
+          if (stream && (stream.embed_url || stream.player_url || stream.m3u8_url)) {
+            return {
+              ...stream,
+              server_sources: stream.server_sources?.length
+                ? stream.server_sources
+                : [{ label: "Anikoto", player_url: epItem.watch_url, id: "anikoto" }],
+            };
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[videoResolver] Anikoto stream attempt failed:", err);
+  }
+
+  // ==========================================================
+  // Step 4: Linkkf 자체자막 스트림 폴백
   // ==========================================================
   try {
     if (!requestedSource || requestedSource === "linkkf") {
@@ -321,7 +368,7 @@ export async function resolveAnissiaStream(
   }
 
   // ==========================================================
-  // Step 4: 3순위 Ohli24 예비 스트림 폴백
+  // Step 5: Ohli24 예비 스트림 폴백
   // ==========================================================
   try {
     if (!requestedSource || requestedSource === "ohli24") {
