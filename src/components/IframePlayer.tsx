@@ -1052,7 +1052,8 @@ export default function IframePlayer({
               title="Anime Player"
               className="absolute inset-0 h-full w-full border-0 z-0"
               allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-              sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+              sandbox={animeId.startsWith("ak_") ? undefined : "allow-scripts allow-same-origin allow-forms allow-presentation"}
+              allowFullScreen
               referrerPolicy="no-referrer-when-downgrade"
             />
           ) : (
