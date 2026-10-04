@@ -53,7 +53,7 @@ export interface AnimeDetail {
 export interface ServerSource {
   label: string;
   player_url: string;
-  id?: "rean" | "linkkf" | "ohli24";
+  id?: "rean" | "anikoto" | "linkkf" | "ohli24";
 }
 
 export interface EpisodeStreamInfo {
@@ -85,7 +85,7 @@ export interface AnimeListFilterParams {
 }
 
 export interface AnimeProvider {
-  readonly name: "linkkf" | "ohli24" | "reanime" | "anissia";
+  readonly name: "linkkf" | "ohli24" | "reanime" | "anissia" | "anikoto";
   readonly displayName: string;
   getBaseUrl(): Promise<string>;
   getAnimeListFiltered(params: AnimeListFilterParams): Promise<AnimeListResponse>;
