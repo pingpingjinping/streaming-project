@@ -70,9 +70,16 @@ export default async function WatchPage({
   const isDub = dub === "1";
   const isReanime = id.startsWith("re_");
   const isAnissia = id.startsWith("ani_");
-  const currentProviderSource = isReanime ? "rean" : id.startsWith("ol_") ? "ohli24" : "linkkf";
-  const requestedVideoSource = ["rean", "linkkf", "ohli24"].includes(video_source || "")
-    ? video_source as "rean" | "linkkf" | "ohli24"
+  const isAnikoto = id.startsWith("ak_");
+  const currentProviderSource = isReanime
+    ? "rean"
+    : isAnikoto
+    ? "anikoto"
+    : id.startsWith("ol_")
+    ? "ohli24"
+    : "linkkf";
+  const requestedVideoSource = ["rean", "anikoto", "linkkf", "ohli24"].includes(video_source || "")
+    ? video_source as "rean" | "anikoto" | "linkkf" | "ohli24"
     : undefined;
 
   const manualSourceId = parseInt(manual_source || "0", 10);
