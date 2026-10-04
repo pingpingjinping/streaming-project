@@ -1044,7 +1044,7 @@ export default function IframePlayer({
       >
         {/* Keep video and all subtitle layers inside one contained 16:9 frame. */}
         <div ref={mediaFrameRef} className="relative h-full w-full shrink-0 overflow-hidden">
-          {/* Layer 1: Sandboxed FlixCloud Iframe */}
+          {/* Layer 1: External player iframe */}
           {embedUrl && !embedUrl.includes("reanime.to/watch") ? (
             <iframe
               ref={iframeRef}
@@ -1052,7 +1052,9 @@ export default function IframePlayer({
               title="Anime Player"
               className="absolute inset-0 h-full w-full border-0 z-0"
               allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-              sandbox={animeId.startsWith("ak_") ? undefined : "allow-scripts allow-same-origin allow-forms allow-presentation"}
+              // Anissia keeps its ani_ ID when it resolves to Anikoto. Use
+              // the actual stream source, including direct Anikoto playback.
+              sandbox={serverSources.some((source) => source.id === "anikoto") ? undefined : "allow-scripts allow-same-origin allow-forms allow-presentation"}
               allowFullScreen
               referrerPolicy="no-referrer-when-downgrade"
             />

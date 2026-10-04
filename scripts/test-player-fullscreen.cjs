@@ -16,6 +16,42 @@ function load(file, deps = {}, globals = {}) {
 const api = load('src/lib/playerFullscreen.ts');
 const android = {userAgent: 'Mozilla/5.0 (Linux; Android 16) Chrome/140', maxTouchPoints: 5};
 const iphone = {userAgent: 'Mozilla/5.0 (iPhone) Safari/604', maxTouchPoints: 5};
+test('Anissia auto-matched Anikoto iframe has the same sandbox policy as direct Anikoto', () => {
+  const react = {
+    useRef: value => ({current: value}),
+    useState: value => [typeof value === 'function' ? value() : value, () => {}],
+    useCallback: fn => fn,
+    useEffect: () => {},
+  };
+  const {default: Player} = load('src/components/IframePlayer.tsx', {
+    react, 'next/link': {}, 'lucide-react': {}, './SubtitleSelectModal': {},
+    './PlayerSettingsModal': {DEFAULT_PLAYER_SETTINGS: {}},
+    './usePlayerFullscreen': {usePlayerFullscreen: () => ({mode: 'inline', isFullscreen: false, toggleFullscreen() {}})},
+    './useContainedPlayerFrame': {useContainedPlayerFrame() {}},
+  });
+  function findIframe(node) {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'iframe') return node;
+    for (const child of [node.props?.children].flat(Infinity)) {
+      const iframe = findIframe(child);
+      if (iframe) return iframe;
+    }
+  }
+  function render(animeId, sourceId) {
+    return findIframe(Player({animeId, animeTitle: 'Test', episodeNumber: 1,
+      embedUrl: 'https://video.example/embed/1',
+      serverSources: sourceId ? [{id: sourceId, label: 'Video', player_url: 'https://video.example/embed/1'}] : [],
+    })).props;
+  }
+  for (const animeId of ['ani_123', 'ak_test', 're_test']) {
+    assert.equal(render(animeId, 'anikoto').sandbox, undefined);
+    assert.equal(render(animeId, 'anikoto').allowFullScreen, true);
+  }
+  // Catalog IDs and labels alone must not remove restrictions for other embeds.
+  for (const [animeId, sourceId] of [['ani_123', 'rean'], ['ak_test', 'rean'], ['ani_123', null], ['ak_test', null]]) {
+    assert.equal(render(animeId, sourceId).sandbox, 'allow-scripts allow-same-origin allow-forms allow-presentation');
+  }
+});
 test('web exit opacity persists all four levels including zero without disabling its hit target', () => {
   const saved=new Map(),style={innerHTML:''};
   const api=load('src/components/PlayerSettingsModal.tsx', {
