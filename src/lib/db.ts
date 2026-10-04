@@ -27,9 +27,21 @@ export function getDb() {
 }
 
 let isInitialized = false;
+let initializationPromise: Promise<void> | null = null;
 
 export async function initDb() {
   if (isInitialized) return;
+  // All first requests share the same initialization, including its failure.
+  // Concurrent CREATE TABLE IF NOT EXISTS can still race in PostgreSQL's catalog.
+  if (!initializationPromise) {
+    initializationPromise = initializeDb().finally(() => {
+      initializationPromise = null;
+    });
+  }
+  await initializationPromise;
+}
+
+async function initializeDb() {
   const sql = getDb();
   if (!sql) return;
 

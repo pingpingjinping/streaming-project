@@ -71,6 +71,63 @@ test('contained frame follows rotation, browser-bar resize and safe area, then r
   useContainedPlayerFrame(outer, media, false);
   assert.equal(cleanup, undefined);
 });
+test('web fullscreen covers the visible Safari viewport, follows offset/rotation and restores styles', () => {
+  const viewport = Object.assign(new EventTarget(), {width: 390, height: 700, offsetLeft: 0, offsetTop: 24});
+  const window = Object.assign(new EventTarget(), {visualViewport: viewport, innerWidth: 390, innerHeight: 844});
+  const initial = {width: '', height: '', top: '', left: '', right: '', bottom: ''};
+  const container = {style: {...initial},
+    get clientWidth() {return parseFloat(this.style.width) || window.innerWidth;},
+    get clientHeight() {return parseFloat(this.style.height) || window.innerHeight;},
+  };
+  const frame = {style: {width: '', height: ''}};
+  let cleanup;
+  const {useContainedPlayerFrame} = load('src/components/useContainedPlayerFrame.ts', {
+    react: {useLayoutEffect(callback) {cleanup = callback();}}, '@/lib/playerFullscreen': api,
+  }, {window, getComputedStyle: () => ({paddingLeft: '0px', paddingRight: '0px', paddingTop: '0px', paddingBottom: '0px'})});
+  useContainedPlayerFrame({current: container}, {current: frame}, true, true);
+  assert.deepEqual(container.style, {width: '390px', height: '700px', top: '24px', left: '0px', right: 'auto', bottom: 'auto'});
+  assert.equal(frame.style.height, '219.375px');
+  viewport.offsetTop = 0;
+  viewport.dispatchEvent(new Event('scroll'));
+  assert.equal(container.style.top, '0px');
+  Object.assign(viewport, {width: 844, height: 390, offsetTop: 0, offsetLeft: 3});
+  window.dispatchEvent(new Event('orientationchange'));
+  assert.equal(container.style.width, '844px');
+  assert.equal(container.style.height, '390px');
+  assert.equal(container.style.left, '3px');
+  assert.equal(frame.style.height, '390px');
+  assert.ok(Math.abs(parseFloat(frame.style.width) - 390 * 16 / 9) < 1e-8);
+  viewport.height = 340;
+  viewport.dispatchEvent(new Event('resize'));
+  assert.equal(frame.style.height, '340px');
+  cleanup();
+  assert.deepEqual(container.style, initial);
+  assert.deepEqual(frame.style, {width: '', height: ''});
+  viewport.dispatchEvent(new Event('scroll'));
+  window.dispatchEvent(new Event('orientationchange'));
+  assert.deepEqual(container.style, initial);
+});
+
+test('missing VisualViewport uses window size only in web mode; native fullscreen keeps browser sizing', () => {
+  const window = Object.assign(new EventTarget(), {innerWidth: 844, innerHeight: 390});
+  const initial = {width: '', height: '', top: '', left: '', right: '', bottom: ''};
+  const container = {style: {...initial}, clientWidth: 844, clientHeight: 390};
+  const frame = {style: {width: '', height: ''}};
+  let cleanup;
+  const {useContainedPlayerFrame} = load('src/components/useContainedPlayerFrame.ts', {
+    react: {useLayoutEffect(callback) {cleanup = callback();}}, '@/lib/playerFullscreen': api,
+  }, {window, getComputedStyle: () => ({paddingLeft: '0', paddingRight: '0', paddingTop: '0', paddingBottom: '0'})});
+  const refs = [{current: container}, {current: frame}];
+  useContainedPlayerFrame(...refs, true, true);
+  assert.equal(container.style.height, '390px');
+  assert.equal(container.style.top, '0px');
+  cleanup();
+  useContainedPlayerFrame(...refs, true, false);
+  assert.deepEqual(container.style, initial);
+  assert.equal(frame.style.height, '390px');
+  cleanup();
+});
+
 test('iPhone and desktop-mode iPad preserve overlays without requesting video/native fullscreen', async () => {
   let called = 0;
   const container = {requestFullscreen() {called++;}};
