@@ -25,7 +25,11 @@ export function decodeSubtitleBuffer(buf: Buffer): string {
 
   for (const enc of ["utf-8", "cp949", "euc-kr", "utf-16le", "utf-16"]) {
     try {
-      const s = iconv.decode(buf, enc);
+      // ASCII subtitle markers also survive a wrong UTF-8 decode of CP949.
+      // Reject invalid UTF-8 bytes before those markers can authorize the text.
+      const s = enc === "utf-8"
+        ? new TextDecoder("utf-8", { fatal: true }).decode(buf)
+        : iconv.decode(buf, enc);
       if (
         s.toLowerCase().includes("<sync") ||
         s.toLowerCase().includes("<sami") ||
