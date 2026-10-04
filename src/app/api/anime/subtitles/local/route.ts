@@ -9,8 +9,9 @@ import {
   getSubtitleBundleAssignment,
   getSubtitleBundleAssignments,
 } from "@/lib/db";
-import { getAniAllArchiveSubtitles, getAnissiaArchiveSubtitles, searchLocalSubtitleFolders } from "@/lib/subtitleStorage";
-import { findReviewedTitles, getReviewedSubtitles } from "@/lib/reviewedSubtitleStorage";
+import { getAniAllArchiveSubtitles, getAnissiaArchiveSubtitles } from "@/lib/subtitleStorage";
+import { findReviewedFiles, getReviewedSubtitles } from "@/lib/reviewedSubtitleStorage";
+import { searchLocalSubtitleEntries, searchLocalZipSubtitles } from "@/lib/localSubtitleSearch";
 import {parseBundleScope,bundleScopesOverlap,bundleSelectionMatches} from "@/lib/subtitleLocalIdentity";
 import { parseSeason, resolveKoreanTitle } from "@/lib/subtitles";
 
@@ -28,8 +29,7 @@ export async function GET(request: NextRequest) {
 
   try {
     if (params.get("mode") === "folders") {
-      const [legacy, reviewed] = await Promise.all([searchLocalSubtitleFolders(title), findReviewedTitles(title)]);
-      const folders = [...new Map([...legacy, ...reviewed].map(f => [`${f.provider}:${f.folderName}`, f])).values()].slice(0, 200);
+      const folders = await searchLocalSubtitleEntries(title);
       return NextResponse.json({ success: true, folders },
         { headers: { "Cache-Control": "no-store" } });
     }
@@ -146,15 +146,31 @@ export async function GET(request: NextRequest) {
         bundleAssigned: bundleAssignment?.provider === s.sourceProvider && bundleSelectionMatches(bundleAssignment.bundleKey,s.sourceBundleKey) }));
     const reviewedAniAll = reviewedVisible.filter(s => s.sourceProvider === "aniall");
     const reviewedNaver = reviewedVisible.filter(s => s.sourceProvider === "naver");
+    const archivePath = allowReassignmentSearch ? params.get("archivePath") || undefined : undefined;
+    const rawZipSubtitles = allowReassignmentSearch
+      ? await searchLocalZipSubtitles(title, episode, sourceEpisode, parseSeason(resolvedTitle) || parseSeason(title), archivePath) : [];
+    // Preserve registered identities and episode bindings when the same member is already available.
+    const registered = [...reviewedVisible, ...aniallSubtitles, ...anissiaSubtitles];
+    // Never resurrect a rejected or unreadable registered member through the raw reader.
+    const registeredFiles = allowReassignmentSearch ? await findReviewedFiles(animeId, title) : [];
+    const rawVisible = rawZipSubtitles.filter(raw => !isRejected(raw.sourceProvider, raw.name)
+      && !(raw.sourceProvider === "aniall" && rejected.some(r => r.provider === "aniall" && !r.sourceKey.startsWith("reviewed:")))
+      && !(raw.sourceProvider === "anissia" && rejected.some(r => r.provider === "anissia"
+        && r.sourceKey.endsWith(` · ${raw.archiveFilename} · ${raw.orig_filename}`)))
+      && !registeredFiles.some(f => f.source === raw.sourceProvider && f.sha256 === raw.archiveMemberSha256)
+      && !registered.some(s => s.sourceProvider === raw.sourceProvider
+      && s.content === raw.content && s.format === raw.format));
     const ordered = sourcePriority === "aniall"
       ? [...reviewedAniAll, ...aniallSubtitles, ...anissiaSubtitles, ...reviewedNaver]
       : [...anissiaSubtitles, ...reviewedAniAll, ...aniallSubtitles, ...reviewedNaver];
 
     // The recommendations tab applies a file to the current episode. Broad
     // browsing (including unknown/other episodes) belongs only to manual search.
-    const eligible = allowReassignmentSearch ? ordered : ordered.filter(s=>s.episodeConfirmed
+    const searched = archivePath ? ordered.filter(s => rawZipSubtitles.some(raw => raw.sourceProvider === s.sourceProvider
+      && raw.content === s.content && raw.format === s.format)) : ordered;
+    const eligible = allowReassignmentSearch ? [...searched, ...rawVisible] : ordered.filter(s=>s.episodeConfirmed
       && (!bundleAssignment || s.sourceProvider===bundleAssignment.provider));
-    const subtitles = [...new Map(eligible.map(s=>[`${s.sourceProvider}:${'reviewedFileId' in s ? s.reviewedFileId : s.localFileId}`,s])).values()];
+    const subtitles = [...new Map(eligible.map(s=>[`${s.sourceProvider}:${'reviewedFileId' in s ? s.reviewedFileId : 'manualArchiveFileId' in s ? s.manualArchiveFileId : s.localFileId}`,s])).values()];
     return NextResponse.json({ success: true, anime_title: title, episode, count: subtitles.length, subtitles,
       bundleAssignment },
       { headers: { "Cache-Control": "no-store" } });
@@ -163,3 +179,4 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ success: false, message: "Pi 로컬 자막 검색에 실패했습니다." }, { status: 500 });
   }
 }
+
