@@ -79,6 +79,9 @@ const subtitleSource = (subtitle: SubtitleOption): RejectedSource => ({
     : subtitle.sourceCreatorWebsite || (subtitle.localArchive ? subtitle.name : subtitle.url || subtitle.name),
 });
 
+const subtitleDisplayName = (subtitle: SubtitleOption) => subtitle.localArchive && subtitle.sourceProvider === "anissia" && subtitle.sourceFolderLabel
+  ? `${subtitle.sourceFolderLabel} · ${subtitle.name}` : subtitle.name;
+
 interface SubtitleSelectModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -115,7 +118,7 @@ export default function SubtitleSelectModal({
   const [searchResults, setSearchResults] = useState<SubtitleOption[]>([]);
   const [searchCreators, setSearchCreators] = useState<CreatorInfo[]>([]);
   const [catalogTitles, setCatalogTitles] = useState<Array<{ title: string; sources: string[] }>>([]);
-  const [localFolders, setLocalFolders] = useState<Array<{ folderName: string;folderKey?:string; provider: "aniall" | "anissia" | "naver" }>>([]);
+  const [localFolders, setLocalFolders] = useState<Array<{ folderName: string;folderKey?:string; archivePath?:string; entryType?:"folder"|"zip"; provider: "aniall" | "anissia" | "naver" }>>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isSearchingLocal, setIsSearchingLocal] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -508,7 +511,7 @@ export default function SubtitleSelectModal({
     }
   };
 
-  const handleLocalSearch = async (keywordOverride?: string) => {
+  const handleLocalSearch = async (keywordOverride?: string, archivePath?: string) => {
     const keyword = (keywordOverride || searchKeyword).trim();
     if (keywordOverride) setSearchKeyword(keywordOverride);
     if (!keyword) return;
@@ -523,7 +526,7 @@ export default function SubtitleSelectModal({
       const folderData = await folderRes.json();
       if (folderRes.ok && folderData.success) setLocalFolders(folderData.folders || []);
       const res = await fetch(
-        `/api/anime/subtitles/local?mode=search&title=${encodeURIComponent(keyword)}&ep=${searchEp}&animeId=${encodeURIComponent(animeId)}`
+        `/api/anime/subtitles/local?mode=search&title=${encodeURIComponent(keyword)}&ep=${searchEp}&animeId=${encodeURIComponent(animeId)}${archivePath ? `&archivePath=${encodeURIComponent(archivePath)}` : ""}`
       );
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.message || "로컬 자막 검색 실패");
@@ -549,7 +552,7 @@ export default function SubtitleSelectModal({
         bundleAssigned: Boolean(s.bundleAssigned),
       }));
       setSearchResults(subs);
-      if (subs.length === 0) setSearchError("해당 회차의 로컬 자막은 없거나 읽을 수 없어. 위 폴더 후보에서 제목을 골라 확인해 봐.");
+      if (subs.length === 0) setSearchError("해당 회차의 로컬 자막은 없거나 읽을 수 없어. 위 폴더·ZIP 후보에서 골라 확인해 봐.");
     } catch (err: any) {
       setSearchError(err.message || "로컬 자막을 검색하는 중 오류가 발생했습니다.");
     } finally {
@@ -750,7 +753,7 @@ export default function SubtitleSelectModal({
                           disabled={Boolean(savingBundleKey)}
                           onClick={() => selectLocalSubtitle(subtitle)}
                           className="flex w-full min-w-0 flex-col items-start gap-2 rounded-xl border border-emerald-500/20 bg-slate-900/70 px-3 py-2 text-left hover:border-emerald-400/50 hover:bg-slate-900">
-                          <span className="w-full min-w-0 whitespace-normal break-words [overflow-wrap:anywhere] text-sm font-semibold leading-relaxed text-white">{subtitle.name}</span>
+                          <span className="w-full min-w-0 whitespace-normal break-words [overflow-wrap:anywhere] text-sm font-semibold leading-relaxed text-white">{subtitleDisplayName(subtitle)}</span>
                           <span className="shrink-0 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-bold text-emerald-300">{subtitle.sourceFolderKey ? "현재 화 선택 · 다음 화 유지" : "현재 화 적용"}</span>
                         </button>
                         <div className="flex flex-wrap items-center gap-2">
@@ -951,7 +954,7 @@ export default function SubtitleSelectModal({
                   type="text"
                   value={searchKeyword}
                   onChange={(e) => setSearchKeyword(e.target.value)}
-                  placeholder="작품명 또는 Pi 폴더명 일부 입력 (예: 책벌레)"
+                  placeholder="작품명 또는 Pi 폴더·ZIP 이름 일부 입력 (예: 책벌레)"
                   className="flex-1 rounded-xl border border-purple-500/30 bg-slate-900/90 px-4 py-2.5 text-xs text-white placeholder-slate-500 outline-none focus:border-purple-400"
                 />
                 <input
@@ -1004,18 +1007,18 @@ export default function SubtitleSelectModal({
 
               {localFolders.length > 0 && (
                 <div className="space-y-2">
-                  <p className="text-xs font-semibold text-slate-300">Pi 로컬 폴더 ({localFolders.length})</p>
+                  <p className="text-xs font-semibold text-slate-300">Pi 로컬 폴더·ZIP ({localFolders.length})</p>
                   <div className="max-h-64 space-y-1 overflow-y-auto rounded-xl border border-white/10 bg-slate-950/40 p-2">
                     {localFolders.map((folder, index) => (
                       <button type="button" key={`${folder.provider}-${folder.folderName}-${index}`}
-                        onClick={() => handleLocalSearch(folder.folderName)}
+                        onClick={() => handleLocalSearch(folder.folderName, folder.archivePath)}
                         className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-xs hover:bg-white/10">
-                        <span className="text-white">{folder.folderName}</span>
-                        <span className="shrink-0 text-slate-400">{folder.provider === "aniall" ? "AniAll" : folder.provider === "naver" ? "Naver" : "Anissia"}</span>
+                        <span className="min-w-0 break-words [overflow-wrap:anywhere] text-white">{folder.folderName}{folder.archivePath && <span className="mt-1 block text-[10px] text-slate-500">{folder.archivePath}</span>}</span>
+                        <span className="shrink-0 text-slate-400">{folder.provider === "aniall" ? "AniAll" : folder.provider === "naver" ? "Naver" : "Anissia"} · {folder.entryType === "zip" ? "ZIP" : "폴더"}</span>
                       </button>
                     ))}
                   </div>
-                  <p className="text-[11px] text-slate-400">폴더를 누르면 선택한 회차에 들어 있는 자막을 확인해.</p>
+                  <p className="text-[11px] text-slate-400">애니시아 폴더가 먼저 나와. 폴더나 ZIP을 누르면 내부 자막을 확인해.</p>
                 </div>
               )}
 
@@ -1049,7 +1052,7 @@ export default function SubtitleSelectModal({
                   >
                     <div className="flex min-w-0 flex-col gap-1">
                       <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        <span className="w-full min-w-0 whitespace-normal break-words [overflow-wrap:anywhere] font-bold leading-relaxed text-white text-xs">{sub.name}</span>
+                        <span className="w-full min-w-0 whitespace-normal break-words [overflow-wrap:anywhere] font-bold leading-relaxed text-white text-xs">{subtitleDisplayName(sub)}</span>
                         {sub.sourceProvider && <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${sub.sourceProvider === "aniall" ? "bg-amber-500/15 text-amber-200" : "bg-cyan-500/15 text-cyan-200"}`}>{sub.sourceProvider === "aniall" ? "AniAll" : sub.sourceProvider === "naver" ? "네이버" : "애니시아"}</span>}
                         {sub.localArchive && <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">Pi 로컬</span>}
                         {sub.verifiedMatch ? (
@@ -1203,3 +1206,4 @@ export default function SubtitleSelectModal({
 
   return createPortal(modalContent, document.body);
 }
+

@@ -505,7 +505,7 @@ export async function getAniAllArchiveSubtitles(blogTitle: string, episode: numb
   const assigned = options.bundleKey ? parseBundleScope(options.bundleKey) : null;
   if (options.bundleKey && (!assigned || (assigned.type!=='local' && assigned.type!=='folder') || assigned.provider !== 'aniall')) return [];
   let folders: string[];
-  try { folders = await readdir(corpus); } catch (error: any) { if (error?.code === 'ENOENT') return []; throw error; }
+  try { folders = (await readdir(corpus, { withFileTypes: true })).filter(entry => entry.isDirectory()).map(entry => entry.name); } catch (error: any) { if (error?.code === 'ENOENT') return []; throw error; }
   const postId = postUrl.match(/^https?:\/\/aniall\.tistory\.com\/([1-9]\d*)(?:[/?#]|$)/i)?.[1];
   const sourceFiles=await readSubtitleSourceManifest(root);
   const registeredFolders=postId ? [...new Set(Object.entries(sourceFiles).filter(([p,r])=>p.startsWith('aniall_subtitles/') && r.sources.some(s=>s.source==='aniall' && s.id===postId)).map(([p])=>p.split('/')[1]))].filter(p=>folders.includes(p)) : [];
@@ -610,3 +610,4 @@ export async function getLocalSubtitleFile(fileId: string) {
       ...rawBundleIdentity(provider,reference.relative,reference.member,creator,workTitle,sourceRecord)};
   } catch(error:any) { if(error?.code!=='ENOENT' && error?.code!=='ENOTDIR') console.warn('[Local subtitle override unreadable]',error.message); return null; }
 }
+
