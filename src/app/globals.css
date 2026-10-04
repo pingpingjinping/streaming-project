@@ -64,6 +64,8 @@ body {
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
+  /* A fullscreen panel must never inherit a sibling spacing margin. */
+  margin: 0 !important;
   height: 100vh;
   height: 100dvh;
   padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
