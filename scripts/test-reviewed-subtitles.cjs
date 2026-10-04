@@ -37,6 +37,36 @@ function pack(name, files, physical) {
 }
 const findRows = rows => { db.getDb = () => async () => rows; };
 const request = overrides => ({animeId:'re_review-test',episode:1,sourceEpisode:1,season:1,...overrides});
+test('reviewed parenthesized filenames identify the requested main episode while SP remains separate', async () => {
+  const rows = pack('parenthesized-hidamari', {
+    'Hidamari Sketch S1 (1).smi': srt('parenthesized main one'),
+    'Hidamari Sketch S1 (2).smi': srt('parenthesized main two'),
+    'Hidamari Sketch S1 (10).smi': srt('parenthesized main ten'),
+    'Hidamari Sketch S1 SP (1).smi': srt('parenthesized special'),
+  });
+  findRows(rows);
+  for (const [episode, text] of [[1, 'parenthesized main one'], [2, 'parenthesized main two'], [10, 'parenthesized main ten']]) {
+    const result = await storage.getReviewedSubtitles(request({ episode, sourceEpisode: episode }));
+    assert.equal(result.subtitles.length, 1);
+    assert.ok(result.subtitles[0].content.includes(text));
+    assert.equal(result.subtitles[0].episodeConfirmed, true);
+  }
+});
+test('broad search reads across bundles instead of letting 100 same-episode variants hide another ZIP', async () => {
+  const crowded = pack('hidamari-many-variants', Object.fromEntries(Array.from({ length: 110 }, (_, i) =>
+    [`Show SP - 01__${i + 1}.srt`, srt(`different special variant ${i}`)])),
+    'naver_subtitles/작품/hidamari-many-variants.zip');
+  const main = pack('hidamari-main-search', { 'Hidamari Sketch S1 (1).smi': srt('main bundle after crowded special') },
+    'naver_subtitles/작품/hidamari-main-search.zip');
+  for (const file of [...crowded, ...main]) {
+    file.source = 'naver'; file.zip_relative_path = file.zip_relative_path.replace(/^aniall\//, 'naver/');
+  }
+  findRows([...crowded, ...main]);
+  const result = await storage.getReviewedSubtitles(request({ keyword: '히다마리', manualSearch: true }));
+  assert.ok(result.subtitles.some(s => s.content.includes('main bundle after crowded special')));
+  assert.equal(new Set(result.subtitles.map(s => s.sourceBundleKey)).size, 2);
+  assert.ok(result.subtitles.length <= 50);
+});
 test('mixed ZIP only reads members returned by the current work binding', async () => {
   const rows = pack('mixed', {'S01E01.srt':srt('TV'), 'OVA/01.srt':srt('OVA'), 'S02E01.srt':srt('season two')});
   findRows([rows[0]]);

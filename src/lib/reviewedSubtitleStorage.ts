@@ -232,6 +232,25 @@ export function reviewedEpisodeCandidates(files: ReviewedFile[], episode: number
   return { exact: [...confirmed, ...selected], manual: [...new Map([...unknown, ...conflicting, ...competing].map(f => [f.pid, f])).values()] };
 }
 
+/** Broad searches must not spend the entire read budget on one large bundle. */
+function interleaveReviewedBundles(rows: ReviewedFile[]): ReviewedFile[] {
+  const groups = new Map<string, ReviewedFile[]>();
+  for (const file of rows) {
+    const key = reviewedBundleKey(file);
+    const group = groups.get(key) || [];
+    group.push(file);
+    groups.set(key, group);
+  }
+  const ordered: ReviewedFile[] = [];
+  for (let index = 0; ordered.length < Math.min(rows.length, 100); index++) {
+    for (const group of groups.values()) {
+      if (group[index]) ordered.push(group[index]);
+      if (ordered.length >= 100) return ordered;
+    }
+  }
+  return ordered;
+}
+
 export async function getReviewedSubtitles(input: { animeId: string; episode: number; sourceEpisode: number;
   season: number | null; source?: Provider; keyword?: string; manualSearch?: boolean; bundleKey?: string;
   isRejected?: (provider: string, key: string) => boolean }) {
@@ -248,7 +267,7 @@ export async function getReviewedSubtitles(input: { animeId: string; episode: nu
   const results: Array<NonNullable<Awaited<ReturnType<typeof readReviewedFile>>> & { episode: number; episodeConfirmed: boolean }> = [];
   const seen = new Set<string>();
   const load = async (rows: ReviewedFile[], confirmed: boolean) => {
-    for (const file of rows.slice(0, 100)) {
+    for (const file of interleaveReviewedBundles(rows)) {
       if (seen.has(file.sha256)) continue;
       const result = await readReviewedFile(file);
       if (!result) continue;

@@ -142,6 +142,39 @@ test('release metadata and the numeric work title are not extra episodes', () =>
   assert.deepEqual(readEpisodeEvidence('작품 2기 13화 (2026)').episodes, [13]);
   assert.deepEqual(readEpisodeEvidence('2026/09/23').episodes, []);
 });
+test('trailing parenthesized subtitle numbers identify episodes without consuming the season', () => {
+  for (const [name, episode] of [
+    ['Hidamari Sketch S1 (1).smi', 1], ['Hidamari Sketch S1 (10).smi', 10],
+    ['Hidamari Sketch S1 SP (2).smi', 2], ['원본_40be322a2b/자막/Hidamari Sketch S1 (12).smi', 12],
+    ['히다마리 스케치 S1 （０１）.smi', 1], ['Show(3).ass', 3],
+  ]) {
+    const evidence = readEpisodeEvidence(name, true);
+    assert.deepEqual(evidence.episodes, [episode], name);
+    assert.equal(evidence.conflict, false, name);
+    if (name.includes('S1')) assert.equal(evidence.season, 1, name);
+  }
+});
+test('existing episode tokens beat parenthesized download-copy suffixes', () => {
+  for (const name of ['Show - 12 (1).srt', 'Show EP12 (1).smi', '작품 12화 (2).ass', 'Show [12] (1).srt']) {
+    assert.deepEqual(readEpisodeEvidence(name, true).episodes, [12], name);
+  }
+  for (const name of ['Show (2026).smi', 'Show (1080p).srt', 'Show (v2).ass', 'Show S1.smi', 'Show (0).srt']) {
+    assert.deepEqual(readEpisodeEvidence(name, true).episodes, [], name);
+  }
+  assert.deepEqual(readEpisodeEvidence('Show (1)').episodes, []);
+  assert.deepEqual(readEpisodeEvidence('Show (1).zip', true).episodes, []);
+});
+test('parenthesized ZIP members select the requested episode and keep season conflicts separate', () => {
+  const buffer = zip({ 'Hidamari Sketch S1 (1).srt': 'parenthesized one',
+    'Hidamari Sketch S1 (2).srt': 'parenthesized two', 'Hidamari Sketch S1 (10).srt': 'parenthesized ten' });
+  for (const [episode, text] of [[1, 'parenthesized one'], [2, 'parenthesized two'], [10, 'parenthesized ten']]) {
+    const result = extractSubtitleFromBuffer(buffer, episode, '히다마리 스케치.zip', true, 1);
+    assert.ok(result?.content.includes(text));
+  }
+  assert.equal(extractSubtitleFromBuffer(buffer, 1, 'all.zip', true, 2), null);
+  const { entries } = inspectSubtitleArchive(buffer);
+  assert.deepEqual(automaticArchiveAssignments(entries, '히다마리 스케치.zip', 1, null).map(a => a.episode).sort((a,b)=>a-b), [1, 2, 10]);
+});
 test('upload routes 13-24 to local1-12, retaining same-episode release variants', () => {
   const { entries } = inspectSubtitleArchive(zip({ '13.srt': 'a', '13ns.srt': 'b', '24.srt': 'c' }));
   assert.deepEqual(automaticArchiveAssignments(entries, '13-24.zip', 2, 13).map(a => a.episode), [1, 1, 12]);

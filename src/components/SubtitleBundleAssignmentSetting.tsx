@@ -18,6 +18,7 @@ type BundleAssignment = {
 
 type FolderCandidate = {
   folderName: string;folderKey?:string;
+  archivePath?: string;
   provider: Provider;
 };
 
@@ -73,7 +74,7 @@ export default function SubtitleBundleAssignmentSetting({
     return [...map.values()];
   }, [results]);
 
-  const searchLocal = async (override?: string) => {
+  const searchLocal = async (override?: string, archivePath?: string) => {
     const q = (override || keyword).trim();
     if (!q || loading) return;
     if (override) setKeyword(override);
@@ -89,7 +90,7 @@ export default function SubtitleBundleAssignmentSetting({
       });
       const [folderResponse, subtitleResponse] = await Promise.all([
         fetch(`/api/anime/subtitles/local?${params.toString()}`, { cache: "no-store" }),
-        fetch(`/api/anime/subtitles/local?mode=search&title=${encodeURIComponent(q)}&ep=${episode}&animeId=${encodeURIComponent(animeId)}`, { cache: "no-store" }),
+        fetch(`/api/anime/subtitles/local?mode=search&title=${encodeURIComponent(q)}&ep=${episode}&animeId=${encodeURIComponent(animeId)}${archivePath ? `&archivePath=${encodeURIComponent(archivePath)}` : ""}`, { cache: "no-store" }),
       ]);
       const folderData = await folderResponse.json();
       const subtitleData = await subtitleResponse.json();
@@ -189,7 +190,7 @@ export default function SubtitleBundleAssignmentSetting({
 
       <form className="mt-4 flex flex-wrap gap-2" onSubmit={(event) => { event.preventDefault(); searchLocal(); }}>
         <input value={keyword} onChange={(event) => setKeyword(event.target.value)}
-          placeholder="로컬 폴더/작품명 검색"
+          placeholder="로컬 폴더·ZIP/작품명 검색"
           className="min-w-48 flex-1 rounded-xl border border-emerald-500/20 bg-slate-900 px-3 py-2 text-xs text-white outline-none focus:border-emerald-400" />
         <input type="number" min={1} max={10000} value={episode}
           onChange={(event) => setEpisode(Math.max(1, Number(event.target.value) || 1))}
@@ -205,11 +206,12 @@ export default function SubtitleBundleAssignmentSetting({
       <SubtitleFolderAssignments animeId={animeId} choices={[...folders,...results]} onSaved={setAssignment} />
       {folders.length > 0 && (
         <div className="mt-3">
-          <p className="mb-1 text-[11px] font-semibold text-slate-400">폴더 후보</p>
+          <p className="mb-1 text-[11px] font-semibold text-slate-400">폴더·ZIP 후보</p>
           <div className="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto">
             {folders.slice(0, 60).map((folder, index) => (
               <button type="button" key={`${folder.provider}-${folder.folderName}-${index}`}
-                onClick={() => searchLocal(folder.folderName)}
+                onClick={() => searchLocal(folder.folderName, folder.archivePath)}
+                title={folder.archivePath || folder.folderName}
                 className="flex max-w-full items-center gap-1 rounded-lg border border-white/10 bg-slate-900/70 px-2.5 py-1.5 text-[11px] text-slate-300 hover:border-emerald-500/40 hover:text-white">
                 <FolderOpen className="h-3 w-3 shrink-0" />
                 <span className="min-w-0 whitespace-normal break-words [overflow-wrap:anywhere] text-left">{folder.folderName}</span>
