@@ -24,6 +24,7 @@ import {
 import { EpisodeItem } from "./Player";
 import SubtitleSelectModal, { CreatorInfo, SubtitleOption } from "./SubtitleSelectModal";
 import type { ServerSource } from "@/lib/providers/types";
+import { usePlayerFullscreen } from "./usePlayerFullscreen";
 
 interface SubtitleCue {
   start: number;
@@ -85,7 +86,9 @@ export default function IframePlayer({
   const currentBlobUrlRef = useRef<string | null>(null);
 
   // States
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const { mode: fullscreenMode, isFullscreen, toggleFullscreen } = usePlayerFullscreen(containerRef);
+  const fullscreenRef = useRef(isFullscreen);
+  fullscreenRef.current = isFullscreen;
   const [currentVideoTime, setCurrentVideoTime] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
   const [syncOffset, setSyncOffset] = useState(0.0);
@@ -97,8 +100,6 @@ export default function IframePlayer({
   });
   const [isOctopusActive, setIsOctopusActive] = useState(false);
   const [navigatingTarget, setNavigatingTarget] = useState<string | null>(null);
-  const [showFsControls, setShowFsControls] = useState(false);
-  const fsControlsTimerRef = useRef<NodeJS.Timeout | null>(null);
   const syncOffsetRef = useRef(syncOffset);
   syncOffsetRef.current = syncOffset;
   const isSubEnabledRef = useRef(isSubEnabled);
@@ -106,73 +107,6 @@ export default function IframePlayer({
   const cuesRef = useRef<SubtitleCue[]>([]);
   const isOctopusActiveRef = useRef(false);
   isOctopusActiveRef.current = isOctopusActive;
-
-  const triggerFsControls = useCallback(() => {
-    setShowFsControls(true);
-    if (fsControlsTimerRef.current) clearTimeout(fsControlsTimerRef.current);
-    fsControlsTimerRef.current = setTimeout(() => {
-      setShowFsControls(false);
-    }, 3500);
-  }, []);
-
-  const getFullscreenElement = useCallback(() => {
-    if (typeof document === "undefined") return null;
-    return (
-      document.fullscreenElement ||
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (document as any).webkitFullscreenElement ||
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (document as any).mozFullScreenElement ||
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (document as any).msFullscreenElement ||
-      null
-    );
-  }, []);
-
-  const toggleFullscreen = useCallback(async () => {
-    const isFs = Boolean(getFullscreenElement()) || isFullscreen;
-    if (!isFs) {
-      triggerFsControls();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const el = containerRef.current as any;
-      if (!el) return;
-      try {
-        if (el.requestFullscreen) {
-          await el.requestFullscreen();
-        } else if (el.webkitRequestFullscreen) {
-          await el.webkitRequestFullscreen();
-        } else if (el.mozRequestFullScreen) {
-          await el.mozRequestFullScreen();
-        } else if (el.msRequestFullscreen) {
-          await el.msRequestFullscreen();
-        } else {
-          // iOS Safari fallback: CSS pseudo-fullscreen
-          setIsFullscreen(true);
-          document.body.style.overflow = "hidden";
-        }
-      } catch {
-        // Fallback to CSS pseudo-fullscreen
-        setIsFullscreen(true);
-        document.body.style.overflow = "hidden";
-      }
-    } else {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const doc = document as any;
-      try {
-        if (doc.exitFullscreen) {
-          await doc.exitFullscreen();
-        } else if (doc.webkitExitFullscreen) {
-          await doc.webkitExitFullscreen();
-        } else if (doc.mozCancelFullScreen) {
-          await doc.mozCancelFullScreen();
-        } else if (doc.msExitFullscreen) {
-          await doc.msExitFullscreen();
-        }
-      } catch {}
-      setIsFullscreen(false);
-      document.body.style.overflow = "";
-    }
-  }, [getFullscreenElement, isFullscreen, triggerFsControls]);
 
   // Subtitles & Creators (서버에서 사전 로드된 자막이 있으면 0초 딜레이로 즉시 바인딩)
   const [subtitles, setSubtitles] = useState<SubtitleOption[]>(() => {
@@ -684,18 +618,19 @@ export default function IframePlayer({
 
     const handleMessage = (event: MessageEvent) => {
       if (!event.data) return;
+      const isPlayerMessage = event.source === iframeRef.current?.contentWindow;
 
       // Handle Fullscreen queries from iframe
-      if (event.data.zenCommand === "getFullscreenState") {
+      if (isPlayerMessage && event.data.zenCommand === "getFullscreenState") {
         event.source?.postMessage(
-          { zenFullscreenState: Boolean(getFullscreenElement()) || isFullscreen },
+          { zenFullscreenState: isFullscreen },
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           "*" as any
         );
       }
 
       // Handle Fullscreen toggle command from iframe
-      if (event.data.zenCommand === "toggleFullscreen") {
+      if (isPlayerMessage && event.data.zenCommand === "toggleFullscreen") {
         toggleFullscreen();
       }
 
@@ -793,11 +728,7 @@ export default function IframePlayer({
     window.addEventListener("message", handleMessage);
 
     const syncOctopusCanvasSize = () => {
-      const isFs = Boolean(getFullscreenElement()) || isFullscreen;
-      setIsFullscreen(isFs);
-      if (!isFs) {
-        document.body.style.overflow = "";
-      }
+      const isFs = fullscreenRef.current;
       try {
         iframeRef.current?.contentWindow?.postMessage(
           { zenFullscreenState: isFs, event: "fullscreen", isFullscreen: isFs },
@@ -818,24 +749,25 @@ export default function IframePlayer({
       }
     };
 
+    const resizeTimers = new Set<ReturnType<typeof setTimeout>>();
     const handleFullscreenChange = () => {
       syncOctopusCanvasSize();
-      setTimeout(syncOctopusCanvasSize, 100);
-      setTimeout(syncOctopusCanvasSize, 300);
-    };
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && (isFullscreen || Boolean(getFullscreenElement()))) {
-        toggleFullscreen();
+      for (const delay of [100, 300]) {
+        const timeout = setTimeout(() => {
+          resizeTimers.delete(timeout);
+          syncOctopusCanvasSize();
+        }, delay);
+        resizeTimers.add(timeout);
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown);
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
     document.addEventListener("mozfullscreenchange", handleFullscreenChange);
     document.addEventListener("MSFullscreenChange", handleFullscreenChange);
     window.addEventListener("resize", syncOctopusCanvasSize);
+    window.visualViewport?.addEventListener("resize", syncOctopusCanvasSize);
+    const layoutTimer = setTimeout(syncOctopusCanvasSize, 100);
 
     const handleUnload = () => {
       syncHistory(false);
@@ -846,23 +778,20 @@ export default function IframePlayer({
     return () => {
       syncHistory(false);
       clearInterval(timer);
-      document.body.style.overflow = "";
       window.removeEventListener("message", handleMessage);
-      window.removeEventListener("keydown", handleKeyDown);
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
       document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
       document.removeEventListener("mozfullscreenchange", handleFullscreenChange);
       document.removeEventListener("MSFullscreenChange", handleFullscreenChange);
       window.removeEventListener("resize", syncOctopusCanvasSize);
+      window.visualViewport?.removeEventListener("resize", syncOctopusCanvasSize);
+      clearTimeout(layoutTimer);
+      resizeTimers.forEach(clearTimeout);
       window.removeEventListener("beforeunload", handleUnload);
       window.removeEventListener("pagehide", handleUnload);
-      if (fsControlsTimerRef.current) {
-        clearTimeout(fsControlsTimerRef.current);
-      }
     };
   }, [
     syncHistory,
-    getFullscreenElement,
     isFullscreen,
     toggleFullscreen,
     subtitles,
@@ -1071,10 +1000,12 @@ export default function IframePlayer({
       {/* Main Video Box with Subtitle HUD Overlay */}
       <div
         ref={containerRef}
-        onMouseMove={isFullscreen ? triggerFsControls : undefined}
-        onTouchStart={isFullscreen ? triggerFsControls : undefined}
-        className={`relative aspect-video w-full overflow-hidden rounded-2xl border border-purple-500/30 bg-black ${
-          isFullscreen ? "fixed inset-0 z-50 h-[100dvh] w-screen rounded-none border-none" : ""
+        className={`overflow-hidden bg-black ${
+          fullscreenMode === "web"
+            ? "fixed inset-0 z-50 h-[100dvh] w-screen"
+            : fullscreenMode === "native"
+              ? "relative h-screen w-screen"
+              : "relative aspect-video w-full rounded-2xl border border-purple-500/30"
         }`}
       >
         {/* Layer 1: Sandboxed FlixCloud Iframe */}
@@ -1139,22 +1070,22 @@ export default function IframePlayer({
           </div>
         )}
 
-        {/* Layer 2c: Fullscreen Floating Overlay Controls (전체화면 종료 버튼만 노출) */}
-        {isFullscreen && (
+        {/* Native fullscreen already has browser/player exit controls. Web mode needs its own exit. */}
+        {fullscreenMode === "web" && (
           <div
-            className={`absolute inset-0 z-30 pointer-events-none transition-opacity duration-300 p-4 sm:p-6 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] ${
-              showFsControls ? "opacity-100" : "opacity-0"
-            }`}
+            className="absolute top-0 right-0 z-30 pt-[max(0.5rem,env(safe-area-inset-top))] pr-[max(0.5rem,env(safe-area-inset-right))]"
           >
             {/* Top Right: Exit Fullscreen Button */}
             <div className="flex items-center justify-end pointer-events-auto">
               <button
                 onClick={toggleFullscreen}
-                className="flex items-center gap-1.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-purple-500/40 px-3.5 py-2 text-xs font-bold text-white backdrop-blur-md transition active:scale-95 cursor-pointer"
-                title="전체화면 종료 (ESC)"
+                type="button"
+                aria-label="전체화면 종료"
+                className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-900/60 text-white backdrop-blur-md transition hover:bg-slate-800 active:scale-95 cursor-pointer"
+                title="전체화면 종료"
               >
                 <Minimize2 className="h-4 w-4 text-purple-400" />
-                전체화면 종료
+                <span className="sr-only">전체화면 종료</span>
               </button>
             </div>
           </div>

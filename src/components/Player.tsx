@@ -1,5 +1,6 @@
 "use client";
 import { canCacheSubtitle } from "@/lib/subtitleCachePolicy";
+import { exitPlayerFullscreen, getPlayerFullscreenElement, requestPlayerFullscreen } from "@/lib/playerFullscreen";
 import LocalizedAnimeTitle from "@/components/LocalizedAnimeTitle";
 
 import { useEffect, useRef, useState, useCallback } from "react";
@@ -2245,6 +2246,28 @@ export default function Player(props: PlayerProps) {
     }, 300);
   }, []);
 
+  const fullscreenBusyRef = useRef(false);
+  const toggleVideoFullscreen = useCallback(async () => {
+    const art = artRef.current;
+    const container = art?.template?.$player as HTMLElement | undefined;
+    if (!container || fullscreenBusyRef.current) return;
+    fullscreenBusyRef.current = true;
+    try {
+      if (art.fullscreenWeb) {
+        art.fullscreenWeb = false;
+      } else if (getPlayerFullscreenElement(document) === container) {
+        await exitPlayerFullscreen(document);
+      } else {
+        const mode = await requestPlayerFullscreen(container, navigator);
+        if (mode === "web" && artRef.current === art && !art.isDestroy) art.fullscreenWeb = true;
+      }
+    } catch {
+      if (artRef.current === art && !art.isDestroy) art.notice.show = "전체화면을 종료하지 못했습니다. 다시 눌러 주세요.";
+    } finally {
+      fullscreenBusyRef.current = false;
+    }
+  }, []);
+
   // Initialize Player
   useEffect(() => {
     let isMounted = true;
@@ -2350,7 +2373,8 @@ export default function Player(props: PlayerProps) {
           hotkey: playerSettings.hotkey,
           gesture: true,
           pip: false,
-          fullscreen: playerSettings.fullscreenBtn,
+          // Use the subtitle-preserving container path instead of iOS video-only fullscreen.
+          fullscreen: false,
           fullscreenWeb: playerSettings.fullscreenWebBtn,
           subtitleOffset: true,
           miniProgressBar: playerSettings.miniProgressBar,
@@ -2396,6 +2420,14 @@ export default function Player(props: PlayerProps) {
             },
           },
           controls: [
+            {
+              name: "fullscreen",
+              position: "right",
+              index: 70,
+              html: '<button type="button" aria-label="전체화면" class="art-icon" style="border:0;background:none;color:inherit;cursor:pointer;padding:0"><svg class="player-fullscreen-enter" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg><svg class="player-fullscreen-exit" style="display:none" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8h5V3m8 0v5h5M8 21v-5H3m13 5v-5h5"/></svg></button>',
+              tooltip: "전체화면",
+              click: () => { void toggleVideoFullscreen(); },
+            },
             {
               name: "skip85s",
               position: "left",
@@ -2628,6 +2660,19 @@ export default function Player(props: PlayerProps) {
         });
 
         artRef.current = art;
+        const syncFullscreenControl = () => {
+          const active = art.fullscreenWeb || getPlayerFullscreenElement(document) === art.template.$player;
+          const button = art.template.$player.querySelector(".art-control-fullscreen button") as HTMLButtonElement | null;
+          if (!button) return;
+          button.setAttribute("aria-label", active ? "전체화면 종료" : "전체화면");
+          button.title = active ? "전체화면 종료" : "전체화면";
+          const enter = button.querySelector(".player-fullscreen-enter") as SVGElement | null;
+          const exit = button.querySelector(".player-fullscreen-exit") as SVGElement | null;
+          if (enter) enter.style.display = active ? "none" : "block";
+          if (exit) exit.style.display = active ? "block" : "none";
+        };
+        art.on("fullscreen", syncFullscreenControl);
+        art.on("fullscreenWeb", syncFullscreenControl);
 
         if (!isMounted) {
           try {
@@ -2931,7 +2976,7 @@ export default function Player(props: PlayerProps) {
           }
 
           // 🌟 데스크톱 더블클릭: 무조건 전체화면 토글! (탐색은 절대로 발생하지 않음)
-          art.fullscreen = !art.fullscreen;
+          void toggleVideoFullscreen();
 
           // 1번째 클릭으로 인해 비디오 재생/정지 상태가 바뀐 경우 원래 상태로 복원
           setTimeout(() => {
@@ -3470,6 +3515,7 @@ export default function Player(props: PlayerProps) {
     isDub,
     applySubtitle,
     toggleHybridPip,
+    toggleVideoFullscreen,
     syncCuesToPipTrack,
     isNativePipActive,
     updateNativeTrackElement,
