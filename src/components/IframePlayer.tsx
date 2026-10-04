@@ -20,12 +20,20 @@ import {
   Loader2,
   FolderOpen,
   Film,
+  Settings,
 } from "lucide-react";
 import { EpisodeItem } from "./Player";
 import SubtitleSelectModal, { CreatorInfo, SubtitleOption } from "./SubtitleSelectModal";
 import type { ServerSource } from "@/lib/providers/types";
 import { usePlayerFullscreen } from "./usePlayerFullscreen";
 import { useContainedPlayerFrame } from "./useContainedPlayerFrame";
+import PlayerSettingsModal, {
+  DEFAULT_PLAYER_SETTINGS,
+  loadPlayerSettings,
+  fetchUserSettingsFromDb,
+  applyPlayerSettingsStyles,
+  type PlayerSettings,
+} from "./PlayerSettingsModal";
 
 interface SubtitleCue {
   start: number;
@@ -92,6 +100,24 @@ export default function IframePlayer({
   useContainedPlayerFrame(containerRef, mediaFrameRef, isFullscreen, fullscreenMode === "web");
   const fullscreenRef = useRef(isFullscreen);
   fullscreenRef.current = isFullscreen;
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [playerSettings, setPlayerSettings] = useState<PlayerSettings>(DEFAULT_PLAYER_SETTINGS);
+  const settingsEditedRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const local = loadPlayerSettings();
+    setPlayerSettings(local);
+    applyPlayerSettingsStyles(local);
+    fetchUserSettingsFromDb().then((result) => {
+      if (cancelled || settingsEditedRef.current || !result.authenticated || !result.settings) return;
+      const merged = { ...DEFAULT_PLAYER_SETTINGS, ...result.settings };
+      setPlayerSettings(merged);
+      applyPlayerSettingsStyles(merged);
+      try { localStorage.setItem("anime_player_settings", JSON.stringify(merged)); } catch {}
+    });
+    return () => { cancelled = true; };
+  }, []);
   const [currentVideoTime, setCurrentVideoTime] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
   const [syncOffset, setSyncOffset] = useState(0.0);
@@ -1093,7 +1119,7 @@ export default function IframePlayer({
                 onClick={toggleFullscreen}
                 type="button"
                 aria-label="전체화면 종료"
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-900/60 text-white backdrop-blur-md transition hover:bg-slate-800 active:scale-95 cursor-pointer"
+                className="player-web-fullscreen-exit flex h-8 w-8 items-center justify-center rounded-full bg-slate-900/60 text-white backdrop-blur-md transition hover:bg-slate-800 active:scale-95 cursor-pointer"
                 title="전체화면 종료"
               >
                 <Minimize2 className="h-3.5 w-3.5 text-purple-400" />
@@ -1235,6 +1261,14 @@ export default function IframePlayer({
           {/* Subtitle Toggle, Size & Fullscreen */}
           <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
             <button
+              type="button"
+              onClick={() => setIsSettingsOpen(true)}
+              className="flex items-center gap-1 rounded-lg border border-white/10 bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-purple-500 hover:text-white cursor-pointer"
+              title="웹 전체화면 종료 버튼 설정"
+            >
+              <Settings className="h-3.5 w-3.5" /> 설정
+            </button>
+            <button
               onClick={() => setIsSubEnabled(!isSubEnabled)}
               className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition cursor-pointer ${
                 isSubEnabled
@@ -1271,6 +1305,17 @@ export default function IframePlayer({
           </div>
         </div>
       </div>
+
+      <PlayerSettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        settings={playerSettings}
+        fullscreenExitOnly
+        onUpdateSettings={(next) => {
+          settingsEditedRef.current = true;
+          setPlayerSettings(next);
+        }}
+      />
 
       {/* Subtitle Selection & Search Modal */}
       <SubtitleSelectModal
