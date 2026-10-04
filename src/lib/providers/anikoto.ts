@@ -1,131 +1,161 @@
 import { chromiumFetch } from '@/lib/chromiumFetch';
+import { toAnikotoId, stripAnikotoId } from './ids';
 import type { Provider, AnimeSearchResult, EpisodeSource, EpisodeStream } from './types';
 
 export class AnikotoProvider implements Provider {
   readonly id = 'anikoto';
   readonly name = 'Anikoto';
-  private baseUrl = 'https://anikoto.com'; // 베이스 도메인 (설정 연동 가능)
+  // Anikoto 메인 도메인 (설정/프록시 연동 가능)
+  private baseUrl = 'https://anikoto.to';
 
   /**
-   * 영문/로마자 키워드로 애니메이션 검색
+   * 영문 / 로마자 키워드로 애니 검색
    */
   async search(keyword: string): Promise<AnimeSearchResult[]> {
     try {
-      const url = `${this.baseUrl}/api/search?q=${encodeURIComponent(keyword)}`;
-      const res = await chromiumFetch(url);
+      const searchUrl = `${this.baseUrl}/filter?keyword=${encodeURIComponent(keyword)}`;
+      const res = await chromiumFetch(searchUrl);
       
       if (!res.ok) {
-        // API 엔드포인트 실패 시 HTML 검색 폴백
-        return await this.searchHtmlFallback(keyword);
+        console.warn(`[Anikoto] search failed with status ${res.status}`);
+        return [];
       }
 
-      const json = await res.json();
-      if (!Array.isArray(json.data)) return [];
+      const html = await res.text();
+      const results: AnimeSearchResult[] = [];
 
-      return json.data.map((item: any) => ({
-        id: String(item.id || item.slug),
-        title: item.title?.english || item.title?.romaji || item.title || '',
-        thumbnail: item.poster || item.image || '',
-        latestEpisode: item.episodesCount ? String(item.episodesCount) : undefined,
-        provider: this.id,
-      }));
+      // Anikoto 카드 아이템 파싱 정규식
+      // <a href="/watch/{id}" ...> ... <img src="{thumbnail}" ...> ... <h3>{title}</h3>
+      const itemRegex = /<a[^>]+href="\/watch\/([^"]+)"[^>]*>[\s\S]*?<img[^>]+src="([^"]+)"[\s\S]*?<h3[^>]*>([^<]+)<\/h3>/gi;
+      let match: RegExpExecArray | null;
+
+      while ((match = itemRegex.exec(html)) !== null) {
+        const rawId = match[1].replace(/^\/watch\//, '').trim();
+        const thumbnail = match[2];
+        const title = match[3].trim();
+
+        results.push({
+          id: toAnikotoId(rawId), // 프로젝트 내부 ID 접두사 'ak_' 부착
+          title,
+          thumbnail,
+          provider: this.id,
+        });
+      }
+
+      // 정규식 매칭이 안 잡힐 경우 대체 카드 링크 파싱 폴백
+      if (results.length === 0) {
+        const fallbackRegex = /href="\/watch\/([^"?#]+)"[^>]*title="([^"]+)"/gi;
+        while ((match = fallbackRegex.exec(html)) !== null) {
+          results.push({
+            id: toAnikotoId(match[1]),
+            title: match[2].trim(),
+            provider: this.id,
+          });
+        }
+      }
+
+      return results;
     } catch (e) {
-      console.error(`[Anikoto] search failed:`, e);
+      console.error(`[Anikoto] search error:`, e);
       return [];
     }
   }
 
-  private async searchHtmlFallback(keyword: string): Promise<AnimeSearchResult[]> {
-    const searchUrl = `${this.baseUrl}/filter?keyword=${encodeURIComponent(keyword)}`;
-    const res = await chromiumFetch(searchUrl);
-    const html = await res.text();
-
-    const results: AnimeSearchResult[] = [];
-    // 정규식으로 카드 아이템 매핑
-    const cardRegex = /<a href="\/watch\/([^"]+)"[^>]*>[\s\S]*?<img src="([^"]+)"[\s\S]*?<h3[^>]*>([^<]+)<\/h3>/g;
-    let match;
-
-    while ((match = cardRegex.exec(html)) !== null) {
-      results.push({
-        id: match[1],
-        title: match[3].trim(),
-        thumbnail: match[2],
-        provider: this.id,
-      });
-    }
-
-    return results;
-  }
-
   /**
-   * 해당 작품의 에피소드 목록 조회
+   * 에피소드 회차 목록 조회
+   * @param animeId - 'ak_' 접두사가 붙어 있는 내부 ID
    */
   async getEpisodes(animeId: string): Promise<EpisodeSource[]> {
     try {
-      const res = await chromiumFetch(`${this.baseUrl}/watch/${animeId}`);
-      const html = await res.text();
+      const realId = stripAnikotoId(animeId); // 사이트 요청용 실제 ID 추출
+      const watchUrl = `${this.baseUrl}/watch/${realId}`;
+      const res = await chromiumFetch(watchUrl);
 
+      if (!res.ok) return [];
+
+      const html = await res.text();
       const episodes: EpisodeSource[] = [];
 
-      // 페이지 내부 episode 목록 DOM 또는 JSON 파싱
-      // 예: data-number="1" data-id="12345" 패턴
-      const epRegex = /data-number="([^"]+)"\s+data-id="([^"]+)"/g;
-      let match;
+      // 1. 에피소드 data-number, data-id 속성 추출
+      const epRegex = /data-number="([^"]+)"\s+data-id="([^"]+)"/gi;
+      let match: RegExpExecArray | null;
 
       while ((match = epRegex.exec(html)) !== null) {
+        const epNum = parseFloat(match[1]);
         episodes.push({
-          episodeNumber: parseFloat(match[1]),
-          episodeId: match[2],
+          episodeNumber: isNaN(epNum) ? 1 : epNum,
+          episodeId: toAnikotoId(match[2]), // 회차 ID도 ak_ 접두사 부여
           title: `EP ${match[1]}`,
         });
       }
 
-      // DOM에 직접 안 잡히는 경우 기본 1화 폴백
+      // 2. data 속성이 없고 a href="/watch/{slug}?ep={epNumber}" 형태인 경우 폴백
       if (episodes.length === 0) {
-        episodes.push({
-          episodeNumber: 1,
-          episodeId: `${animeId}-ep-1`,
-          title: 'EP 1',
-        });
+        const hrefRegex = /href="\/watch\/[^"?#]+\?ep=([0-9.]+)"[^>]*>([^<]*)/gi;
+        while ((match = hrefRegex.exec(html)) !== null) {
+          const epNum = parseFloat(match[1]);
+          episodes.push({
+            episodeNumber: isNaN(epNum) ? 1 : epNum,
+            episodeId: toAnikotoId(`${realId}?ep=${match[1]}`),
+            title: match[2].trim() || `EP ${match[1]}`,
+          });
+        }
       }
 
+      // 회차 번호 기준 오름차순 정렬
       return episodes.sort((a, b) => a.episodeNumber - b.episodeNumber);
     } catch (e) {
-      console.error(`[Anikoto] getEpisodes failed:`, e);
+      console.error(`[Anikoto] getEpisodes error:`, e);
       return [];
     }
   }
 
   /**
-   * 특정 에피소드의 비디오 소스(iframe 주소 또는 m3u8) 취득
+   * 에피소드 스트리밍 소스(iframe 주소) 반환
+   * @param episodeId - 'ak_' 접두사가 붙어 있는 에피소드 식별자
    */
   async getStream(episodeId: string): Promise<EpisodeStream | null> {
     try {
-      // 비디오 서버 정보 호출
-      const res = await chromiumFetch(`${this.baseUrl}/api/servers?epId=${encodeURIComponent(episodeId)}`);
-      
+      const realEpId = stripAnikotoId(episodeId);
       let embedUrl = '';
-      if (res.ok) {
-        const json = await res.json();
-        // MegaCloud, Vidstreaming, StreamWish 우선 순위 선택
-        const server = json.servers?.find((s: any) => 
-          ['megacloud', 'streamwish', 'vidstreaming'].includes(s.name.toLowerCase())
-        ) || json.servers?.[0];
 
-        embedUrl = server?.embedUrl || server?.src || '';
+      // 1. 서버 정보 JSON API 조회 시도
+      try {
+        const apiRes = await chromiumFetch(`${this.baseUrl}/api/servers?epId=${encodeURIComponent(realEpId)}`);
+        if (apiRes.ok) {
+          const json = await apiRes.json();
+          // MegaCloud, Vidstreaming, StreamWish 우선 선택
+          const server = json.servers?.find((s: any) =>
+            ['megacloud', 'streamwish', 'vidstreaming'].includes(s.name?.toLowerCase())
+          ) || json.servers?.[0];
+
+          embedUrl = server?.embedUrl || server?.src || '';
+        }
+      } catch {
+        // API 요청 실패 시 아래 DOM 폴백 진행
       }
 
+      // 2. watch 페이지 내부 iframe 직접 추출 폴백
       if (!embedUrl) {
-        // API 미지원 시 watch 페이지 내부 iframe 추출
-        const pageRes = await chromiumFetch(`${this.baseUrl}/watch/${episodeId}`);
-        const html = await pageRes.text();
-        const iframeMatch = html.match(/<iframe[^>]+src="([^"]+)"/i);
-        embedUrl = iframeMatch ? iframeMatch[1] : '';
+        const pageRes = await chromiumFetch(`${this.baseUrl}/watch/${realEpId}`);
+        if (pageRes.ok) {
+          const html = await pageRes.text();
+          const iframeMatch = html.match(/<iframe[^>]+src="([^"]+)"/i);
+          if (iframeMatch) {
+            embedUrl = iframeMatch[1];
+          }
+        }
       }
 
       if (!embedUrl) return null;
 
-      // iframe 형태 반환 (IframePlayer에서 바로 구동)
+      // 상대 경로로 시작할 경우 절대 경로로 보정
+      if (embedUrl.startsWith('//')) {
+        embedUrl = `https:${embedUrl}`;
+      } else if (embedUrl.startsWith('/')) {
+        embedUrl = `${this.baseUrl}${embedUrl}`;
+      }
+
       return {
         type: 'iframe',
         url: embedUrl,
@@ -134,7 +164,7 @@ export class AnikotoProvider implements Provider {
         },
       };
     } catch (e) {
-      console.error(`[Anikoto] getStream failed:`, e);
+      console.error(`[Anikoto] getStream error:`, e);
       return null;
     }
   }
