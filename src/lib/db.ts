@@ -911,12 +911,13 @@ export async function saveKoreanAnimeTitleMapping(
   }
 }
 
-export const STREAMING_PROVIDERS = ["anissia", "reanime", "ohli24", "linkkf"] as const;
+export const STREAMING_PROVIDERS = ["anissia", "reanime", "anikoto", "ohli24", "linkkf"] as const;
 export type StreamingProviderKey = (typeof STREAMING_PROVIDERS)[number];
 
 export const STREAMING_PROVIDER_LABELS: Record<StreamingProviderKey, string> = {
   anissia: "애니시아",
   reanime: "Re:Anime",
+  anikoto: "Anikoto",
   ohli24: "Ohli24",
   linkkf: "Linkkf",
 };

@@ -76,7 +76,7 @@ export default async function HomePage({
   const cookieStore = await cookies();
   const enabledSources = await getEnabledStreamingProviders();
   const rawSource = cookieStore.get("anime_source")?.value;
-  const requestedSource = rawSource === "linkkf" || rawSource === "reanime" || rawSource === "ohli24" || rawSource === "anissia"
+  const requestedSource = rawSource === "linkkf" || rawSource === "reanime" || rawSource === "anikoto" || rawSource === "ohli24" || rawSource === "anissia"
     ? rawSource
     : "anissia";
   const activeSource = enabledSources.includes(requestedSource) ? requestedSource : enabledSources[0] || "anissia";
@@ -111,6 +111,7 @@ export default async function HomePage({
     const labels: Record<string, string> = {
       anissia: "애니시아",
       reanime: "Re:Anime",
+      anikoto: "Anikoto",
       ohli24: "Ohli24",
       linkkf: "Linkkf",
     };
@@ -262,6 +263,11 @@ export default async function HomePage({
       has_next = res.has_next;
       total_pages = res.total_pages;
     }
+  } else if (activeSource === "anikoto") {
+    const res = await provider.getAnimeList({ category: "airing", page });
+    items = res.items;
+    has_next = res.has_next;
+    total_pages = res.total_pages;
   } else if (activeSource === "ohli24") {
     // Ohli24 소스 구조: 신작 방영, 완결 애니, 카테고리 탐색
     if (tab === "finished") {
@@ -330,6 +336,8 @@ export default async function HomePage({
       ? ANISSIA_PRIMARY_GENRES.map((g) => [g, g] as [string, string])
       : activeSource === "reanime"
       ? REANIME_GENRES
+      : activeSource === "anikoto"
+      ? []
       : activeSource === "ohli24"
       ? OHLI24_GENRES
       : LINKKF_GENRES;
@@ -376,6 +384,9 @@ export default async function HomePage({
       sectionTitle = genre ? `🎭 ${genre} 장르 작품` : "🎭 장르별 애니메이션 탐색";
       sectionSubtitle = "선택하신 장르에 해당하는 작품 목록입니다.";
     }
+  } else if (activeSource === "anikoto") {
+    sectionTitle = "📺 Anikoto 예비 스트림";
+    sectionSubtitle = "해외 예비 영상 소스입니다. 작품 검색 후 필요할 때 선택해서 사용합니다.";
   } else if (activeSource === "ohli24") {
     if (tab === "airing") {
       sectionTitle = "📺 신작 방영 목록";
@@ -531,6 +542,20 @@ export default async function HomePage({
                 >
                   <Filter className="h-4 w-4 text-pink-400" />
                   장르별 탐색
+                </Link>
+              </>
+            ) : activeSource === "anikoto" ? (
+              <>
+                <Link
+                  href="/?tab=airing"
+                  className={`flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                    tab === "airing"
+                      ? "bg-purple-600 text-white shadow-lg shadow-purple-500/25"
+                      : "text-slate-400 hover:bg-slate-900 hover:text-slate-200"
+                  }`}
+                >
+                  <Tv className="h-4 w-4" />
+                  최신 목록
                 </Link>
               </>
             ) : activeSource === "ohli24" ? (

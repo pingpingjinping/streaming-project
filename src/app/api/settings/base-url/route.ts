@@ -78,12 +78,19 @@ async function checkUrlHealth(
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const rawProvider = searchParams.get("provider") || "linkkf";
-  const provider: "linkkf" | "ohli24" | "reanime" =
-    rawProvider === "reanime" ? "reanime" : rawProvider === "ohli24" ? "ohli24" : "linkkf";
+  const provider: "linkkf" | "ohli24" | "reanime" | "anikoto" =
+    rawProvider === "reanime"
+      ? "reanime"
+      : rawProvider === "ohli24"
+      ? "ohli24"
+      : rawProvider === "anikoto"
+      ? "anikoto"
+      : "linkkf";
 
   try {
     const isReanime = provider === "reanime";
     const isOhli24 = provider === "ohli24";
+    const isAnikoto = provider === "anikoto";
 
     const debug = searchParams.get("debug") === "1";
     if (debug) {
@@ -110,12 +117,16 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const currentBaseUrl = isReanime
+    const currentBaseUrl = isAnikoto
+      ? "https://anikoto.to"
+      : isReanime
       ? await getReanimeBaseUrl()
       : isOhli24
       ? await getOhli24BaseUrl()
       : await getLinkkfBaseUrl();
-    const defaultUrl = isReanime
+    const defaultUrl = isAnikoto
+      ? "https://anikoto.to"
+      : isReanime
       ? DEFAULT_REANIME_URL
       : isOhli24
       ? DEFAULT_OHLI24_URL
@@ -123,6 +134,8 @@ export async function GET(request: NextRequest) {
     const checkTargetUrl = isReanime ? `${currentBaseUrl}/api/v1/home` : currentBaseUrl;
     const health = isOhli24
       ? await checkUrlWithChromium(checkTargetUrl, 16_000)
+      : isAnikoto
+      ? await checkUrlHealth(checkTargetUrl, 8000)
       : await checkUrlHealth(checkTargetUrl, isReanime ? 8000 : 5000);
 
     return NextResponse.json({
