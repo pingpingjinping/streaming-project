@@ -8,7 +8,7 @@ const root = path.join(__dirname, '..');
 function load(file, deps = {}, globals = {}) {
   const exports = {};
   const code = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {
-    compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022},
+    compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX},
   }).outputText;
   vm.runInNewContext(code, {exports, require: name => deps[name] || require(name), ...globals});
   return exports;
@@ -16,6 +16,31 @@ function load(file, deps = {}, globals = {}) {
 const api = load('src/lib/playerFullscreen.ts');
 const android = {userAgent: 'Mozilla/5.0 (Linux; Android 16) Chrome/140', maxTouchPoints: 5};
 const iphone = {userAgent: 'Mozilla/5.0 (iPhone) Safari/604', maxTouchPoints: 5};
+test('web exit opacity persists all four levels including zero without disabling its hit target', () => {
+  const saved=new Map(),style={innerHTML:''};
+  const api=load('src/components/PlayerSettingsModal.tsx', {
+    react:{},'react-dom':{},'lucide-react':{},
+  }, {
+    window:{},document:{getElementById:()=>style},
+    localStorage:{getItem:key=>saved.get(key)??null,setItem:(key,value)=>saved.set(key,value)},
+    setTimeout:()=>1,clearTimeout:()=>{},
+  });
+  assert.equal(api.loadPlayerSettings().fullscreenExitOpacity,100);
+  for(const value of [0,33,66,100]) {
+    const settings={...api.DEFAULT_PLAYER_SETTINGS,fullscreenExitOpacity:value};
+    api.savePlayerSettings(settings);
+    const restored=api.loadPlayerSettings();
+    assert.equal(restored.fullscreenExitOpacity,value);
+    api.applyPlayerSettingsStyles(restored);
+    const rule=style.innerHTML.match(/\.player-web-fullscreen-exit\s*\{([^}]+)\}/)[1];
+    assert.match(rule,new RegExp(`opacity: ${value/100} !important`));
+    assert.doesNotMatch(rule,/display|visibility|pointer-events/);
+  }
+  for(const value of [undefined,null,17,'0',-1]) {
+    saved.set('anime_player_settings',JSON.stringify({fullscreenExitOpacity:value}));
+    assert.equal(api.loadPlayerSettings().fullscreenExitOpacity,100);
+  }
+});
 test('portrait fits the complete 16:9 frame by width; landscape fits by height', () => {
   for (const [width, height, expectedWidth, expectedHeight] of [
     [390, 700, 390, 219.375],

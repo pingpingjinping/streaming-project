@@ -32,6 +32,7 @@ export interface PlayerSettings {
   // 🎛️ 플레이어 UI & 컨트롤러
   fullscreenBtn: boolean;       // 전체화면 버튼
   fullscreenWebBtn: boolean;    // 웹 전체화면 버튼
+  fullscreenExitOpacity: 0 | 33 | 66 | 100; // 웹 전체화면 종료 버튼 표시 농도
   pipBtn: boolean;              // PIP 모드 버튼 (기본 ON)
   speed2xBtn: boolean;          // 배속 순환 캡슐 버튼
   skip85sBtn: boolean;          // +85초 즉시 점프 버튼
@@ -57,6 +58,7 @@ export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
   // 🎛️ 플레이어 UI & 컨트롤러
   fullscreenBtn: true,
   fullscreenWebBtn: false,
+  fullscreenExitOpacity: 100,
   pipBtn: true, // ⭐ 기본값 ON
   speed2xBtn: true,
   skip85sBtn: false,
@@ -73,6 +75,10 @@ export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
 };
 
 const SETTINGS_KEY = "anime_player_settings";
+
+export function getFullscreenExitOpacity(value: unknown): PlayerSettings["fullscreenExitOpacity"] {
+  return value === 0 || value === 33 || value === 66 || value === 100 ? value : 100;
+}
 
 let saveDbTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -108,7 +114,10 @@ export async function fetchUserSettingsFromDb(): Promise<{
     if (!res.ok) return { settings: null, authenticated: false };
     const data = await res.json();
     return {
-      settings: data.settings || null,
+      settings: data.settings ? {
+        ...data.settings,
+        fullscreenExitOpacity: getFullscreenExitOpacity(data.settings.fullscreenExitOpacity),
+      } : null,
       authenticated: Boolean(data.authenticated),
       userId: data.userId,
     };
@@ -156,6 +165,7 @@ export function loadPlayerSettings(): PlayerSettings {
       doubleTouchDuration: parsed.doubleTouchDuration === 5 ? 5 : 10,
       mobileGesture: parsed.mobileGesture !== undefined ? !!parsed.mobileGesture : false,
       subtitleBottom: subBottomVal,
+      fullscreenExitOpacity: getFullscreenExitOpacity(parsed.fullscreenExitOpacity),
     };
   } catch {
     return DEFAULT_PLAYER_SETTINGS;
@@ -192,6 +202,9 @@ export function applyPlayerSettingsStyles(settings: PlayerSettings) {
     : 15;
 
   styleEl.innerHTML = `
+    .player-web-fullscreen-exit {
+      opacity: ${getFullscreenExitOpacity(settings.fullscreenExitOpacity) / 100} !important;
+    }
     .art-video-player,
     .art-video-player .art-subtitle {
       --art-subtitle-bottom: ${subBottom}px !important;
@@ -215,6 +228,7 @@ interface PlayerSettingsModalProps {
   onClose: () => void;
   settings: PlayerSettings;
   onUpdateSettings: (newSettings: PlayerSettings) => void;
+  fullscreenExitOnly?: boolean;
 }
 
 export default function PlayerSettingsModal({
@@ -222,6 +236,7 @@ export default function PlayerSettingsModal({
   onClose,
   settings,
   onUpdateSettings,
+  fullscreenExitOnly = false,
 }: PlayerSettingsModalProps) {
   const [mounted, setMounted] = useState(false);
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
@@ -288,9 +303,12 @@ export default function PlayerSettingsModal({
   };
 
   const handleReset = () => {
-    savePlayerSettings(DEFAULT_PLAYER_SETTINGS);
-    applyPlayerSettingsStyles(DEFAULT_PLAYER_SETTINGS);
-    onUpdateSettings(DEFAULT_PLAYER_SETTINGS);
+    const next = fullscreenExitOnly
+      ? { ...settings, fullscreenExitOpacity: DEFAULT_PLAYER_SETTINGS.fullscreenExitOpacity }
+      : DEFAULT_PLAYER_SETTINGS;
+    savePlayerSettings(next);
+    applyPlayerSettingsStyles(next);
+    onUpdateSettings(next);
   };
 
   const modalContent = (
@@ -319,7 +337,7 @@ export default function PlayerSettingsModal({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-white">플레이어 환경설정</h2>
+                <h2 className="text-base font-bold text-white">{fullscreenExitOnly ? "웹 전체화면 설정" : "플레이어 환경설정"}</h2>
                 <span className="inline-flex items-center gap-1 rounded-full border border-purple-500/30 bg-purple-500/10 px-2 py-0.5 text-[11px] font-semibold text-purple-300">
                   <Cloud className="h-3 w-3 text-purple-400" />
                   계정 DB 연동
@@ -351,6 +369,34 @@ export default function PlayerSettingsModal({
 
         {/* Settings Body with Smooth Scroll */}
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6 scrollbar-thin scrollbar-thumb-purple-500/30">
+          <div className="space-y-3 rounded-2xl border border-white/5 bg-slate-900/60 p-3.5">
+            <div>
+              <div className="text-sm font-semibold text-white">종료 버튼 투명도</div>
+              <p className="mt-1 text-xs text-slate-400">0%는 보이지 않음 · 100%는 선명하게 표시</p>
+              <p className="mt-1 text-xs text-slate-400">보이지 않아도 오른쪽 위 같은 위치를 누르면 전체화면이 종료됩니다.</p>
+            </div>
+            <div className="flex gap-2" role="group" aria-label="종료 버튼 투명도">
+              {([0, 33, 66, 100] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={getFullscreenExitOpacity(settings.fullscreenExitOpacity) === value}
+                  onClick={() => {
+                    const next = { ...settings, fullscreenExitOpacity: value };
+                    savePlayerSettings(next);
+                    applyPlayerSettingsStyles(next);
+                    onUpdateSettings(next);
+                  }}
+                  className={`flex-1 rounded-xl border px-2 py-2 text-sm font-semibold transition ${
+                    getFullscreenExitOpacity(settings.fullscreenExitOpacity) === value
+                      ? "border-purple-400 bg-purple-600 text-white"
+                      : "border-white/10 bg-slate-800 text-slate-300 hover:bg-slate-700"
+                  }`}
+                >{value}%</button>
+              ))}
+            </div>
+          </div>
+          {!fullscreenExitOnly && <>
           {/* Section 1: ⏩ 재생 & 스킵 자동화 */}
           <div>
             <div className="mb-3 flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-purple-400">
@@ -724,6 +770,7 @@ export default function PlayerSettingsModal({
               </div>
             </div>
           </div>
+          </>}
         </div>
 
         {/* Footer */}
