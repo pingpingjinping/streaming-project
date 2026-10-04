@@ -37,6 +37,24 @@ function pack(name, files, physical) {
 }
 const findRows = rows => { db.getDb = () => async () => rows; };
 const request = overrides => ({animeId:'re_review-test',episode:1,sourceEpisode:1,season:1,...overrides});
+test('flattened Naver ZIP keeps original hashes while CP949 SMI text decodes as Korean', async () => {
+  const iconv = require('iconv-lite');
+  const korean = '안녕, 오늘도 즐거운 하루!';
+  const original = iconv.encode(`<SAMI><HEAD></HEAD><BODY><SYNC Start=1000><P>${korean}<SYNC Start=5000><P>&nbsp;</BODY></SAMI>`, 'cp949');
+  const physical = 'naver_subtitles/히다마리 스케치.zip';
+  const rows = pack('encoding-hidamari', { 'Hidamari Sketch S1 (1).smi': original }, physical);
+  rows[0].source = 'naver'; rows[0].zip_relative_path = 'naver/작품/히다마리 스케치.zip';
+  findRows(rows);
+  const before = digest(fs.readFileSync(path.join(root, physical)));
+  const result = await storage.getReviewedSubtitles(request());
+  assert.equal(result.subtitles.length, 1);
+  assert.ok(result.subtitles[0].content.includes(korean));
+  assert.ok(!result.subtitles[0].content.includes('\uFFFD'));
+  assert.equal(result.subtitles[0].sourceProvider, 'naver');
+  assert.equal(result.subtitles[0].verifiedMatch, true);
+  assert.equal(digest(fs.readFileSync(path.join(root, physical))), before);
+  assert.equal(rows[0].sha256, digest(original));
+});
 test('reviewed parenthesized filenames identify the requested main episode while SP remains separate', async () => {
   const rows = pack('parenthesized-hidamari', {
     'Hidamari Sketch S1 (1).smi': srt('parenthesized main one'),

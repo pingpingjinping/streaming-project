@@ -195,6 +195,34 @@ test('UTF-16 SAMI with a HEAD element remains a valid subtitle', () => {
   const smi = Buffer.from('\ufeff<SAMI><HEAD><STYLE>p {color:white}</STYLE></HEAD><BODY><SYNC Start=1000><P>정상 자막<SYNC Start=5000><P>&nbsp;</BODY></SAMI>', 'utf16le');
   assert.ok(decodeSubtitleFile(smi, '13.smi')?.content.includes('정상 자막'));
 });
+test('Korean CP949 and EUC-KR subtitle bytes do not pass the UTF-8 ASCII-marker check', () => {
+  const iconv = require('iconv-lite');
+  const korean = '안녕, 오늘도 즐거운 하루!';
+  const samples = [
+    ['smi', `<SAMI><HEAD><STYLE>p {color:white}</STYLE></HEAD><BODY><SYNC Start=1000><P>${korean}<SYNC Start=5000><P>&nbsp;</BODY></SAMI>`],
+    ['srt', srt(korean).toString('utf8')],
+    ['vtt', `WEBVTT\n\n00:00:01.000 --> 00:00:04.000\n${korean}\n`],
+    ['ass', `[Script Info]\nTitle: encoding test\n[Events]\nDialogue: 0,0:00:01.00,0:00:04.00,Default,,0,0,0,,${korean}\n`],
+  ];
+  for (const encoding of ['cp949', 'euc-kr']) {
+    for (const [extension, text] of samples) {
+      const result = decodeSubtitleFile(iconv.encode(text, encoding), `01.${extension}`);
+      assert.ok(result?.content.includes(korean), `${encoding} ${extension}`);
+      assert.ok(!result.content.includes('\uFFFD'), `${encoding} ${extension}`);
+    }
+  }
+});
+test('strict UTF-8 validation preserves UTF-8 and both UTF-16 byte orders', () => {
+  const iconv = require('iconv-lite');
+  const korean = '정상 한글 자막, 日本語와 emoji 🐱';
+  const text = `<SAMI><HEAD></HEAD><BODY><SYNC Start=1000><P>${korean}<SYNC Start=5000><P>&nbsp;</BODY></SAMI>`;
+  for (const encoding of ['utf8', 'utf16-le', 'utf16-be']) {
+    for (const addBOM of [false, true]) {
+      const result = decodeSubtitleFile(iconv.encode(text, encoding, { addBOM }), '01.smi');
+      assert.ok(result?.content.includes(korean), `${encoding} BOM=${addBOM}`);
+    }
+  }
+});
 test('several declared seasons do not turn season numbers into episode numbers', () => {
   const info = readEpisodeEvidence('로그 호라이즌 1 2 3기');
   assert.equal(info.multipleSeasons, true);
