@@ -1,5 +1,6 @@
 import * as cheerio from "cheerio";
 import { fetchHtmlWithChromium } from "@/lib/chromiumFetch";
+import { DEFAULT_ANIKOTO_URL, getAnikotoBaseUrl } from "@/lib/db";
 import {
   AnimeDetail,
   AnimeListFilterParams,
@@ -12,7 +13,7 @@ import {
 } from "./types";
 import { stripAnikotoId, toAnikotoId } from "./ids";
 
-export const ANIKOTO_BASE_URL = "https://anikoto.cz";
+export const ANIKOTO_BASE_URL = DEFAULT_ANIKOTO_URL;
 
 const PAGE_TIMEOUT_MS = 16_000;
 const PAGE_CACHE_TTL_MS = 60_000;
@@ -20,10 +21,10 @@ const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36";
 
 export async function getBaseUrl(): Promise<string> {
-  return ANIKOTO_BASE_URL;
+  return await getAnikotoBaseUrl();
 }
 
-function absoluteUrl(value: string, baseUrl = ANIKOTO_BASE_URL): string {
+function absoluteUrl(value: string, baseUrl = DEFAULT_ANIKOTO_URL): string {
   const trimmed = value.trim();
   if (!trimmed) return "";
   if (trimmed.startsWith("//")) return `https:${trimmed}`;
@@ -34,10 +35,10 @@ function absoluteUrl(value: string, baseUrl = ANIKOTO_BASE_URL): string {
   }
 }
 
-function extractSlug(href: string): string {
+function extractSlug(href: string, baseUrl = DEFAULT_ANIKOTO_URL): string {
   if (!href) return "";
   try {
-    const url = new URL(href, ANIKOTO_BASE_URL);
+    const url = new URL(href, baseUrl);
     const match = url.pathname.match(/^\/watch\/([^/]+)/i);
     return match?.[1] ? decodeURIComponent(match[1]) : "";
   } catch {
@@ -46,14 +47,14 @@ function extractSlug(href: string): string {
   }
 }
 
-function parseCards(html: string): AnimeListItem[] {
+function parseCards(html: string, baseUrl: string): AnimeListItem[] {
   const $ = cheerio.load(html);
   const items = new Map<string, AnimeListItem>();
 
   $("#list-items .item").each((_, el) => {
     const anchor = $(el).find('a[href*="/watch/"]').first();
     const href = anchor.attr("href")?.trim() || "";
-    const slug = extractSlug(href);
+    const slug = extractSlug(href, baseUrl);
     if (!slug || items.has(slug)) return;
 
     const title =
@@ -73,7 +74,7 @@ function parseCards(html: string): AnimeListItem[] {
     items.set(slug, {
       id,
       title,
-      poster: absoluteUrl(rawPoster),
+      poster: absoluteUrl(rawPoster, baseUrl),
       detail_url: `/anime/${id}`,
       remarks: "",
     });
@@ -82,7 +83,7 @@ function parseCards(html: string): AnimeListItem[] {
   if (items.size === 0) {
     $('a[href*="/watch/"]').each((_, el) => {
       const href = $(el).attr("href")?.trim() || "";
-      const slug = extractSlug(href);
+      const slug = extractSlug(href, baseUrl);
       if (!slug || items.has(slug)) return;
 
       const title =
@@ -99,7 +100,7 @@ function parseCards(html: string): AnimeListItem[] {
       items.set(slug, {
         id,
         title,
-        poster: absoluteUrl(rawPoster),
+        poster: absoluteUrl(rawPoster, baseUrl),
         detail_url: `/anime/${id}`,
         remarks: "",
       });
@@ -177,7 +178,7 @@ export async function getAnimeList(params: {
       timeoutMs: PAGE_TIMEOUT_MS,
       cacheTtlMs: PAGE_CACHE_TTL_MS,
     });
-    const items = parseCards(html);
+    const items = parseCards(html, baseUrl);
     return {
       items,
       page,
@@ -230,7 +231,7 @@ export async function searchAnime(keyword: string, page = 1): Promise<AnimeListR
         });
       }
 
-      const items = parseCards(html);
+      const items = parseCards(html, baseUrl);
       if (items.length > 0) {
         return {
           items,
@@ -351,7 +352,7 @@ export async function getAnimeDetail(animeId: string): Promise<AnimeDetail | nul
 }
 
 function cleanEpisodeUrl(watchUrl: string): { episodeUrl: string; token: string } {
-  const parsed = new URL(watchUrl, ANIKOTO_BASE_URL);
+  const parsed = new URL(watchUrl, DEFAULT_ANIKOTO_URL);
   const token = parsed.searchParams.get("__ak_token") || "";
   parsed.searchParams.delete("__ak_token");
   return { episodeUrl: parsed.toString(), token };

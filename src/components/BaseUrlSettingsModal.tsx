@@ -12,7 +12,7 @@ interface BaseUrlSettingsModalProps {
 
 export default function BaseUrlSettingsModal({ isOpen, onClose, onUpdated }: BaseUrlSettingsModalProps) {
   const [mounted, setMounted] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState<"linkkf" | "ohli24" | "reanime">("reanime");
+  const [selectedProvider, setSelectedProvider] = useState<"linkkf" | "ohli24" | "reanime" | "anikoto">("reanime");
   const [currentUrl, setCurrentUrl] = useState<string>("https://reanime.to");
   const [defaultUrl, setDefaultUrl] = useState<string>("https://reanime.to");
   const [inputUrl, setInputUrl] = useState<string>("");
@@ -30,6 +30,8 @@ export default function BaseUrlSettingsModal({ isOpen, onClose, onUpdated }: Bas
   const providerLabel =
     selectedProvider === "reanime"
       ? "ReAnime"
+      : selectedProvider === "anikoto"
+      ? "Anikoto"
       : selectedProvider === "ohli24"
       ? "Ohli24"
       : "Linkkf";
@@ -88,7 +90,7 @@ export default function BaseUrlSettingsModal({ isOpen, onClose, onUpdated }: Bas
     }
   }, [isOpen, selectedProvider]);
 
-  const handleTabChange = (provider: "linkkf" | "ohli24" | "reanime") => {
+  const handleTabChange = (provider: "linkkf" | "ohli24" | "reanime" | "anikoto") => {
     if (provider === selectedProvider) return;
     setSelectedProvider(provider);
     setSuccessMessage(null);
@@ -228,6 +230,17 @@ export default function BaseUrlSettingsModal({ isOpen, onClose, onUpdated }: Bas
               }`}
             >
               ReAnime
+            </button>
+            <button
+              type="button"
+              onClick={() => handleTabChange("anikoto")}
+              className={`flex-1 rounded-lg py-2 text-xs font-bold transition ${
+                selectedProvider === "anikoto"
+                  ? "bg-purple-600 text-white shadow-md shadow-purple-600/30"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              Anikoto
             </button>
             <button
               type="button"
