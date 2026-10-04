@@ -7,7 +7,7 @@
     "build": "node scripts/build-subtitle-cache-tools.cjs && next build",
     "start": "next start",
     "lint": "next lint",
-    "test:subtitles": "node scripts/build-subtitle-cache-tools.cjs && node --test scripts/test-subtitle-episodes.cjs scripts/test-local-subtitle-search.cjs scripts/test-anissia-keyword-search.cjs scripts/test-reviewed-subtitles.cjs scripts/test-weekly-subtitles.cjs scripts/test-subtitle-cache.cjs scripts/test-subtitle-overrides.cjs scripts/test-anime-artwork.cjs scripts/test-player-fullscreen.cjs"
+    "test:subtitles": "node scripts/build-subtitle-cache-tools.cjs && node --test scripts/test-subtitle-episodes.cjs scripts/test-local-subtitle-search.cjs scripts/test-anissia-keyword-search.cjs scripts/test-reviewed-subtitles.cjs scripts/test-weekly-subtitles.cjs scripts/test-subtitle-cache.cjs scripts/test-subtitle-overrides.cjs scripts/test-anime-artwork.cjs scripts/test-player-fullscreen.cjs scripts/test-anikoto-catalog.cjs"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",

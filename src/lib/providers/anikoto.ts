@@ -12,6 +12,7 @@ import {
   ServerSource,
 } from "./types";
 import { stripAnikotoId, toAnikotoId } from "./ids";
+import { anikotoCatalogUrl, type AnikotoCatalogParams } from "@/lib/anikotoCatalog";
 
 export const ANIKOTO_BASE_URL = DEFAULT_ANIKOTO_URL;
 
@@ -80,7 +81,7 @@ function parseCards(html: string, baseUrl: string): AnimeListItem[] {
     });
   });
 
-  if (items.size === 0) {
+  if (items.size === 0 && $("#list-items").length === 0) {
     $('a[href*="/watch/"]').each((_, el) => {
       const href = $(el).attr("href")?.trim() || "";
       const slug = extractSlug(href, baseUrl);
@@ -161,89 +162,74 @@ function providerResult(payload: any): any {
   return payload.result;
 }
 
-export async function getAnimeList(params: {
-  category?: "recent_caption" | "airing" | "top" | "movie" | "finished" | "trending" | "upcoming";
-  page?: number;
-  genre?: string;
-  period?: "day" | "week" | "month" | "all";
-  sort?: string;
-  day?: number | string;
-}): Promise<AnimeListResponse> {
-  const page = Math.max(1, Number(params.page) || 1);
+function parseCatalog(html: string, baseUrl: string, page: number): AnimeListResponse {
+  const $ = cheerio.load(html);
+  if (!$("#list-items").length) throw new Error("Anikoto catalog HTML did not contain its list container");
+  const items = parseCards(html, baseUrl);
+  let totalPages = page;
+  let hasNext = false;
+  $(".pagination a[href]").each((_, el) => {
+    const link = new URL($(el).attr("href")!, baseUrl);
+    const linkedPage = Number(link.searchParams.get("page"));
+    if (link.origin !== new URL(baseUrl).origin || !Number.isInteger(linkedPage) || linkedPage < 1) return;
+    totalPages = Math.max(totalPages, linkedPage);
+    if (linkedPage > page) hasNext = true;
+  });
+  return { items, page, has_next: hasNext, total_pages: totalPages };
+}
+
+async function getCatalog(params: AnikotoCatalogParams): Promise<AnimeListResponse> {
+  const page = Math.max(1, Math.trunc(Number(params.page)) || 1);
   const baseUrl = await getBaseUrl();
-  const url = page > 1 ? `${baseUrl}/filter?page=${page}` : `${baseUrl}/filter`;
+  const url = anikotoCatalogUrl(baseUrl, { ...params, page });
 
   try {
+    // /filter includes cards and pagination in its HTML. Avoid launching a
+    // browser on Pi when a normal request can already read the complete list.
+    try {
+      const response = await anikotoRequest(url, { referer: baseUrl });
+      return parseCatalog(response.text, baseUrl, page);
+    } catch {}
     const html = await fetchHtmlWithChromium(url, {
       timeoutMs: PAGE_TIMEOUT_MS,
       cacheTtlMs: PAGE_CACHE_TTL_MS,
     });
-    const items = parseCards(html, baseUrl);
-    return {
-      items,
-      page,
-      has_next: items.length >= 20,
-      total_pages: items.length >= 20 ? page + 1 : page,
-    };
+    return parseCatalog(html, baseUrl, page);
   } catch (error) {
-    console.error("[Anikoto] getAnimeList error:", error);
-    return { items: [], page, has_next: false, total_pages: 1 };
+    console.error("[Anikoto] getCatalog error:", error);
+    return { items: [], page, has_next: false, total_pages: page,
+      error: "Anikoto 작품 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요." };
   }
+}
+
+export async function getAnimeList(params: AnimeListFilterParams): Promise<AnimeListResponse> {
+  return getCatalog(params);
 }
 
 export async function getAnimeListFiltered(params: AnimeListFilterParams): Promise<AnimeListResponse> {
-  if (params.genre?.trim()) {
-    return searchAnime(params.genre, params.page || 1);
-  }
-  return getAnimeList({
-    category: params.category,
-    page: params.page,
-    genre: params.genre,
-    sort: params.sort,
-    day: params.day,
-  });
+  return getCatalog(params);
 }
 
-export async function searchAnime(keyword: string, page = 1): Promise<AnimeListResponse> {
+export async function searchAnime(keyword: string, page = 1, options: Pick<AnimeListFilterParams, "year" | "sort" | "genre" | "typeLang" | "status"> = {}): Promise<AnimeListResponse> {
   const trimmed = keyword.trim();
   if (!trimmed || trimmed === "*") {
-    return getAnimeList({ page });
+    return getCatalog({ ...options, page });
   }
 
+  const catalog = await getCatalog({ ...options, page, keyword: trimmed });
+  if (!catalog.error) return catalog;
+
+  // Quick search has no paging or filters. Only use it for an unfiltered
+  // first-page search after catalog transport fails, never for a true empty list.
+  if (page !== 1 || options.genre || options.year || options.typeLang || options.status || (options.sort && options.sort !== "default")) return catalog;
   const baseUrl = await getBaseUrl();
-  const urls = [
-    `${baseUrl}/filter?keyword=${encodeURIComponent(trimmed)}${page > 1 ? `&page=${page}` : ""}`,
-    `${baseUrl}/ajax/anime/search?keyword=${encodeURIComponent(trimmed)}`,
-  ];
-
-  for (const url of urls) {
-    try {
-      let html = "";
-      if (url.includes("/ajax/")) {
-        const { text } = await anikotoRequest(url, { referer: baseUrl, ajax: true });
-        const payload = JSON.parse(text);
-        const result = providerResult(payload);
-        html = typeof result === "string" ? result : String(result?.html || "");
-      } else {
-        html = await fetchHtmlWithChromium(url, {
-          timeoutMs: PAGE_TIMEOUT_MS,
-          cacheTtlMs: PAGE_CACHE_TTL_MS,
-        });
-      }
-
-      const items = parseCards(html, baseUrl);
-      if (items.length > 0) {
-        return {
-          items,
-          page,
-          has_next: items.length >= 20,
-          total_pages: items.length >= 20 ? page + 1 : page,
-        };
-      }
-    } catch {}
-  }
-
-  return { items: [], page, has_next: false, total_pages: 1 };
+  try {
+    const url = `${baseUrl}/ajax/anime/search?keyword=${encodeURIComponent(trimmed)}`;
+    const { text } = await anikotoRequest(url, { referer: baseUrl, ajax: true });
+    const result = providerResult(JSON.parse(text));
+    const html = typeof result === "string" ? result : String(result?.html || "");
+    return { items: parseCards(html, baseUrl), page, has_next: false, total_pages: 1 };
+  } catch { return catalog; }
 }
 
 function parseEpisodeNumber(value: string): number | null {
