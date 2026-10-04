@@ -12,10 +12,12 @@ import {
 } from "./types";
 import { stripAnikotoId, toAnikotoId } from "./ids";
 
-export const ANIKOTO_BASE_URL = "https://anikoto.to";
+export const ANIKOTO_BASE_URL = "https://anikoto.cz";
 
 const PAGE_TIMEOUT_MS = 16_000;
 const PAGE_CACHE_TTL_MS = 60_000;
+const USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36";
 
 export async function getBaseUrl(): Promise<string> {
   return ANIKOTO_BASE_URL;
@@ -48,18 +50,17 @@ function parseCards(html: string): AnimeListItem[] {
   const $ = cheerio.load(html);
   const items = new Map<string, AnimeListItem>();
 
-  $('a[href*="/watch/"]').each((_, el) => {
-    const href = $(el).attr("href")?.trim() || "";
+  $("#list-items .item").each((_, el) => {
+    const anchor = $(el).find('a[href*="/watch/"]').first();
+    const href = anchor.attr("href")?.trim() || "";
     const slug = extractSlug(href);
     if (!slug || items.has(slug)) return;
 
     const title =
-      $(el).find("h1,h2,h3,h4,.title,.name").first().text().trim() ||
-      $(el).attr("title")?.trim() ||
-      $(el).find("img").first().attr("alt")?.trim() ||
-      "";
-
-    if (!title) return;
+      $(el).find(".name,.d-title").first().text().trim() ||
+      anchor.attr("title")?.trim() ||
+      anchor.find("img").first().attr("alt")?.trim() ||
+      slug.replace(/[-_]+/g, " ");
 
     const img = $(el).find("img").first();
     const rawPoster =
@@ -78,7 +79,85 @@ function parseCards(html: string): AnimeListItem[] {
     });
   });
 
+  if (items.size === 0) {
+    $('a[href*="/watch/"]').each((_, el) => {
+      const href = $(el).attr("href")?.trim() || "";
+      const slug = extractSlug(href);
+      if (!slug || items.has(slug)) return;
+
+      const title =
+        $(el).find(".name,.d-title,h1,h2,h3,h4,.title").first().text().trim() ||
+        $(el).attr("title")?.trim() ||
+        $(el).find("img").first().attr("alt")?.trim() ||
+        "";
+
+      if (!title) return;
+
+      const img = $(el).find("img").first();
+      const rawPoster = img.attr("data-src") || img.attr("data-original") || img.attr("src") || "";
+      const id = toAnikotoId(slug);
+      items.set(slug, {
+        id,
+        title,
+        poster: absoluteUrl(rawPoster),
+        detail_url: `/anime/${id}`,
+        remarks: "",
+      });
+    });
+  }
+
   return [...items.values()];
+}
+
+function responseCookies(response: Response): string {
+  const headers = response.headers as Headers & { getSetCookie?: () => string[] };
+  const values = typeof headers.getSetCookie === "function"
+    ? headers.getSetCookie()
+    : [response.headers.get("set-cookie") || ""];
+  return values
+    .filter(Boolean)
+    .map((value) => value.split(";")[0])
+    .join("; ");
+}
+
+async function anikotoRequest(
+  url: string,
+  options: {
+    referer?: string;
+    ajax?: boolean;
+    cookie?: string;
+  } = {}
+): Promise<{ text: string; cookie: string }> {
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent": USER_AGENT,
+      "Accept-Language": "en-US,en;q=0.9",
+      Accept: options.ajax
+        ? "application/json, text/javascript, */*; q=0.01"
+        : "text/html,application/xhtml+xml,*/*;q=0.8",
+      ...(options.referer ? { Referer: options.referer } : {}),
+      ...(options.ajax ? { "X-Requested-With": "XMLHttpRequest" } : {}),
+      ...(options.cookie ? { Cookie: options.cookie } : {}),
+    },
+    signal: AbortSignal.timeout(PAGE_TIMEOUT_MS),
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Anikoto upstream failed: ${response.status} ${response.statusText}`);
+  }
+
+  return {
+    text: await response.text(),
+    cookie: [options.cookie || "", responseCookies(response)].filter(Boolean).join("; "),
+  };
+}
+
+function providerResult(payload: any): any {
+  if (!payload || Number(payload.status) !== 200 || payload.result === undefined) {
+    throw new Error("Invalid Anikoto AJAX response");
+  }
+  return payload.result;
 }
 
 export async function getAnimeList(params: {
@@ -91,31 +170,24 @@ export async function getAnimeList(params: {
 }): Promise<AnimeListResponse> {
   const page = Math.max(1, Number(params.page) || 1);
   const baseUrl = await getBaseUrl();
+  const url = page > 1 ? `${baseUrl}/filter?page=${page}` : `${baseUrl}/filter`;
 
-  const candidates = [
-    page > 1 ? `${baseUrl}/home?page=${page}` : `${baseUrl}/home`,
-    page > 1 ? `${baseUrl}/?page=${page}` : baseUrl,
-  ];
-
-  for (const url of candidates) {
-    try {
-      const html = await fetchHtmlWithChromium(url, {
-        timeoutMs: PAGE_TIMEOUT_MS,
-        cacheTtlMs: PAGE_CACHE_TTL_MS,
-      });
-      const items = parseCards(html);
-      if (items.length > 0) {
-        return {
-          items,
-          page,
-          has_next: items.length >= 20,
-          total_pages: items.length >= 20 ? page + 1 : page,
-        };
-      }
-    } catch {}
+  try {
+    const html = await fetchHtmlWithChromium(url, {
+      timeoutMs: PAGE_TIMEOUT_MS,
+      cacheTtlMs: PAGE_CACHE_TTL_MS,
+    });
+    const items = parseCards(html);
+    return {
+      items,
+      page,
+      has_next: items.length >= 20,
+      total_pages: items.length >= 20 ? page + 1 : page,
+    };
+  } catch (error) {
+    console.error("[Anikoto] getAnimeList error:", error);
+    return { items: [], page, has_next: false, total_pages: 1 };
   }
-
-  return { items: [], page, has_next: false, total_pages: 1 };
 }
 
 export async function getAnimeListFiltered(params: AnimeListFilterParams): Promise<AnimeListResponse> {
@@ -140,15 +212,24 @@ export async function searchAnime(keyword: string, page = 1): Promise<AnimeListR
   const baseUrl = await getBaseUrl();
   const urls = [
     `${baseUrl}/filter?keyword=${encodeURIComponent(trimmed)}${page > 1 ? `&page=${page}` : ""}`,
-    `${baseUrl}/search?keyword=${encodeURIComponent(trimmed)}${page > 1 ? `&page=${page}` : ""}`,
+    `${baseUrl}/ajax/anime/search?keyword=${encodeURIComponent(trimmed)}`,
   ];
 
   for (const url of urls) {
     try {
-      const html = await fetchHtmlWithChromium(url, {
-        timeoutMs: PAGE_TIMEOUT_MS,
-        cacheTtlMs: PAGE_CACHE_TTL_MS,
-      });
+      let html = "";
+      if (url.includes("/ajax/")) {
+        const { text } = await anikotoRequest(url, { referer: baseUrl, ajax: true });
+        const payload = JSON.parse(text);
+        const result = providerResult(payload);
+        html = typeof result === "string" ? result : String(result?.html || "");
+      } else {
+        html = await fetchHtmlWithChromium(url, {
+          timeoutMs: PAGE_TIMEOUT_MS,
+          cacheTtlMs: PAGE_CACHE_TTL_MS,
+        });
+      }
+
       const items = parseCards(html);
       if (items.length > 0) {
         return {
@@ -165,14 +246,14 @@ export async function searchAnime(keyword: string, page = 1): Promise<AnimeListR
 }
 
 function parseEpisodeNumber(value: string): number | null {
-  const normalized = value.replace(/,/g, ".").trim();
-  const direct = Number(normalized);
-  if (Number.isFinite(direct) && direct > 0) return direct;
+  const parsed = Number(value.trim());
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
 
-  const match = normalized.match(/(?:ep(?:isode)?\s*)?(\d+(?:\.\d+)?)/i);
-  if (!match) return null;
-  const parsed = Number(match[1]);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+function episodeWatchUrl(canonical: string, slug: string, token: string): string {
+  const url = new URL(`${canonical.replace(/\/+$/, "")}/ep-${encodeURIComponent(slug)}`);
+  url.searchParams.set("__ak_token", token);
+  return url.toString();
 }
 
 export async function getAnimeDetail(animeId: string): Promise<AnimeDetail | null> {
@@ -180,19 +261,61 @@ export async function getAnimeDetail(animeId: string): Promise<AnimeDetail | nul
   if (!slug) return null;
 
   const baseUrl = await getBaseUrl();
-  const watchUrl = `${baseUrl}/watch/${encodeURIComponent(slug)}`;
+  const requestedUrl = `${baseUrl}/watch/${encodeURIComponent(slug)}`;
 
   try {
-    const html = await fetchHtmlWithChromium(watchUrl, {
-      timeoutMs: PAGE_TIMEOUT_MS,
-      cacheTtlMs: 120_000,
+    const show = await anikotoRequest(requestedUrl, { referer: baseUrl });
+    const $ = cheerio.load(show.text);
+    const watchMain = $("#watch-main").first();
+    const showId = watchMain.attr("data-id")?.trim() || "";
+    const canonicalRaw = watchMain.attr("data-url")?.trim() || "";
+
+    if (!/^\d+$/.test(showId) || !canonicalRaw) {
+      throw new Error("Anikoto watch page did not expose show metadata");
+    }
+
+    const canonical = absoluteUrl(canonicalRaw, baseUrl).replace(/\/+$/, "");
+    const episodeListUrl = new URL(`${baseUrl}/ajax/episode/list/${showId}`);
+    episodeListUrl.searchParams.set("style", "grid");
+    episodeListUrl.searchParams.set("vrf", "");
+
+    const listResponse = await anikotoRequest(episodeListUrl.toString(), {
+      referer: canonical,
+      ajax: true,
+      cookie: show.cookie,
     });
-    const $ = cheerio.load(html);
+    const result = providerResult(JSON.parse(listResponse.text));
+    const episodeHtml = typeof result === "string" ? result : String(result?.html || "");
+    const ep$ = cheerio.load(episodeHtml);
+
+    const episodes: EpisodeItem[] = [];
+    const seen = new Set<string>();
+
+    ep$('a[data-num][data-ids]').each((_, el) => {
+      const numberText = ep$(el).attr("data-num")?.trim() || "";
+      const token = ep$(el).attr("data-ids")?.trim() || "";
+      const episodeSlug = ep$(el).attr("data-slug")?.trim() || numberText;
+      const hasSub = ep$(el).attr("data-sub") === "1";
+      const epNum = parseEpisodeNumber(numberText);
+
+      if (!token || epNum === null || !hasSub) return;
+      const key = String(epNum);
+      if (seen.has(key)) return;
+      seen.add(key);
+
+      episodes.push({
+        number: epNum,
+        title: `${epNum}화`,
+        watch_url: episodeWatchUrl(canonical, episodeSlug, token),
+      });
+    });
+
+    episodes.sort((a, b) => a.number - b.number);
 
     const title =
       $('meta[property="og:title"]').attr("content")?.trim() ||
       $("h1").first().text().trim() ||
-      $("h2").first().text().trim() ||
+      $(".name,.d-title").first().text().trim() ||
       slug.replace(/[-_]+/g, " ");
 
     const poster = absoluteUrl(
@@ -207,66 +330,6 @@ export async function getAnimeDetail(animeId: string): Promise<AnimeDetail | nul
       $('meta[name="description"]').attr("content")?.trim() ||
       $(".description,.film-description,.synopsis").first().text().trim() ||
       "";
-
-    const episodes: EpisodeItem[] = [];
-    const seen = new Set<string>();
-
-    $("[data-number][data-id]").each((_, el) => {
-      const numberText = $(el).attr("data-number")?.trim() || "";
-      const epId = $(el).attr("data-id")?.trim() || "";
-      const epNum = parseEpisodeNumber(numberText);
-      if (!epId || epNum === null) return;
-
-      const key = String(epNum);
-      if (seen.has(key)) return;
-      seen.add(key);
-
-      const url = new URL(watchUrl);
-      url.searchParams.set("epId", epId);
-      url.searchParams.set("ep", String(epNum));
-
-      episodes.push({
-        number: epNum,
-        title: `${epNum}화`,
-        watch_url: url.toString(),
-      });
-    });
-
-    $('a[href*="/watch/"][href*="ep="], a[href*="?ep="]').each((_, el) => {
-      const href = $(el).attr("href")?.trim() || "";
-      if (!href) return;
-
-      let epNum: number | null = null;
-      try {
-        const url = new URL(href, watchUrl);
-        epNum = parseEpisodeNumber(url.searchParams.get("ep") || "");
-      } catch {}
-
-      if (epNum === null) {
-        epNum = parseEpisodeNumber($(el).text());
-      }
-      if (epNum === null) return;
-
-      const key = String(epNum);
-      if (seen.has(key)) return;
-      seen.add(key);
-
-      episodes.push({
-        number: epNum,
-        title: $(el).text().trim() || `${epNum}화`,
-        watch_url: absoluteUrl(href, watchUrl),
-      });
-    });
-
-    if (episodes.length === 0) {
-      episodes.push({
-        number: 1,
-        title: "1화",
-        watch_url: watchUrl,
-      });
-    }
-
-    episodes.sort((a, b) => a.number - b.number);
 
     return {
       id: toAnikotoId(slug),
@@ -287,82 +350,89 @@ export async function getAnimeDetail(animeId: string): Promise<AnimeDetail | nul
   }
 }
 
-async function resolveServerEmbed(watchUrl: string): Promise<string> {
-  let epId = "";
-  try {
-    const parsed = new URL(watchUrl, ANIKOTO_BASE_URL);
-    epId = parsed.searchParams.get("epId") || "";
-  } catch {}
+function cleanEpisodeUrl(watchUrl: string): { episodeUrl: string; token: string } {
+  const parsed = new URL(watchUrl, ANIKOTO_BASE_URL);
+  const token = parsed.searchParams.get("__ak_token") || "";
+  parsed.searchParams.delete("__ak_token");
+  return { episodeUrl: parsed.toString(), token };
+}
 
-  if (epId) {
-    try {
-      const baseUrl = await getBaseUrl();
-      const apiUrl = `${baseUrl}/api/servers?epId=${encodeURIComponent(epId)}`;
-      const response = await fetch(apiUrl, {
-        headers: {
-          Accept: "application/json, text/plain, */*",
-          Referer: watchUrl,
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        },
-        signal: AbortSignal.timeout(8_000),
+function parsePreferredServer(html: string): { label: string; token: string } | null {
+  const $ = cheerio.load(html);
+  const candidates: Array<{ label: string; token: string; kind: string }> = [];
+
+  $("div.type").each((_, group) => {
+    const kind = ($(group).attr("data-type") || "").toLowerCase();
+    if (kind === "dub") return;
+
+    const groupLabel = $(group).find("label").first().text().trim();
+    $(group)
+      .find("li[data-link-id]")
+      .each((__, item) => {
+        const token = $(item).attr("data-link-id")?.trim() || "";
+        if (!token) return;
+        const label = $(item).text().trim() || groupLabel || "Anikoto";
+        candidates.push({ label, token, kind });
       });
+  });
 
-      if (response.ok) {
-        const json = await response.json();
-        const servers = Array.isArray(json?.servers)
-          ? json.servers
-          : Array.isArray(json?.data)
-          ? json.data
-          : [];
+  if (!candidates.length) return null;
 
-        const preferred =
-          servers.find((server: any) =>
-            ["megacloud", "vidstreaming", "streamwish"].includes(
-              String(server?.name || server?.serverName || "").toLowerCase()
-            )
-          ) || servers[0];
+  const preferred =
+    candidates.find((candidate) => /vidplay|vidstream|megaplay|mega/i.test(candidate.label)) ||
+    candidates.find((candidate) => candidate.kind === "sub") ||
+    candidates[0];
 
-        const raw = String(
-          preferred?.embedUrl ||
-          preferred?.embed_url ||
-          preferred?.src ||
-          preferred?.url ||
-          ""
-        ).trim();
+  return { label: preferred.label, token: preferred.token };
+}
 
-        if (raw) return absoluteUrl(raw, baseUrl);
-      }
-    } catch {}
-  }
+async function resolveServerEmbed(watchUrl: string): Promise<{ url: string; label: string } | null> {
+  const baseUrl = await getBaseUrl();
+  const { episodeUrl, token } = cleanEpisodeUrl(watchUrl);
+  if (!token) return null;
 
-  try {
-    const html = await fetchHtmlWithChromium(watchUrl, {
-      timeoutMs: PAGE_TIMEOUT_MS,
-      cacheTtlMs: 30_000,
-    });
-    const $ = cheerio.load(html);
-    const raw =
-      $("iframe[src]").first().attr("src")?.trim() ||
-      $("[data-src*='http']").first().attr("data-src")?.trim() ||
-      "";
+  const page = await anikotoRequest(episodeUrl, { referer: baseUrl });
+  const listUrl = new URL(`${baseUrl}/ajax/server/list`);
+  listUrl.searchParams.set("servers", token);
 
-    return raw ? absoluteUrl(raw, watchUrl) : "";
-  } catch {
-    return "";
-  }
+  const list = await anikotoRequest(listUrl.toString(), {
+    referer: episodeUrl,
+    ajax: true,
+    cookie: page.cookie,
+  });
+  const listResult = providerResult(JSON.parse(list.text));
+  const serverHtml = typeof listResult === "string" ? listResult : String(listResult?.html || "");
+  const server = parsePreferredServer(serverHtml);
+  if (!server) return null;
+
+  const resolveUrl = new URL(`${baseUrl}/ajax/server`);
+  resolveUrl.searchParams.set("get", server.token);
+
+  const resolved = await anikotoRequest(resolveUrl.toString(), {
+    referer: episodeUrl,
+    ajax: true,
+    cookie: list.cookie,
+  });
+  const result = providerResult(JSON.parse(resolved.text));
+  const raw =
+    typeof result === "string"
+      ? result
+      : String(result?.url || result?.src || result?.embedUrl || "");
+
+  const url = absoluteUrl(raw, baseUrl);
+  return url ? { url, label: server.label } : null;
 }
 
 export async function getEpisodeStream(watchUrl: string): Promise<EpisodeStreamInfo | null> {
   try {
-    const embedUrl = await resolveServerEmbed(watchUrl);
-    if (!embedUrl) return null;
+    const embed = await resolveServerEmbed(watchUrl);
+    if (!embed) return null;
 
     const serverSources: ServerSource[] = [
       {
         id: "anikoto",
-        label: "Anikoto",
-        player_url: embedUrl,
+        label: `Anikoto · ${embed.label}`,
+        player_url: embed.url,
       },
     ];
 
@@ -370,8 +440,8 @@ export async function getEpisodeStream(watchUrl: string): Promise<EpisodeStreamI
       success: true,
       m3u8_url: "",
       vtt_url: "",
-      player_url: embedUrl,
-      embed_url: embedUrl,
+      player_url: embed.url,
+      embed_url: embed.url,
       stream_type: "iframe",
       server_sources: serverSources,
       link_next: "",
