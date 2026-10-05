@@ -4,7 +4,8 @@ import { linkkfProvider } from "../providers/linkkf";
 import { ohli24Provider } from "../providers/ohli24";
 import { anikotoProvider } from "../providers/anikoto";
 import { getAnissiaStreamCache, setAnissiaStreamCache } from "../db";
-import { fetchAniListMeta } from "../providers/anissia";\nimport { getAnikotoPlaybackCandidates } from "../anikotoLinks";
+import { fetchAniListMeta } from "../providers/anissia";
+import { getAnikotoPlaybackCandidates } from "../anikotoLinks";
 
 const HEADERS: Record<string, string> = {
   "User-Agent":
