@@ -41,6 +41,55 @@ def relation_exists(db, name):
     ).fetchone())
 
 
+SUBTITLE_FILE_FILTER = """(
+  lower(f.member_path) LIKE '%.ass' OR lower(f.member_path) LIKE '%.ssa' OR
+  lower(f.member_path) LIKE '%.srt' OR lower(f.member_path) LIKE '%.smi' OR
+  lower(f.member_path) LIKE '%.vtt' OR lower(f.member_path) LIKE '%.sub' OR
+  lower(f.original_path) LIKE '%.ass' OR lower(f.original_path) LIKE '%.ssa' OR
+  lower(f.original_path) LIKE '%.srt' OR lower(f.original_path) LIKE '%.smi' OR
+  lower(f.original_path) LIKE '%.vtt' OR lower(f.original_path) LIKE '%.sub'
+)"""
+
+
+def runtime_select(db):
+    if relation_exists(db, 'subtitle_runtime_files_export'):
+        return 'SELECT * FROM subtitle_runtime_files_export ORDER BY pid', True
+    if relation_exists(db, 'subtitle_runtime_files'):
+        return 'SELECT * FROM subtitle_runtime_files ORDER BY pid', True
+    required = ('packaged_files_v6', 'packaged_archives_v6', 'subtitle_review_details')
+    if not all(relation_exists(db, name) for name in required):
+        raise ValueError('Reviewed subtitle registry runtime sources are missing')
+    query = f"""SELECT
+      f.pid,f.source,f.pack_id,a.zip_relative_path,f.member_path,f.sha256,
+      f.bundle_id,f.target_source,f.target_id,f.review_status,f.reason,
+      NULLIF(r.work_title_ko,'') AS work_title_ko,
+      r.season_format,
+      NULL AS work_format,
+      CASE WHEN f.target_source='ReAnime' THEN f.target_id
+           ELSE NULLIF(r.reanime_id,'') END AS reanime_id,
+      r.language_review,r.quality_notes,
+      CASE WHEN lower(f.original_path) LIKE '%.sub' THEN '.sub'
+           WHEN lower(f.original_path) LIKE '%.ass' THEN '.ass'
+           WHEN lower(f.original_path) LIKE '%.ssa' THEN '.ssa'
+           WHEN lower(f.original_path) LIKE '%.srt' THEN '.srt'
+           WHEN lower(f.original_path) LIKE '%.smi' THEN '.smi'
+           WHEN lower(f.original_path) LIKE '%.vtt' THEN '.vtt'
+           WHEN lower(f.member_path) LIKE '%.sub' THEN '.sub'
+           WHEN lower(f.member_path) LIKE '%.ass' THEN '.ass'
+           WHEN lower(f.member_path) LIKE '%.ssa' THEN '.ssa'
+           WHEN lower(f.member_path) LIKE '%.srt' THEN '.srt'
+           WHEN lower(f.member_path) LIKE '%.smi' THEN '.smi'
+           WHEN lower(f.member_path) LIKE '%.vtt' THEN '.vtt'
+           ELSE NULL END AS content_extension,
+      CASE WHEN f.target_id IS NULL THEN 0 ELSE 1 END AS work_confirmed
+      FROM packaged_files_v6 f
+      JOIN packaged_archives_v6 a USING(pack_id)
+      LEFT JOIN subtitle_review_details r USING(pid)
+      WHERE f.action='kept' AND {SUBTITLE_FILE_FILTER}
+      ORDER BY f.pid"""
+    return query, False
+
+
 def prepare(path):
     db = sqlite3.connect(pathlib.Path(path).resolve().as_uri() + '?mode=ro', uri=True)
     try:
@@ -52,13 +101,7 @@ def prepare(path):
         if metadata['format_version'] != 1 or metadata['completed_bundles'] != 1109:
             raise ValueError('Unsupported or incomplete export')
 
-        runtime_relation = (
-            'subtitle_runtime_files_export'
-            if relation_exists(db, 'subtitle_runtime_files_export')
-            else 'subtitle_runtime_files'
-        )
-        if not relation_exists(db, runtime_relation):
-            raise ValueError('Runtime subtitle file export is missing')
+        runtime_query, runtime_is_relation = runtime_select(db)
         has_work_links = relation_exists(db, 'subtitle_work_reanime_links')
 
         stream = io.StringIO()
@@ -124,16 +167,23 @@ CREATE TEMP TABLE subtitle_metadata_stage (dataset_key TEXT,payload JSONB);
         ]
         counts['subtitle_files'] = append_copy(
             stream, 'subtitle_file_stage', file_columns,
-            ((DATASET, *r[:-1], bool(r[-1])) for r in db.execute(
-                f'SELECT * FROM {runtime_relation} ORDER BY pid'
-            )),
+            ((DATASET, *r[:-1], bool(r[-1])) for r in db.execute(runtime_query)),
         )
+        if runtime_is_relation:
+            origin_query = """SELECT o.pid,o.file_id FROM subtitle_file_origins o
+                JOIN """ + (
+                    'subtitle_runtime_files_export'
+                    if relation_exists(db, 'subtitle_runtime_files_export')
+                    else 'subtitle_runtime_files'
+                ) + """ f USING(pid) ORDER BY o.pid,o.file_id"""
+        else:
+            origin_query = f"""SELECT o.pid,o.file_id FROM subtitle_file_origins o
+                JOIN packaged_files_v6 f USING(pid)
+                WHERE f.action='kept' AND {SUBTITLE_FILE_FILTER}
+                ORDER BY o.pid,o.file_id"""
         counts['file_origins'] = append_copy(
             stream, 'subtitle_origin_stage', ['dataset_key','pid','file_id'],
-            ((DATASET,*r) for r in db.execute(
-                f'''SELECT o.pid,o.file_id FROM subtitle_file_origins o
-                    JOIN {runtime_relation} f USING(pid) ORDER BY o.pid,o.file_id'''
-            )),
+            ((DATASET,*r) for r in db.execute(origin_query)),
         )
         counts['confirmed_episodes'] = append_copy(
             stream, 'subtitle_episode_stage',
