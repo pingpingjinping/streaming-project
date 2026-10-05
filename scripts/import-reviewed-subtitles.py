@@ -4,6 +4,9 @@
 Run from the streaming-project repository root. Does not change the catalog,
 existing stream links, episode settings, or manually edited subtitle rows.
 Use --dry-run to validate and generate SQL without calling Docker/Postgres.
+
+Both the legacy combined db-v1 database and the split
+anime_reviewed_subtitle_registry_v1.zip database are accepted.
 """
 import argparse
 import csv
@@ -16,8 +19,12 @@ import subprocess
 DATASET = 'reviewed_v6_1109'
 NULL = '\\N'
 
+
 def append_copy(stream, table, columns, rows):
-    stream.write('COPY ' + table + ' (' + ','.join(columns) + ") FROM STDIN WITH (FORMAT csv, NULL '\\N');\n")
+    stream.write(
+        'COPY ' + table + ' (' + ','.join(columns)
+        + ") FROM STDIN WITH (FORMAT csv, NULL '\\\\N');\n"
+    )
     writer = csv.writer(stream, lineterminator='\n')
     count = 0
     for row in rows:
@@ -26,14 +33,77 @@ def append_copy(stream, table, columns, rows):
     stream.write('\\.\n')
     return count
 
+
+def relation_exists(db, name):
+    return bool(db.execute(
+        "SELECT 1 FROM sqlite_master WHERE name=? AND type IN ('table','view')",
+        (name,),
+    ).fetchone())
+
+
+SUBTITLE_FILE_FILTER = """(
+  lower(f.member_path) LIKE '%.ass' OR lower(f.member_path) LIKE '%.ssa' OR
+  lower(f.member_path) LIKE '%.srt' OR lower(f.member_path) LIKE '%.smi' OR
+  lower(f.member_path) LIKE '%.vtt' OR lower(f.member_path) LIKE '%.sub' OR
+  lower(f.original_path) LIKE '%.ass' OR lower(f.original_path) LIKE '%.ssa' OR
+  lower(f.original_path) LIKE '%.srt' OR lower(f.original_path) LIKE '%.smi' OR
+  lower(f.original_path) LIKE '%.vtt' OR lower(f.original_path) LIKE '%.sub'
+)"""
+
+
+def runtime_select(db):
+    if relation_exists(db, 'subtitle_runtime_files_export'):
+        return 'SELECT * FROM subtitle_runtime_files_export ORDER BY pid', True
+    if relation_exists(db, 'subtitle_runtime_files'):
+        return 'SELECT * FROM subtitle_runtime_files ORDER BY pid', True
+    required = ('packaged_files_v6', 'packaged_archives_v6', 'subtitle_review_details')
+    if not all(relation_exists(db, name) for name in required):
+        raise ValueError('Reviewed subtitle registry runtime sources are missing')
+    query = f"""SELECT
+      f.pid,f.source,f.pack_id,a.zip_relative_path,f.member_path,f.sha256,
+      f.bundle_id,f.target_source,f.target_id,f.review_status,f.reason,
+      NULLIF(r.work_title_ko,'') AS work_title_ko,
+      r.season_format,
+      NULL AS work_format,
+      CASE WHEN f.target_source='ReAnime' THEN f.target_id
+           ELSE NULLIF(r.reanime_id,'') END AS reanime_id,
+      r.language_review,r.quality_notes,
+      CASE WHEN lower(f.original_path) LIKE '%.sub' THEN '.sub'
+           WHEN lower(f.original_path) LIKE '%.ass' THEN '.ass'
+           WHEN lower(f.original_path) LIKE '%.ssa' THEN '.ssa'
+           WHEN lower(f.original_path) LIKE '%.srt' THEN '.srt'
+           WHEN lower(f.original_path) LIKE '%.smi' THEN '.smi'
+           WHEN lower(f.original_path) LIKE '%.vtt' THEN '.vtt'
+           WHEN lower(f.member_path) LIKE '%.sub' THEN '.sub'
+           WHEN lower(f.member_path) LIKE '%.ass' THEN '.ass'
+           WHEN lower(f.member_path) LIKE '%.ssa' THEN '.ssa'
+           WHEN lower(f.member_path) LIKE '%.srt' THEN '.srt'
+           WHEN lower(f.member_path) LIKE '%.smi' THEN '.smi'
+           WHEN lower(f.member_path) LIKE '%.vtt' THEN '.vtt'
+           ELSE NULL END AS content_extension,
+      CASE WHEN f.target_id IS NULL THEN 0 ELSE 1 END AS work_confirmed
+      FROM packaged_files_v6 f
+      JOIN packaged_archives_v6 a USING(pack_id)
+      LEFT JOIN subtitle_review_details r USING(pid)
+      WHERE f.action='kept' AND {SUBTITLE_FILE_FILTER}
+      ORDER BY f.pid"""
+    return query, False
+
+
 def prepare(path):
     db = sqlite3.connect(pathlib.Path(path).resolve().as_uri() + '?mode=ro', uri=True)
     try:
         if db.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
             raise ValueError('SQLite quick_check failed')
-        metadata = {k: json.loads(v) for k, v in db.execute('SELECT key,value FROM subtitle_runtime_metadata')}
+        metadata = {k: json.loads(v) for k, v in db.execute(
+            'SELECT key,value FROM subtitle_runtime_metadata'
+        )}
         if metadata['format_version'] != 1 or metadata['completed_bundles'] != 1109:
             raise ValueError('Unsupported or incomplete export')
+
+        runtime_query, runtime_is_relation = runtime_select(db)
+        has_work_links = relation_exists(db, 'subtitle_work_reanime_links')
+
         stream = io.StringIO()
         stream.write('''BEGIN;
 CREATE TABLE IF NOT EXISTS anime_subtitle_archives (
@@ -81,25 +151,67 @@ CREATE TEMP TABLE subtitle_work_link_stage (LIKE anime_subtitle_work_reanime_lin
 CREATE TEMP TABLE subtitle_metadata_stage (dataset_key TEXT,payload JSONB);
 ''')
         counts = {}
-        counts['archives'] = append_copy(stream, 'subtitle_archive_stage',
+        counts['archives'] = append_copy(
+            stream, 'subtitle_archive_stage',
             ['dataset_key','pack_id','source','zip_relative_path','sha256','member_count'],
-            ((DATASET, *r) for r in db.execute('SELECT pack_id,source,zip_relative_path,sha256,member_count FROM packaged_archives_v6 ORDER BY pack_id')))
-        file_columns = ['dataset_key','pid','source','pack_id','zip_relative_path','member_path','sha256','bundle_id','target_source','target_id',
-            'review_status','reason','work_title_ko','season_format','work_format','reanime_id','language_review','quality_notes','content_extension','work_confirmed']
-        counts['subtitle_files'] = append_copy(stream, 'subtitle_file_stage', file_columns,
-            ((DATASET, *r[:-1], bool(r[-1])) for r in db.execute('SELECT * FROM subtitle_runtime_files ORDER BY pid')))
-        counts['file_origins'] = append_copy(stream, 'subtitle_origin_stage', ['dataset_key','pid','file_id'],
-            ((DATASET,*r) for r in db.execute('''SELECT o.pid,o.file_id FROM subtitle_file_origins o
-                JOIN subtitle_runtime_files f USING(pid) ORDER BY o.pid,o.file_id''')))
-        counts['confirmed_episodes'] = append_copy(stream, 'subtitle_episode_stage',
-            ['dataset_key','map_id','bundle_id','file_id','target_source','target_id','source_episode','target_episode','status'],
-            ((DATASET,*r) for r in db.execute('SELECT * FROM subtitle_confirmed_episodes ORDER BY map_id')))
-        counts['work_reanime_links'] = append_copy(stream, 'subtitle_work_link_stage',
-            ['dataset_key','target_source','target_id','reanime_id','link_status','automatic_eligible'],
-            ((DATASET,*r[:-1],bool(r[-1])) for r in db.execute('SELECT * FROM subtitle_work_reanime_links ORDER BY target_source,target_id,reanime_id')))
-        append_copy(stream, 'subtitle_metadata_stage', ['dataset_key','payload'], [(DATASET,json.dumps(metadata,ensure_ascii=False))])
+            ((DATASET, *r) for r in db.execute(
+                'SELECT pack_id,source,zip_relative_path,sha256,member_count '
+                'FROM packaged_archives_v6 ORDER BY pack_id'
+            )),
+        )
+        file_columns = [
+            'dataset_key','pid','source','pack_id','zip_relative_path','member_path',
+            'sha256','bundle_id','target_source','target_id','review_status','reason',
+            'work_title_ko','season_format','work_format','reanime_id','language_review',
+            'quality_notes','content_extension','work_confirmed',
+        ]
+        counts['subtitle_files'] = append_copy(
+            stream, 'subtitle_file_stage', file_columns,
+            ((DATASET, *r[:-1], bool(r[-1])) for r in db.execute(runtime_query)),
+        )
+        if runtime_is_relation:
+            origin_query = """SELECT o.pid,o.file_id FROM subtitle_file_origins o
+                JOIN """ + (
+                    'subtitle_runtime_files_export'
+                    if relation_exists(db, 'subtitle_runtime_files_export')
+                    else 'subtitle_runtime_files'
+                ) + """ f USING(pid) ORDER BY o.pid,o.file_id"""
+        else:
+            origin_query = f"""SELECT o.pid,o.file_id FROM subtitle_file_origins o
+                JOIN packaged_files_v6 f USING(pid)
+                WHERE f.action='kept' AND {SUBTITLE_FILE_FILTER}
+                ORDER BY o.pid,o.file_id"""
+        counts['file_origins'] = append_copy(
+            stream, 'subtitle_origin_stage', ['dataset_key','pid','file_id'],
+            ((DATASET,*r) for r in db.execute(origin_query)),
+        )
+        counts['confirmed_episodes'] = append_copy(
+            stream, 'subtitle_episode_stage',
+            ['dataset_key','map_id','bundle_id','file_id','target_source','target_id',
+             'source_episode','target_episode','status'],
+            ((DATASET,*r) for r in db.execute(
+                'SELECT * FROM subtitle_confirmed_episodes ORDER BY map_id'
+            )),
+        )
+        if has_work_links:
+            counts['work_reanime_links'] = append_copy(
+                stream, 'subtitle_work_link_stage',
+                ['dataset_key','target_source','target_id','reanime_id',
+                 'link_status','automatic_eligible'],
+                ((DATASET,*r[:-1],bool(r[-1])) for r in db.execute(
+                    'SELECT * FROM subtitle_work_reanime_links '
+                    'ORDER BY target_source,target_id,reanime_id'
+                )),
+            )
+        else:
+            counts['work_reanime_links'] = 0
+        append_copy(
+            stream, 'subtitle_metadata_stage', ['dataset_key','payload'],
+            [(DATASET,json.dumps(metadata,ensure_ascii=False))],
+        )
         if counts['subtitle_files'] != 55530 or counts['confirmed_episodes'] != 12055:
             raise ValueError('Export counts do not match completed review')
+
         stream.write('''
 INSERT INTO anime_subtitle_archives SELECT * FROM subtitle_archive_stage WHERE true
 ON CONFLICT(dataset_key,pack_id) DO UPDATE SET
@@ -119,34 +231,78 @@ INSERT INTO anime_subtitle_file_origins SELECT * FROM subtitle_origin_stage WHER
 ON CONFLICT(dataset_key,pid,file_id) DO NOTHING;
 INSERT INTO anime_subtitle_confirmed_episodes SELECT * FROM subtitle_episode_stage WHERE true
 ON CONFLICT(dataset_key,map_id) DO NOTHING;
-DELETE FROM anime_subtitle_work_reanime_links WHERE dataset_key='reviewed_v6_1109';
+''')
+        if has_work_links:
+            stream.write(f'''
+DELETE FROM anime_subtitle_work_reanime_links WHERE dataset_key='{DATASET}';
 INSERT INTO anime_subtitle_work_reanime_links SELECT * FROM subtitle_work_link_stage;
+''')
+        stream.write('''
 INSERT INTO anime_subtitle_dataset_metadata(dataset_key,payload)
  SELECT * FROM subtitle_metadata_stage WHERE true
 ON CONFLICT(dataset_key) DO UPDATE SET payload=EXCLUDED.payload,imported_at=CURRENT_TIMESTAMP;
+
+DO $$
+BEGIN
+  IF to_regclass('public.anime_catalog_entries') IS NOT NULL THEN
+    UPDATE anime_subtitle_files AS f
+       SET work_title_ko=COALESCE(NULLIF(f.work_title_ko,''),c.payload->>'title_ko'),
+           work_format=COALESCE(NULLIF(f.work_format,''),c.payload->>'format'),
+           reanime_id=CASE
+             WHEN f.target_source='ReAnime' THEN f.target_id
+             WHEN NULLIF(f.reanime_id,'') IS NOT NULL THEN f.reanime_id
+             ELSE (
+               SELECT w.reanime_id
+                 FROM anime_subtitle_work_reanime_links w
+                WHERE w.dataset_key=f.dataset_key
+                  AND w.target_source=f.target_source
+                  AND w.target_id=f.target_id
+                  AND w.automatic_eligible
+                ORDER BY w.reanime_id
+                LIMIT 1
+             )
+           END
+      FROM anime_catalog_entries c
+     WHERE f.dataset_key='reviewed_v6_1109'
+       AND NOT f.is_manual
+       AND c.source=f.target_source
+       AND c.source_record_id=f.target_id;
+  END IF;
+END $$;
 COMMIT;
 ''')
         return stream.getvalue(), counts
     finally:
         db.close()
 
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('database'); parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('database')
+    parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--sql', type=pathlib.Path, help='Save generated SQL without applying it')
     args = parser.parse_args()
     sql, counts = prepare(args.database)
     if args.sql:
         args.sql.write_text(sql, encoding='utf-8')
     if args.dry_run or args.sql:
-        print(json.dumps({'applied':False,'validated':counts,'sql_bytes':len(sql.encode())},ensure_ascii=False))
+        print(json.dumps(
+            {'applied':False,'validated':counts,'sql_bytes':len(sql.encode())},
+            ensure_ascii=False,
+        ))
         return
-    command = ['docker','compose','exec','-T','db','sh','-c',
-               'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+    command = [
+        'docker','compose','exec','-T','db','sh','-c',
+        'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"',
+    ]
     result = subprocess.run(command, input=sql, text=True, check=False)
     if result.returncode:
         raise SystemExit('Import failed; transaction rolled back.')
-    print(json.dumps({'applied':True,'imported':counts,'dataset':DATASET},ensure_ascii=False))
+    print(json.dumps(
+        {'applied':True,'imported':counts,'dataset':DATASET},
+        ensure_ascii=False,
+    ))
+
 
 if __name__ == '__main__':
     main()

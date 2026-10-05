@@ -17,13 +17,24 @@
 `manual_stream_sources`에 로그인 계정별로 저장됩니다. 페이지의 후보 점수는
 검토용이며 자동 연결이나 동일 작품 확정을 뜻하지 않습니다.
 
-Pi에 검토된 `anime_four_sources_multilingual_prepared.db` 파일을
-복사한 다음 저장소 루트에서 아래 명령을 실행하면 네 출처 43,310건,
-한글 작품 9,017건, ReAnime 매핑 3,953건, 검토된 제목 별칭과 미연결 검토 목록 260건을 PostgreSQL로 가져옵니다.
-기존 사용자 스트림 링크는 유지됩니다.
+Pi의 자동 updater는 `anime-db-download/db-v1` Release에서 작품 DB와 검수 자막 registry를 독립적으로 확인합니다.
+
+- 작품 DB: `anime_four_sources_multilingual_prepared.zip`
+- 검수 registry: `anime_reviewed_subtitle_registry_v1.zip`
+
+각 자산은 별도 SHA-256 상태를 가지므로 월간 작품 DB만 바뀌면 대용량 registry를 다시 받지 않습니다. 기존 합본 Release도 registry 자산이 아직 없으면 자동 감지해 호환 import합니다. 전체 동기화는 아래 명령이며, 필요하면 `--catalog-only` 또는 `--registry-only`로 하나만 다운로드/import할 수 있습니다.
+
+```bash
+python3 scripts/update-anime-db-release.py
+python3 scripts/update-anime-db-release.py --catalog-only
+python3 scripts/update-anime-db-release.py --registry-only
+```
+
+작품 SQLite를 수동으로 가져오는 기존 명령도 유지됩니다. catalog import 뒤에는 검수 자막 원본·확정 회차를 건드리지 않고 catalog-derived ReAnime lookup만 보충하며, registry import는 `is_manual=true`인 수동 수정 자막 행을 덮어쓰지 않습니다.
 
 ```bash
 python3 scripts/import-anime-db.py /path/to/anime_four_sources_multilingual_prepared.db
+python3 scripts/refresh-reviewed-subtitle-links.py /path/to/anime_four_sources_multilingual_prepared.db
 ```
 
 DB를 다시 검토했다면 `scripts/export-korean-catalog.py`,

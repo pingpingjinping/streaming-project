@@ -46,8 +46,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m py_compile scripts/import-anime-db.py scripts/update-anime-db-release.py
+      - run: python -m py_compile scripts/import-anime-db.py scripts/update-anime-db-release.py scripts/import-reviewed-subtitles.py scripts/refresh-reviewed-subtitle-links.py
       - run: python -m unittest discover -s scripts -p test_reviewed_db_import.py -v
+      - run: python -m unittest discover -s scripts -p test_refresh_reviewed_subtitle_links.py -v
+      - run: python -m unittest discover -s scripts -p test_split_registry_import.py -v
       - run: python -m unittest discover -s scripts -p test_weekly_aniall.py -v
       - uses: actions/setup-node@v4
         with:
