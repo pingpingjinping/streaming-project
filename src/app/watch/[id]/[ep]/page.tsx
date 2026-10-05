@@ -199,7 +199,8 @@ export default async function WatchPage({
             epNum,
             anime.title,
             anime.original_title,
-            requestedVideoSource
+            requestedVideoSource,
+            id
           )
         : provider.getEpisodeStream(watchUrl),
     (!isDub && initialSubUrl && initialSubUrl.startsWith("http"))
