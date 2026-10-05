@@ -4,7 +4,7 @@ import { linkkfProvider } from "../providers/linkkf";
 import { ohli24Provider } from "../providers/ohli24";
 import { anikotoProvider } from "../providers/anikoto";
 import { getAnissiaStreamCache, setAnissiaStreamCache } from "../db";
-import { fetchAniListMeta } from "../providers/anissia";
+import { fetchAniListMeta } from "../providers/anissia";\nimport { getAnikotoPlaybackCandidates } from "../anikotoLinks";
 
 const HEADERS: Record<string, string> = {
   "User-Agent":
@@ -119,7 +119,8 @@ export async function resolveAnissiaStream(
   episodeNumber: number,
   title?: string,
   originalTitle?: string,
-  requestedSource?: "rean" | "anikoto" | "linkkf" | "ohli24"
+  requestedSource?: "rean" | "anikoto" | "linkkf" | "ohli24",
+  animeId?: string
 ): Promise<EpisodeStreamInfo | null> {
   const serverSources: ServerSource[] = [];
 
@@ -277,6 +278,33 @@ export async function resolveAnissiaStream(
   // ==========================================================
   try {
     if (!requestedSource || requestedSource === "anikoto") {
+      // Prefer the reviewed DB identity over title search. Multi mappings carry
+      // explicit episode ranges, so season 1/2 pages can share one Anikoto
+      // source without exposing the other season's episode numbers.
+      const linkedCandidates = animeId
+        ? await getAnikotoPlaybackCandidates(animeId, episodeNumber)
+        : [];
+
+      for (const linked of linkedCandidates) {
+        const detail = await anikotoProvider.getAnimeDetail(linked.animeId);
+        if (!detail?.sub_episodes?.length) continue;
+
+        const epItem = detail.sub_episodes.find(
+          (episode) => episode.number === linked.episodeNumber
+        );
+        if (!epItem?.watch_url) continue;
+
+        const stream = await anikotoProvider.getEpisodeStream(epItem.watch_url);
+        if (stream && (stream.embed_url || stream.player_url || stream.m3u8_url)) {
+          return {
+            ...stream,
+            server_sources: stream.server_sources?.length
+              ? stream.server_sources
+              : [{ label: "Anikoto · DB 연결", player_url: epItem.watch_url, id: "anikoto" }],
+          };
+        }
+      }
+
       const meta = await fetchAniListMeta(jpTitle || korTitle).catch(() => null);
       const searchQueries = [
         jpTitle,
