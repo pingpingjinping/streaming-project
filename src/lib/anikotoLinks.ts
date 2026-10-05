@@ -7,7 +7,7 @@ export interface AnikotoPlaybackCandidate {
   linkStatus: string;
 }
 
-type WorkKey = { source: "Anissia" | "ReAnime" | "Onnada"; sourceId: string };
+type WorkKey = { source: "Anissia" | "ReAnime"; sourceId: string };
 
 function workKeyFromAnimeId(animeId: string): WorkKey | null {
   if (animeId.startsWith("ani_")) {
@@ -17,10 +17,6 @@ function workKeyFromAnimeId(animeId: string): WorkKey | null {
   if (animeId.startsWith("re_")) {
     const sourceId = animeId.slice(3).trim();
     return sourceId ? { source: "ReAnime", sourceId } : null;
-  }
-  if (animeId.startsWith("ol_")) {
-    const sourceId = animeId.slice(3).trim();
-    return sourceId ? { source: "Onnada", sourceId } : null;
   }
   return null;
 }
