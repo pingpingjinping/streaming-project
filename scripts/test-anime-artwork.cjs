@@ -100,6 +100,7 @@ test('ReAnime page preserves linked mode in pagination/year and never renders an
     '@/lib/linkedReanimeCatalog':{getLinkedReanimeCatalog:async options=>{requests.push(options);return {items:[],page:options.page,has_next:options.page===1,total_pages:2};}},
     '@/components/Navbar':{__esModule:true,default:emptyComponent},'@/components/AnimeCard':{__esModule:true,default:emptyComponent},
     '@/components/HistoryList':{__esModule:true,default:emptyComponent},'@/components/ReanimeFeedFallback':{__esModule:true,default:()=>React.createElement('div',null,'UNFILTERED_MARKER')},
+    '@/components/AnikotoCatalogFilters':{__esModule:true,default:emptyComponent},
     'next/headers':{cookies:async()=>({get:()=>({value:'reanime'})})},'@/lib/providers':providers,
     '@/lib/providers/ohli24':{OHLI24_GENRES:[]},'@/lib/db':{getEnabledStreamingProviders:async()=>['reanime']},
     '@/lib/historyPromotion':{},'@/lib/subtitles':{},'@/lib/auth':{requireAuth:async()=>{}},
@@ -121,6 +122,7 @@ test('list API routes confirmed-link search and paging to DB catalog without rem
     '@/lib/linkedReanimeCatalog':{getLinkedReanimeCatalog:async options=>{requests.push(options);return {items:[],page:options.page,has_next:false,total_pages:1};}},
     '@/lib/providers':{getProvider:()=>new Proxy({},{get:()=>()=>{throw Error('remote provider must not run');}}),REANIME_GENRES:[]},
     '@/lib/providers/ohli24':{},'@/lib/auth':{getSessionUser:async()=>({id:1})},
+    '@/lib/anikotoCatalog':{},
     'next/server':{NextResponse:{json:(data,options)=>({data,options})}},
   });
   const result=await api.GET({url:'https://test.example/api/anime/list?source=reanime&linked=1&q=Season%202&page=3&year=2024&sort=year_asc'});

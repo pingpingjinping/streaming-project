@@ -3,6 +3,7 @@ import Navbar from "@/components/Navbar";
 import AnimeCard from "@/components/AnimeCard";
 import HistoryList, { HistoryItem } from "@/components/HistoryList";
 import ReanimeFeedFallback from "@/components/ReanimeFeedFallback";
+import AnikotoCatalogFilters from "@/components/AnikotoCatalogFilters";
 import { cookies } from "next/headers";
 import {
   getProvider,
@@ -13,6 +14,7 @@ import {
   ANISSIA_PRIMARY_GENRES,
   ANISSIA_ALL_GENRES,
   AnimeListItem,
+  AnimeListResponse,
 } from "@/lib/providers";
 import { OHLI24_GENRES } from "@/lib/providers/ohli24";
 import { getDb, initDb, getEnabledStreamingProviders } from "@/lib/db";
@@ -49,6 +51,7 @@ interface SearchParams {
   day?: string;
   scope?: string;
   linked?: string;
+  status?: string;
 }
 
 function anissiaIdFromUrl(query: string): number | null {
@@ -92,7 +95,8 @@ export default async function HomePage({
   const page = parseInt(params.page || "1", 10) || 1;
   const genre = params.genre || "";
   const year = params.year || "";
-  const sort = params.sort || "year_desc";
+  const sort = params.sort || (activeSource === "anikoto" ? "default" : "year_desc");
+  const statusFilter = params.status || "";
   const typeLang = params.type || "";
   const period = params.period || "day";
   const day = params.day !== undefined ? parseInt(params.day, 10) : new Date().getDay();
@@ -102,6 +106,7 @@ export default async function HomePage({
   let historyItems: HistoryItem[] = [];
   let has_next = false;
   let total_pages = 1;
+  let catalogError: string | undefined;
 
   if(linkedOnly) {
     const result=await getLinkedReanimeCatalog({q,page,year,sort});
@@ -126,11 +131,14 @@ export default async function HomePage({
     const results = await Promise.allSettled(
       sources.map(async (source) => {
         const providerForSource = getProvider(source);
+        let lastResult: AnimeListResponse = { items: [], page, has_next: false, total_pages: 1 };
         for (const term of terms) {
-          const result = await providerForSource.searchAnime(term, page);
+          const result = await providerForSource.searchAnime(term, page, source === "anikoto" && searchScope === "current"
+            ? { genre, year, typeLang, status: statusFilter, sort } : undefined);
+          lastResult = result;
           if (result.items.length > 0) return { source, result };
         }
-        return { source, result: { items: [], has_next: false, total_pages: 1 } };
+        return { source, result: lastResult };
       })
     );
     const fulfilled = results.flatMap((entry) => entry.status === "fulfilled" ? [entry.value] : []);
@@ -146,6 +154,7 @@ export default async function HomePage({
     items = Array.from(uniqueItems.values());
     has_next = fulfilled.some(({ result }) => result.has_next);
     total_pages = Math.max(1, ...fulfilled.map(({ result }) => result.total_pages));
+    if (activeSource === "anikoto" && searchScope === "current") catalogError = fulfilled.find(({ source }) => source === "anikoto")?.result.error;
   } else if (tab === "favorites") {
     const sql = getDb();
     if (sql) {
@@ -264,10 +273,11 @@ export default async function HomePage({
       total_pages = res.total_pages;
     }
   } else if (activeSource === "anikoto") {
-    const res = await provider.getAnimeList({ category: "airing", page });
+    const res = await provider.getAnimeListFiltered({ page, genre, year, typeLang, status: statusFilter, sort });
     items = res.items;
     has_next = res.has_next;
     total_pages = res.total_pages;
+    catalogError = res.error;
   } else if (activeSource === "ohli24") {
     // Ohli24 소스 구조: 신작 방영, 완결 애니, 카테고리 탐색
     if (tab === "finished") {
@@ -318,6 +328,7 @@ export default async function HomePage({
     if (year) p.set("year", year);
     if (sort) p.set("sort", sort);
     if (typeLang) p.set("type", typeLang);
+    if (activeSource === "anikoto" && statusFilter) p.set("status", statusFilter);
     if (period) p.set("period", period);
     if (params.day !== undefined) p.set("day", String(day));
     p.set("page", String(page));
@@ -735,7 +746,11 @@ export default async function HomePage({
           </div>
         )}
 
-        {tab === "list" && (
+        {activeSource === "anikoto" && tab !== "favorites" && tab !== "history" && (
+          <AnikotoCatalogFilters params={{ genre, year, typeLang, status: statusFilter, sort }} keyword={q} />
+        )}
+
+        {tab === "list" && activeSource !== "anikoto" && (
           <div className="mt-6 rounded-2xl border border-purple-500/20 bg-slate-900/60 p-5 backdrop-blur-md">
             {activeSource === "anissia" ? (
               /* =================== 0. Anissia Hub 전체 작품 카탈로그 =================== */
@@ -1117,7 +1132,7 @@ export default async function HomePage({
                 <p className="text-base font-semibold">
                   {tab === "favorites"
                     ? "등록된 즐겨찾기가 없습니다. 마음에 드는 작품을 추가해 보세요!"
-                    : "작품 목록이 없습니다."}
+                    : catalogError || "작품 목록이 없습니다."}
                 </p>
               </div>
             )}

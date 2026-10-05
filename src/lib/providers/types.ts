@@ -22,6 +22,7 @@ export interface AnimeListResponse {
   page: number;
   has_next: boolean;
   total_pages: number;
+  error?: string;
 }
 
 export interface EpisodeItem {
@@ -81,6 +82,7 @@ export interface AnimeListFilterParams {
   category?: "recent_caption" | "airing" | "top" | "movie" | "finished" | "trending" | "upcoming";
   catalog?: boolean;
   sort?: string;
+  status?: string;
   day?: number | string;
 }
 
@@ -97,7 +99,7 @@ export interface AnimeProvider {
     sort?: string;
     day?: number | string;
   }): Promise<AnimeListResponse>;
-  searchAnime(keyword: string, page?: number, options?: { year?: string; sort?: string }): Promise<AnimeListResponse>;
+  searchAnime(keyword: string, page?: number, options?: Pick<AnimeListFilterParams, "year" | "sort" | "genre" | "typeLang" | "status">): Promise<AnimeListResponse>;
   getAnimeDetail(animeId: string): Promise<AnimeDetail | null>;
   getEpisodeStream(watchUrl: string): Promise<EpisodeStreamInfo | null>;
 }

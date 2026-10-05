@@ -9,6 +9,7 @@ import {
 } from "@/lib/providers";
 import { OHLI24_GENRES } from "@/lib/providers/ohli24";
 import { getSessionUser } from "@/lib/auth";
+import { ANIKOTO_GENRES, ANIKOTO_YEARS, ANIKOTO_TYPES, ANIKOTO_STATUSES, ANIKOTO_SORTS } from "@/lib/anikotoCatalog";
 
 export async function GET(request: NextRequest) {
   // 보안: 미인증 사용자가 서버를 무료 스크레이퍼로 악용하는 것을 방지
@@ -33,6 +34,9 @@ export async function GET(request: NextRequest) {
   let result;
   if(source==="reanime" && searchParams.get("linked")==="1") {
     result=await getLinkedReanimeCatalog({q,page,year,sort:searchParams.get("sort") || "year_desc"});
+  } else if (source === "anikoto") {
+    const filters = { genre, year, typeLang, status: searchParams.get("status") || "", sort: searchParams.get("sort") || "default" };
+    result = q ? await provider.searchAnime(q, page, filters) : await provider.getAnimeListFiltered({ ...filters, page });
   } else if (q) {
     result = await provider.searchAnime(q, page);
   } else if (source === "reanime") {
@@ -59,21 +63,23 @@ export async function GET(request: NextRequest) {
 
   const noCache = searchParams.get("nocache") === "1";
   const cacheControl =
-    noCache || q || searchParams.get("linked")==="1"
+    noCache || q || result.error || searchParams.get("linked")==="1"
       ? "no-store"
       : "public, s-maxage=300, stale-while-revalidate=600";
 
   const isReanime = source === "reanime";
   const isOhli24 = source === "ohli24";
+  const isAnikoto = source === "anikoto";
   return NextResponse.json(
     {
       ...result,
       source,
       tab,
       filters: {
-        genres: isReanime ? REANIME_GENRES : isOhli24 ? OHLI24_GENRES : LINKKF_GENRES,
-        years: isOhli24 || isReanime ? [] : LINKKF_YEARS,
-        types: isOhli24 || isReanime ? [] : LINKKF_TYPES,
+        genres: isAnikoto ? ANIKOTO_GENRES : isReanime ? REANIME_GENRES : isOhli24 ? OHLI24_GENRES : LINKKF_GENRES,
+        years: isAnikoto ? ANIKOTO_YEARS : isOhli24 || isReanime ? [] : LINKKF_YEARS,
+        types: isAnikoto ? ANIKOTO_TYPES : isOhli24 || isReanime ? [] : LINKKF_TYPES,
+        ...(isAnikoto ? { statuses: ANIKOTO_STATUSES, sorts: ANIKOTO_SORTS } : {}),
       },
     },
     {
