@@ -12,6 +12,8 @@ import json
 import sqlite3
 import subprocess
 import sys
+import unicodedata
+from collections import defaultdict
 from catalog_core import build_catalog,build_reanime_matches
 
 if len(sys.argv) != 2:
@@ -34,8 +36,10 @@ if not all(source_counts.get(source, 0) for source in ('AniList','ReAnime','Onna
 if len(reviews) > source_counts.get('Anissia', 0):
     raise SystemExit(f'Invalid review queue size: {len(reviews)} reviews for {source_counts.get("Anissia", 0)} Anissia rows.')
 
+
 def record(row):
     return dict(row)
+
 
 def work(row):
     return {
@@ -46,6 +50,148 @@ def work(row):
         'yearAdjustment':row['year_adjustment'],'formatStatus':row['format_status'] or '',
         'yearStatus':row['year_status'] or '', 'reviewLabel':row['review_label'] or '',
     }
+
+
+def json_object(value):
+    try:
+        parsed=json.loads(value or '{}')
+        return parsed if isinstance(parsed,dict) else {}
+    except (TypeError,ValueError):
+        return {}
+
+
+def title_key(value):
+    text=unicodedata.normalize('NFKC',str(value or '')).casefold().replace('×','x')
+    return ''.join(ch for ch in text if ch.isalnum() or ch in '☆★+∞!?♭♯')
+
+
+def title_keys(row):
+    values=[]
+    for field in ('title_ko','title_native','title_romaji','title_english'):
+        if field in row.keys() and row[field]:
+            key=title_key(row[field])
+            if len(key)>=4: values.append(key)
+    return set(values)
+
+
+def positive_int(value):
+    try:
+        result=int(value)
+        return result if result>0 else None
+    except (TypeError,ValueError):
+        return None
+
+
+def entry_episode_count(row):
+    meta=json_object(row['source_metadata_json'] if 'source_metadata_json' in row.keys() else '{}')
+    names=('onnada_episodes','episodes_total','episodes') if row['source']=='Onnada' else ('episodes','episodes_total')
+    for name in names:
+        value=positive_int(meta.get(name))
+        if value is not None:return value
+    return None
+
+
+def entries_compatible(left,right):
+    if left['year'] and right['year'] and str(left['year'])!=str(right['year']):return False
+    if left['format'] and right['format'] and str(left['format']).upper()!=str(right['format']).upper():return False
+    le,re=entry_episode_count(left),entry_episode_count(right)
+    if le and re and le!=re:return False
+    return bool(title_keys(left) & title_keys(right))
+
+
+def build_equivalent_sources(entry_rows,catalog_rows):
+    """Build conservative four-source identity components for playback lookup."""
+    by_key={(str(row['source']),str(row['source_record_id'])):row for row in entry_rows}
+    parent={key:key for key in by_key}
+
+    def find(key):
+        root=key
+        while parent[root]!=root:
+            root=parent[root]
+        while parent[key]!=key:
+            nxt=parent[key];parent[key]=root;key=nxt
+        return root
+
+    def union(a,b):
+        if a not in parent or b not in parent:return
+        ra,rb=find(a),find(b)
+        if ra!=rb:parent[rb]=ra
+
+    # Catalog rows only bridge identities that the existing reviewed catalog
+    # already exposes as confirmed/automatic. Review/candidate rows are ignored.
+    for item in catalog_rows:
+        if item.get('status') not in ('검토된 사항','자동확정'):continue
+        source=(str(item.get('source') or ''),str(item.get('sourceId') or ''))
+        if source not in parent:continue
+        aid=str(item.get('anilistId') or '').strip()
+        rid=str(item.get('reanimeId') or '').strip()
+        if aid:union(source,('AniList',aid))
+        if rid:union(source,('ReAnime',rid))
+
+    # ReAnime carries declared AniList IDs. Mirror the matcher guard before
+    # using them as a playback identity bridge, so a stale declaration cannot
+    # attach a verified Anikoto stream to the wrong work.
+    for key,row in by_key.items():
+        if key[0]!='ReAnime':continue
+        cross=json_object(row['cross_source_ids_json'] if 'cross_source_ids_json' in row.keys() else '{}')
+        for aid in cross.get('anilist_ids',[]) or []:
+            target=('AniList',str(aid))
+            other=by_key.get(target)
+            if other is not None and entries_compatible(row,other):
+                union(key,target)
+
+    groups=defaultdict(set)
+    for key in parent:
+        groups[find(key)].add(key)
+    result={}
+    for members in groups.values():
+        frozen=tuple(sorted(members))
+        for key in members:result[key]=frozen
+    return result
+
+
+def load_anikoto_rows(database,entry_rows,catalog_rows):
+    has_catalog=database.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='anikoto_catalog'").fetchone()
+    if not has_catalog:return [],[],[]
+
+    accepted_catalog=[dict(row) for row in database.execute(
+        'SELECT source_record_id,payload_json FROM anikoto_catalog ORDER BY source_record_id')]
+
+    has_targets=database.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='anikoto_work_link_targets'").fetchone()
+    if has_targets:
+        targets=[dict(row) for row in database.execute('''SELECT anikoto_id,target_order,target_source,target_id,
+          link_status,mapping_kind,anikoto_episode_start,anikoto_episode_end,
+          target_episode_start,target_episode_end,payload_json
+          FROM anikoto_work_link_targets ORDER BY anikoto_id,target_order''')]
+    else:
+        has_links=database.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='anikoto_work_links'").fetchone()
+        targets=[]
+        if has_links:
+            for row in database.execute("""SELECT anikoto_id,target_source,target_id,status,payload_json
+              FROM anikoto_work_links WHERE status IN ('automatic','reviewed') ORDER BY anikoto_id"""):
+                targets.append({
+                    'anikoto_id':row['anikoto_id'],'target_order':1,
+                    'target_source':row['target_source'],'target_id':row['target_id'],
+                    'link_status':row['status'],'mapping_kind':'whole',
+                    'anikoto_episode_start':None,'anikoto_episode_end':None,
+                    'target_episode_start':None,'target_episode_end':None,
+                    'payload_json':row['payload_json'],
+                })
+
+    equivalents=build_equivalent_sources(entry_rows,catalog_rows)
+    lookup={}
+    for row in targets:
+        target=(str(row['target_source']),str(row['target_id']))
+        members=equivalents.get(target,(target,))
+        for source,source_id in members:
+            key=(source,source_id,str(row['anikoto_id']),int(row['target_order']))
+            lookup[key]={
+                **row,'lookup_source':source,'lookup_source_id':source_id,
+            }
+    return accepted_catalog,targets,[lookup[key] for key in sorted(lookup)]
+
+
+anikoto_catalog,anikoto_targets,anikoto_lookup=load_anikoto_rows(db,entries,catalog)
 
 stream = io.StringIO()
 stream.write('''\nBEGIN;
@@ -74,10 +220,36 @@ CREATE TABLE IF NOT EXISTS anime_title_aliases (
  korean_title TEXT NOT NULL, source VARCHAR(40) NOT NULL,
  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS anime_anikoto_catalog (
+ anikoto_id TEXT PRIMARY KEY, payload JSONB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS anime_anikoto_work_targets (
+ anikoto_id TEXT NOT NULL, target_order INTEGER NOT NULL,
+ target_source TEXT NOT NULL, target_id TEXT NOT NULL,
+ link_status TEXT NOT NULL, mapping_kind TEXT NOT NULL,
+ anikoto_episode_start INTEGER, anikoto_episode_end INTEGER,
+ target_episode_start INTEGER, target_episode_end INTEGER,
+ payload JSONB NOT NULL,
+ PRIMARY KEY(anikoto_id,target_order)
+);
+CREATE INDEX IF NOT EXISTS idx_anime_anikoto_target
+ ON anime_anikoto_work_targets(target_source,target_id);
+CREATE TABLE IF NOT EXISTS anime_anikoto_work_lookup (
+ source TEXT NOT NULL, source_record_id TEXT NOT NULL,
+ anikoto_id TEXT NOT NULL, target_order INTEGER NOT NULL,
+ link_status TEXT NOT NULL, mapping_kind TEXT NOT NULL,
+ anikoto_episode_start INTEGER, anikoto_episode_end INTEGER,
+ target_episode_start INTEGER, target_episode_end INTEGER,
+ PRIMARY KEY(source,source_record_id,anikoto_id,target_order)
+);
+CREATE INDEX IF NOT EXISTS idx_anime_anikoto_lookup_work
+ ON anime_anikoto_work_lookup(source,source_record_id);
 CREATE TEMP TABLE catalog_alias_stage (
  normalized_title VARCHAR(512),original_title TEXT,korean_title TEXT
 );
-TRUNCATE anime_catalog_entries, anime_unmatched_review, anime_korean_catalog, anime_reanime_matches, anime_monthly_match_candidates;
+TRUNCATE anime_catalog_entries, anime_unmatched_review, anime_korean_catalog,
+ anime_reanime_matches, anime_monthly_match_candidates, anime_anikoto_catalog,
+ anime_anikoto_work_targets, anime_anikoto_work_lookup;
 COPY anime_catalog_entries (source,source_record_id,payload) FROM STDIN WITH (FORMAT csv);
 ''')
 writer=csv.writer(stream,lineterminator='\n')
@@ -96,6 +268,26 @@ for match in reanime_matches:
 stream.write('\\.\nCOPY anime_monthly_match_candidates (anissia_no,reanime_id,score,reason,evidence) FROM STDIN WITH (FORMAT csv);\n')
 for row in monthly_candidates:
     writer.writerow((row['anissia_no'],row['reanime_id'],row['score'],row['reason'],row['evidence_json']))
+stream.write('\\.\nCOPY anime_anikoto_catalog (anikoto_id,payload) FROM STDIN WITH (FORMAT csv);\n')
+for row in anikoto_catalog:
+    writer.writerow((row['source_record_id'],row['payload_json']))
+stream.write('\\.\nCOPY anime_anikoto_work_targets (anikoto_id,target_order,target_source,target_id,link_status,mapping_kind,anikoto_episode_start,anikoto_episode_end,target_episode_start,target_episode_end,payload) FROM STDIN WITH (FORMAT csv, NULL \'\\N\');\n')
+for row in anikoto_targets:
+    writer.writerow((row['anikoto_id'],row['target_order'],row['target_source'],row['target_id'],
+      row['link_status'],row['mapping_kind'],
+      row['anikoto_episode_start'] if row['anikoto_episode_start'] is not None else '\\N',
+      row['anikoto_episode_end'] if row['anikoto_episode_end'] is not None else '\\N',
+      row['target_episode_start'] if row['target_episode_start'] is not None else '\\N',
+      row['target_episode_end'] if row['target_episode_end'] is not None else '\\N',
+      row['payload_json']))
+stream.write('\\.\nCOPY anime_anikoto_work_lookup (source,source_record_id,anikoto_id,target_order,link_status,mapping_kind,anikoto_episode_start,anikoto_episode_end,target_episode_start,target_episode_end) FROM STDIN WITH (FORMAT csv, NULL \'\\N\');\n')
+for row in anikoto_lookup:
+    writer.writerow((row['lookup_source'],row['lookup_source_id'],row['anikoto_id'],row['target_order'],
+      row['link_status'],row['mapping_kind'],
+      row['anikoto_episode_start'] if row['anikoto_episode_start'] is not None else '\\N',
+      row['anikoto_episode_end'] if row['anikoto_episode_end'] is not None else '\\N',
+      row['target_episode_start'] if row['target_episode_start'] is not None else '\\N',
+      row['target_episode_end'] if row['target_episode_end'] is not None else '\\N'))
 stream.write('\\.\nCOPY catalog_alias_stage (normalized_title,original_title,korean_title) FROM STDIN WITH (FORMAT csv);\n')
 for alias in aliases:writer.writerow(alias)
 stream.write('''\\.
@@ -111,4 +303,4 @@ cmd=['docker','compose','exec','-T','db','sh','-c',
 result=subprocess.run(cmd,input=stream.getvalue(),text=True,check=False)
 if result.returncode:
     raise SystemExit(f'Import failed (exit {result.returncode}); transaction rolled back.')
-print(f'Imported {len(entries)} source records {source_counts}, {len(catalog)} Korean titles, {len(reanime_matches)} ReAnime links ({sum(r["anissiaNo"] is not None for r in reanime_matches)} direct subtitles), {len(monthly_candidates)} scored new-work candidates, {len(aliases)} aliases and {len(reviews)} review items. Existing stream links kept.')
+print(f'Imported {len(entries)} source records {source_counts}, {len(catalog)} Korean titles, {len(reanime_matches)} ReAnime links ({sum(r["anissiaNo"] is not None for r in reanime_matches)} direct subtitles), {len(monthly_candidates)} scored new-work candidates, {len(aliases)} aliases and {len(reviews)} review items; Anikoto {len(anikoto_catalog)} accepted works, {len(anikoto_targets)} target rows, {len(anikoto_lookup)} verified lookup rows. Existing stream links kept.')
