@@ -73,6 +73,13 @@ def run_importers(db_path, repo, catalog_current=False):
     the embedded registry when present.
     """
     reviewed = has_reviewed_registry(db_path)
+    if reviewed:
+        subtitle_importer = Path(repo) / "scripts/import-reviewed-subtitles.py"
+        if not subtitle_importer.is_file():
+            raise RuntimeError(
+                "Release contains reviewed subtitles; update the repository "
+                "to install import-reviewed-subtitles.py"
+            )
     if not catalog_current:
         run_catalog_importer(db_path, repo)
     if reviewed:
