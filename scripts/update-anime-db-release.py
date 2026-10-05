@@ -197,13 +197,21 @@ def validate_registry_database(db_path):
     if not has_reviewed_registry(db_path):
         raise RuntimeError("Reviewed subtitle registry metadata is missing")
     with sqlite3.connect(db_path) as db:
-        runtime = db.execute(
-            """SELECT 1 FROM sqlite_master
-               WHERE name IN ('subtitle_runtime_files','subtitle_runtime_files_export')
-                 AND type IN ('table','view') LIMIT 1"""
-        ).fetchone()
-        if not runtime:
-            raise RuntimeError("Reviewed subtitle registry has no runtime file export")
+        relations = {
+            row[0] for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type IN ('table','view')"
+            )
+        }
+        has_runtime = bool(
+            {'subtitle_runtime_files', 'subtitle_runtime_files_export'} & relations
+        )
+        has_normalized = {
+            'packaged_archives_v6',
+            'packaged_files_v6',
+            'subtitle_review_details',
+        }.issubset(relations)
+        if not has_runtime and not has_normalized:
+            raise RuntimeError("Reviewed subtitle registry runtime sources are missing")
     return True
 
 
