@@ -275,13 +275,16 @@ def main():
         registry_source_asset, REGISTRY_STATE_FILE, REGISTRY_SCHEMA_STATE_FILE
     )
 
-    if want_catalog and catalog_current and (not want_registry or registry_current):
-        if not want_registry or registry_asset is not None:
-            print(
-                f"Selected anime DB assets are already current "
-                f"(Release updated {catalog_asset.get('updated_at')})."
-            )
-            return
+    if (
+        not args.dry_run
+        and (not want_catalog or catalog_current)
+        and (not want_registry or registry_current)
+    ):
+        print(
+            f"Selected anime DB assets are already current "
+            f"(Release updated {catalog_asset.get('updated_at')})."
+        )
+        return
 
     repo = Path(__file__).resolve().parents[1]
     if not args.dry_run:
