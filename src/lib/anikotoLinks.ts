@@ -12,7 +12,7 @@ type WorkKey = { source: "Anissia" | "ReAnime"; sourceId: string };
 function workKeyFromAnimeId(animeId: string): WorkKey | null {
   if (animeId.startsWith("ani_")) {
     const sourceId = animeId.slice(4);
-    return /^\\d+$/.test(sourceId) ? { source: "Anissia", sourceId } : null;
+    return /^\d+$/.test(sourceId) ? { source: "Anissia", sourceId } : null;
   }
   if (animeId.startsWith("re_")) {
     const sourceId = animeId.slice(3).trim();
