@@ -50,6 +50,9 @@ def run_catalog_importer(db_path, repo):
         check=True,
         cwd=repo,
     )
+    refresher = Path(repo) / "scripts/refresh-reviewed-subtitle-links.py"
+    if refresher.is_file():
+        subprocess.run(["python3", str(refresher), str(db_path)], check=True, cwd=repo)
 
 
 def run_registry_importer(db_path, repo):
