@@ -111,15 +111,7 @@ BEGIN
            work_format=COALESCE(NULLIF(f.work_format,''),c.payload->>'format'),
            reanime_id=CASE
              WHEN f.target_source='ReAnime' THEN f.target_id
-             WHEN NULLIF(f.reanime_id,'') IS NOT NULL
-                  AND EXISTS (
-                    SELECT 1 FROM anime_subtitle_work_reanime_links w
-                     WHERE w.dataset_key=f.dataset_key
-                       AND w.target_source=f.target_source
-                       AND w.target_id=f.target_id
-                       AND w.reanime_id=f.reanime_id
-                  )
-               THEN f.reanime_id
+             WHEN NULLIF(f.reanime_id,'') IS NOT NULL THEN f.reanime_id
              ELSE (
                SELECT w.reanime_id
                  FROM anime_subtitle_work_reanime_links w
