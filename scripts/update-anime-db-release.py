@@ -22,6 +22,8 @@ MAX_ASSET_SIZE = 128 * 1024 * 1024
 EXPECTED_SOURCES = {"AniList", "ReAnime", "Onnada", "Anissia"}
 STATE_FILE = Path.home() / ".local/state/streaming-project/anime-db-release.sha256"
 SUBTITLE_STATE_FILE = Path.home() / ".local/state/streaming-project/anime-db-reviewed-subtitles-v1.sha256"
+IMPORT_SCHEMA_STATE_FILE = Path.home() / ".local/state/streaming-project/anime-db-import-schema-version"
+IMPORT_SCHEMA_VERSION = "2"
 
 
 def has_reviewed_registry(db_path):
@@ -152,9 +154,15 @@ def main():
     digest = asset.get("digest") or ""
     previous = STATE_FILE.read_text(encoding="ascii").strip() if STATE_FILE.exists() else ""
     subtitle_previous = SUBTITLE_STATE_FILE.read_text(encoding="ascii").strip() if SUBTITLE_STATE_FILE.exists() else ""
+    import_schema_previous = IMPORT_SCHEMA_STATE_FILE.read_text(encoding="ascii").strip() if IMPORT_SCHEMA_STATE_FILE.exists() else ""
+    catalog_current = False
+    subtitle_current = False
+    import_schema_current = hmac.compare_digest(import_schema_previous, IMPORT_SCHEMA_VERSION)
     if digest.startswith("sha256:"):
         digest = digest.removeprefix("sha256:")
-        if previous and hmac.compare_digest(previous, digest) and subtitle_previous and hmac.compare_digest(subtitle_previous, digest):
+        catalog_current = bool(previous and hmac.compare_digest(previous, digest))
+        subtitle_current = bool(subtitle_previous and hmac.compare_digest(subtitle_previous, digest))
+        if catalog_current and subtitle_current and import_schema_current:
             print(f"Anime DB is already current (Release updated {asset.get('updated_at')}).")
             return
 
@@ -172,13 +180,18 @@ def main():
 
         repo = Path(__file__).resolve().parents[1]
         subprocess.run(["docker", "compose", "up", "-d", "db"], check=True, cwd=repo)
-        reviewed = run_importers(db_path, repo, catalog_current=hmac.compare_digest(previous, actual_digest))
+        reviewed = run_importers(
+            db_path,
+            repo,
+            catalog_current=(catalog_current and import_schema_current),
+        )
         print("Reviewed subtitle registry imported." if reviewed else "Legacy release has no reviewed subtitle registry.")
 
     # Mark complete only after both import transactions succeed. A missing subtitle
     # marker forces one download even when the catalog digest is already current.
     write_state(STATE_FILE, actual_digest)
     write_state(SUBTITLE_STATE_FILE, actual_digest)
+    write_state(IMPORT_SCHEMA_STATE_FILE, IMPORT_SCHEMA_VERSION)
     print(f"Imported Release DB updated {asset.get('updated_at')}.")
 
 
