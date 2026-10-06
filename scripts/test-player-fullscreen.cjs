@@ -315,3 +315,11 @@ test('playback resume handles refresh after metadata already fired and preserves
   assert.match(src, /syncHistoryRef\.current\(prevCompleted\)/);
   assert.doesNotMatch(src, /현재 에피소드 시청 완료 기록 및 로컬 캐시 정리/);
 });
+
+
+test('libass keeps the previous subtitle frame visible while fullscreen canvas resizes', () => {
+  const src = fs.readFileSync(path.join(root, 'public/libass/subtitles-octopus.js'), 'utf8');
+  assert.match(src, /var hasResizeSnapshot = false/);
+  assert.match(src, /self\.bufferCanvasCtx\.drawImage\(self\.canvas, 0, 0\)/);
+  assert.match(src, /if \(hasResizeSnapshot\) \{[\s\S]*?self\.ctx\.drawImage\([\s\S]*?self\.bufferCanvas[\s\S]*?width,[\s\S]*?height[\s\S]*?\)/);
+});
