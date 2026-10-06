@@ -317,9 +317,13 @@ test('playback resume handles refresh after metadata already fired and preserves
 });
 
 
-test('libass keeps the previous subtitle frame visible while fullscreen canvas resizes', () => {
+test('libass keeps the old frame until a forced resize frame is ready', () => {
   const src = fs.readFileSync(path.join(root, 'public/libass/subtitles-octopus.js'), 'utf8');
-  assert.match(src, /var hasResizeSnapshot = false/);
-  assert.match(src, /self\.bufferCanvasCtx\.drawImage\(self\.canvas, 0, 0\)/);
-  assert.match(src, /if \(hasResizeSnapshot\) \{[\s\S]*?self\.ctx\.drawImage\([\s\S]*?self\.bufferCanvas[\s\S]*?width,[\s\S]*?height[\s\S]*?\)/);
+  const worker = fs.readFileSync(path.join(root, 'public/libass/subtitles-octopus-worker.js'), 'utf8');
+  assert.match(src, /self\.pendingCanvasWidth = 0/);
+  assert.match(src, /if \(self\.lastRenderTime > 0\) \{\s*self\.pendingCanvasWidth = width;\s*self\.pendingCanvasHeight = height;/);
+  assert.match(src, /function applyPendingCanvasSize\(\)/);
+  assert.match(src, /forceRender: true/);
+  assert.match(worker, /self\.getRenderMethod\(\)\(message\.data\.forceRender===true\)/);
+  assert.doesNotMatch(src, /hasResizeSnapshot|bufferCanvasCtx\.drawImage\(self\.canvas/);
 });
