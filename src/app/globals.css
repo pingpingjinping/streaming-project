@@ -513,3 +513,12 @@ video::cue {
   display: none !important;
 }
 
+
+
+/* Mobile portrait navbar: keep the existing control heights/padding, but
+   collapse text-heavy right-side controls to their icons to avoid overlap. */
+@media (max-width: 767px) and (orientation: portrait) {
+  .mobile-portrait-nav-label {
+    display: none !important;
+  }
+}
