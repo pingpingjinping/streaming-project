@@ -784,11 +784,15 @@ export default function IframePlayer({
         try {
           const w = mediaFrameRef.current?.clientWidth || 1920;
           const h = mediaFrameRef.current?.clientHeight || 1080;
+          const sharpness = playerSettings.subtitleSharpness || 1;
+          const renderW = Math.max(1, Math.round(w * sharpness));
+          const renderH = Math.max(1, Math.round(h * sharpness));
           if (canvasRef.current) {
-            canvasRef.current.width = w;
-            canvasRef.current.height = h;
+            canvasRef.current.width = renderW;
+            canvasRef.current.height = renderH;
           }
-          octopusRef.current?.resize(w, h);
+          octopusRef.current?.resize(renderW, renderH);
+          octopusRef.current?.setCurrentTime?.(lastCurrentTimeRef.current + syncOffsetRef.current);
         } catch {}
       }
     };
@@ -845,6 +849,7 @@ export default function IframePlayer({
     toggleFullscreen,
     subtitles,
     currentSubIndex,
+    playerSettings.subtitleSharpness,
   ]);
 
   // 9. 이전 시청 기록 조회 및 이어보기 안내 / 복원 시도

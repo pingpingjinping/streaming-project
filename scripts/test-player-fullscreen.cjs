@@ -306,6 +306,14 @@ test('ASS subtitle sharpness is shown beside fullscreen exit opacity and applies
   assert.doesNotMatch(src, /name:\s*"subtitleSharpness"/);
   assert.match(iframe, /const sharpness = playerSettings\.subtitleSharpness \|\| 1/);
   assert.match(iframe, /Math\.round\(w \* sharpness\)/);
+  assert.match(
+    iframe,
+    /const syncOctopusCanvasSize = \(\) => \{[\s\S]*?const renderW = Math\.max\(1, Math\.round\(w \* sharpness\)\)[\s\S]*?octopusRef\.current\?\.resize\(renderW, renderH\)/
+  );
+  assert.match(
+    iframe,
+    /syncOctopusCanvasSize[\s\S]*?setCurrentTime\?\.\(lastCurrentTimeRef\.current \+ syncOffsetRef\.current\)/
+  );
   assert.match(iframe, /playerSettings\.subtitleSharpness,[\s\S]*?\]\);/);
 });
 
