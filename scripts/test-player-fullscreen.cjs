@@ -293,17 +293,23 @@ test('libass fullscreen resize keeps the current frame until the replacement siz
   assert.doesNotMatch(src, /self\.resize\(\);\s*setTimeout\(self\.resize, 100\)/);
 });
 
-test('ASS renderer exposes user-selectable subtitle sharpness and reapplies live', () => {
+test('ASS renderer exposes subtitle sharpness inside the ArtPlayer settings menu and reapplies live', () => {
   const src = fs.readFileSync(path.join(root, 'src/components/Player.tsx'), 'utf8');
   const settings = fs.readFileSync(path.join(root, 'src/components/PlayerSettingsModal.tsx'), 'utf8');
   assert.match(settings, /subtitleSharpness:\s*1 \| 1\.25 \| 1\.5 \| 2/);
   assert.match(settings, /subtitleSharpness:\s*1,/);
-  assert.match(settings, /\(\[1, 1\.25, 1\.5, 2\] as const\)/);
-  assert.match(settings, />자막 선명도</);
+  assert.match(src, /name:\s*"subtitleSharpness"/);
+  assert.match(src, /html:\s*"자막 선명도"/);
+  assert.match(src, /기본 \(1\.0x\)/);
+  assert.match(src, /선명 \(1\.25x\)/);
+  assert.match(src, /더 선명 \(1\.5x\)/);
+  assert.match(src, /최고 \(2\.0x\)/);
+  assert.match(src, /savePlayerSettings\(nextSettings\);\s*setPlayerSettings\(nextSettings\)/);
   assert.match(src, /prescaleFactor:\s*playerSettingsRef\.current\.subtitleSharpness \|\| 1/);
   assert.match(src, /\? 2160 : 1440/);
   assert.match(src, /sharpnessChanged[\s\S]*?applySubtitleRef\.current\(activeSub, currentSyncOffsetRef\.current\)/);
   assert.match(src, /typeof octopus\.resizeWithTimeout === "function"/);
+  assert.doesNotMatch(settings, />자막 선명도</);
 });
 
 
