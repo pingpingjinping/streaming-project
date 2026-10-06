@@ -1595,6 +1595,10 @@ export default function Player(props: PlayerProps) {
               subContent: sub.content || undefined,
               fonts: ["/libass/default.woff2"],
               fallbackFont: "/libass/default.woff2",
+              // Render a little above CSS resolution on low/medium-DPI screens.
+              // devicePixelRatio is still applied by SubtitlesOctopus itself.
+              prescaleFactor: 1.25,
+              prescaleHeightLimit: 1440,
               workerUrl: "/libass/subtitles-octopus-worker.js",
               legacyWorkerUrl: "/libass/subtitles-octopus-worker.js",
               timeOffset: offset,
@@ -3423,32 +3427,23 @@ export default function Player(props: PlayerProps) {
           document.removeEventListener("click", handleLinkClick, { capture: true });
         };
 
-        // Resize & Fullscreen sync for SubtitlesOctopus libass canvas
-        art.on("resize", () => {
-          if (octopusRef.current && typeof octopusRef.current.resize === "function") {
-            try {
-              octopusRef.current.resize();
-            } catch {}
-          }
-        });
-        art.on("fullscreen", () => {
-          setTimeout(() => {
-            if (octopusRef.current && typeof octopusRef.current.resize === "function") {
-              try {
-                octopusRef.current.resize();
-              } catch {}
+        // Resize & fullscreen sync for SubtitlesOctopus/libass.
+        // Prefer the debounced path so fullscreenchange + resize + ResizeObserver
+        // bursts do not repeatedly clear the subtitle canvas.
+        const scheduleAssResize = () => {
+          const octopus = octopusRef.current;
+          if (!octopus) return;
+          try {
+            if (typeof octopus.resizeWithTimeout === "function") {
+              octopus.resizeWithTimeout();
+            } else if (typeof octopus.resize === "function") {
+              octopus.resize();
             }
-          }, 150);
-        });
-        art.on("fullscreenWeb", () => {
-          setTimeout(() => {
-            if (octopusRef.current && typeof octopusRef.current.resize === "function") {
-              try {
-                octopusRef.current.resize();
-              } catch {}
-            }
-          }, 150);
-        });
+          } catch {}
+        };
+        art.on("resize", scheduleAssResize);
+        art.on("fullscreen", scheduleAssResize);
+        art.on("fullscreenWeb", scheduleAssResize);
 
         // Initial default subtitle
         const initialSubs: SubtitleItem[] = [];

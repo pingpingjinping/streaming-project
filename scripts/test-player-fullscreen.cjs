@@ -280,3 +280,20 @@ test('double click while entering does not start two fullscreen requests', async
   assert.equal(h.render().mode, 'native');
   await h.render().toggleFullscreen(); assert.equal(h.render().mode, 'inline'); h.unmount();
 });
+
+
+test('libass fullscreen resize keeps the current frame until the backing size really changes', () => {
+  const src = fs.readFileSync(path.join(root, 'public/libass/subtitles-octopus.js'), 'utf8');
+  assert.match(src, /var canvasSizeChanged = self\.canvas\.width !== width \|\| self\.canvas\.height !== height/);
+  assert.match(src, /if \(canvasSizeChanged\) \{\s*self\.canvas\.width = width;\s*self\.canvas\.height = height;/);
+  assert.match(src, /self\.setCurrentTime\(self\.video\.currentTime \+ self\.timeOffset\)/);
+  assert.match(src, /clearTimeout\(self\.resizeTimer\)/);
+  assert.doesNotMatch(src, /self\.resize\(\);\s*setTimeout\(self\.resize, 100\)/);
+});
+
+test('ASS renderer uses moderate oversampling without exceeding the mobile-friendly render target', () => {
+  const src = fs.readFileSync(path.join(root, 'src/components/Player.tsx'), 'utf8');
+  assert.match(src, /prescaleFactor:\s*1\.25/);
+  assert.match(src, /prescaleHeightLimit:\s*1440/);
+  assert.match(src, /typeof octopus\.resizeWithTimeout === "function"/);
+});
