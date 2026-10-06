@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { UserPlus, Trash2, RefreshCw, Shield, ShieldOff, KeyRound, Check, X, AlertCircle, Eye, EyeOff } from "lucide-react";
+import { UserPlus, Trash2, RefreshCw, Shield, ShieldOff, KeyRound, Check, AlertCircle, ChevronDown, ChevronUp, Download, Clock3, FileArchive } from "lucide-react";
 
 type User = {
   id: number;
@@ -13,6 +13,96 @@ type User = {
   created_at: string;
 };
 
+type SubtitleDownload = {
+  id: string;
+  source: string;
+  title: string;
+  episode: string;
+  creator: string;
+  sourceUrl: string;
+  files: string[];
+  completedAt: string;
+};
+
+type SubtitleFailure = {
+  id: string;
+  source: string;
+  title: string;
+  episode: string;
+  creator: string;
+  sourceUrl: string;
+  reason: string;
+  error: string;
+  attemptedAt: string;
+};
+
+type SubtitleRun = {
+  id: string;
+  startedAt: string;
+  finishedAt: string;
+  status: "success" | "partial" | "failed";
+  exitCode: number;
+  durationSeconds: number;
+  downloadedItems: number;
+  downloadedFiles: number;
+  failedItems: number;
+  retryItems: number;
+  waitingUrlItems: number;
+  erulaboPendingItems: number;
+  downloads: SubtitleDownload[];
+  failures: SubtitleFailure[];
+};
+
+type SubtitleReport = {
+  version: number;
+  generatedAt: string;
+  schedule?: { label?: string; timezone?: string };
+  runs: SubtitleRun[];
+};
+
+function CollapseButton({
+  collapsed,
+  onClick,
+}: {
+  collapsed: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-slate-800/60 text-slate-400 transition hover:bg-slate-700/80 hover:text-white"
+      title={collapsed ? "카드 펼치기" : "카드 접기"}
+      aria-label={collapsed ? "카드 펼치기" : "카드 접기"}
+    >
+      {collapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+    </button>
+  );
+}
+
+function formatKstDate(value?: string) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("ko-KR", {
+    timeZone: "Asia/Seoul",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatDuration(seconds?: number) {
+  const value = Math.max(0, Number(seconds) || 0);
+  if (value < 60) return `${value}초`;
+  const minutes = Math.floor(value / 60);
+  const remain = value % 60;
+  if (minutes < 60) return `${minutes}분 ${remain}초`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}시간 ${minutes % 60}분`;
+}
+
 export default function AdminDashboard({
   currentUser,
 }: {
@@ -22,6 +112,11 @@ export default function AdminDashboard({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [collapsedCards, setCollapsedCards] = useState<Record<string, boolean>>({});
+  const [subtitleReport, setSubtitleReport] = useState<SubtitleReport | null>(null);
+  const [subtitleLoading, setSubtitleLoading] = useState(true);
+  const [subtitleError, setSubtitleError] = useState<string | null>(null);
+  const [subtitleDetailsOpen, setSubtitleDetailsOpen] = useState(false);
   
   // Create Form State
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -53,8 +148,31 @@ export default function AdminDashboard({
     }
   };
 
+  const fetchSubtitleReport = async () => {
+    try {
+      setSubtitleLoading(true);
+      setSubtitleError(null);
+      const res = await fetch("/api/admin/subtitle-downloads", { cache: "no-store" });
+      const data = await res.json();
+      if (data.success) {
+        setSubtitleReport(data.report || null);
+      } else {
+        setSubtitleError(data.message || "자막 다운로드 기록을 불러오지 못했습니다.");
+      }
+    } catch {
+      setSubtitleError("자막 다운로드 기록을 불러오지 못했습니다.");
+    } finally {
+      setSubtitleLoading(false);
+    }
+  };
+
+  const toggleCard = (key: string) => {
+    setCollapsedCards((current) => ({ ...current, [key]: !current[key] }));
+  };
+
   useEffect(() => {
     fetchUsers();
+    fetchSubtitleReport();
   }, []);
 
   const showSuccess = (msg: string) => {
@@ -176,15 +294,32 @@ export default function AdminDashboard({
     setCreatePassword(pass);
   };
 
+  const latestRun = subtitleReport?.runs?.[0] || null;
+  const subtitleSchedule = subtitleReport?.schedule?.label || "매주 일요일 04:00";
+  const statusLabel = latestRun?.status === "success"
+    ? "정상"
+    : latestRun?.status === "partial"
+      ? "일부 실패"
+      : latestRun?.status === "failed"
+        ? "실패"
+        : "기록 없음";
+  const statusClass = latestRun?.status === "success"
+    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+    : latestRun?.status === "partial"
+      ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
+      : latestRun?.status === "failed"
+        ? "border-red-500/30 bg-red-500/10 text-red-300"
+        : "border-slate-500/30 bg-slate-500/10 text-slate-300";
+
   return (
     <div className="min-h-screen bg-[#060913] p-6 pt-24 text-white">
       <div className="mx-auto max-w-5xl">
         <div className="mb-8 flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-indigo-400 bg-clip-text text-transparent">
-              계정 관리
+              관리자 대시보드
             </h1>
-            <p className="mt-2 text-sm text-slate-400">시스템 사용자들을 관리합니다.</p>
+            <p className="mt-2 text-sm text-slate-400">자막 자동화 상태와 시스템 사용자들을 관리합니다.</p>
           </div>
         </div>
 
@@ -203,18 +338,190 @@ export default function AdminDashboard({
         )}
 
         <div className="mb-8 rounded-3xl border border-white/10 bg-[#0d1426]/70 p-6 shadow-2xl backdrop-blur-xl">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-slate-200">사용자 생성</h2>
-            <button
-              onClick={() => setIsCreateOpen(!isCreateOpen)}
-              className="flex items-center gap-2 rounded-xl bg-purple-600/20 px-4 py-2 text-sm font-medium text-purple-300 transition hover:bg-purple-600/30"
-            >
-              <UserPlus className="h-4 w-4" />
-              {isCreateOpen ? "닫기" : "새 계정 추가"}
-            </button>
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-indigo-500/15 text-indigo-300">
+                <Download className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-lg font-semibold text-slate-200">주간 자막 자동 다운로드</h2>
+                  <span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${statusClass}`}>
+                    {statusLabel}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">Pi 주간 다운로드 작업의 실제 실행 기록입니다.</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={fetchSubtitleReport}
+                disabled={subtitleLoading}
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-slate-800/60 text-slate-400 transition hover:bg-slate-700/80 hover:text-white disabled:opacity-50"
+                title="새로고침"
+              >
+                <RefreshCw className={`h-4 w-4 ${subtitleLoading ? "animate-spin" : ""}`} />
+              </button>
+              <CollapseButton
+                collapsed={!!collapsedCards.subtitles}
+                onClick={() => toggleCard("subtitles")}
+              />
+            </div>
           </div>
 
-          {isCreateOpen && (
+          {!collapsedCards.subtitles && (
+            <div className="mt-6 border-t border-white/10 pt-6">
+              {subtitleLoading && !subtitleReport ? (
+                <div className="flex items-center justify-center gap-3 py-8 text-sm text-slate-400">
+                  <RefreshCw className="h-5 w-5 animate-spin text-indigo-400" />
+                  실행 기록을 불러오는 중...
+                </div>
+              ) : subtitleError ? (
+                <div className="rounded-xl border border-red-500/30 bg-red-950/30 p-4 text-sm text-red-300">
+                  {subtitleError}
+                </div>
+              ) : !latestRun ? (
+                <div className="rounded-2xl border border-white/5 bg-slate-900/40 p-5 text-sm text-slate-400">
+                  아직 저장된 주간 실행 기록이 없습니다. 업데이트 적용 후 다음 자동 실행부터 여기에 기록됩니다.
+                </div>
+              ) : (
+                <>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                    <div className="rounded-2xl border border-white/5 bg-slate-900/40 p-4">
+                      <div className="mb-2 flex items-center gap-2 text-xs text-slate-500"><Clock3 className="h-3.5 w-3.5" />최근 실행</div>
+                      <div className="text-sm font-semibold text-slate-200">{formatKstDate(latestRun.finishedAt)}</div>
+                    </div>
+                    <div className="rounded-2xl border border-white/5 bg-slate-900/40 p-4">
+                      <div className="mb-2 text-xs text-slate-500">새 다운로드</div>
+                      <div className="text-xl font-bold text-indigo-300">{latestRun.downloadedFiles}<span className="ml-1 text-xs font-normal text-slate-500">파일</span></div>
+                    </div>
+                    <div className="rounded-2xl border border-white/5 bg-slate-900/40 p-4">
+                      <div className="mb-2 text-xs text-slate-500">실패</div>
+                      <div className={`text-xl font-bold ${latestRun.failedItems ? "text-red-300" : "text-emerald-300"}`}>{latestRun.failedItems}<span className="ml-1 text-xs font-normal text-slate-500">건</span></div>
+                    </div>
+                    <div className="rounded-2xl border border-white/5 bg-slate-900/40 p-4">
+                      <div className="mb-2 text-xs text-slate-500">실행 시간</div>
+                      <div className="text-sm font-semibold text-slate-200">{formatDuration(latestRun.durationSeconds)}</div>
+                    </div>
+                    <div className="rounded-2xl border border-white/5 bg-slate-900/40 p-4">
+                      <div className="mb-2 text-xs text-slate-500">다음 실행</div>
+                      <div className="text-sm font-semibold text-slate-200">{subtitleSchedule}</div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/5 bg-slate-900/30 px-4 py-3">
+                    <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-400">
+                      <span>다운로드 항목 <b className="text-slate-200">{latestRun.downloadedItems}</b></span>
+                      <span>재시도 대기 <b className="text-slate-200">{latestRun.retryItems}</b></span>
+                      <span>URL 대기 <b className="text-slate-200">{latestRun.waitingUrlItems}</b></span>
+                      <span>Erulabo 대기 <b className="text-slate-200">{latestRun.erulaboPendingItems}</b></span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSubtitleDetailsOpen((open) => !open)}
+                      className="rounded-xl bg-indigo-500/15 px-3.5 py-2 text-xs font-semibold text-indigo-300 transition hover:bg-indigo-500/25"
+                    >
+                      {subtitleDetailsOpen ? "상세 로그 닫기" : "상세 로그 보기"}
+                    </button>
+                  </div>
+
+                  {subtitleDetailsOpen && (
+                    <div className="mt-4 space-y-4">
+                      <div className="rounded-2xl border border-white/5 bg-slate-900/30 p-4">
+                        <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-200">
+                          <FileArchive className="h-4 w-4 text-indigo-300" />
+                          이번 실행에서 받은 자막
+                        </div>
+                        {latestRun.downloads.length === 0 ? (
+                          <div className="py-4 text-sm text-slate-500">이번 실행에서 새로 받은 자막이 없습니다.</div>
+                        ) : (
+                          <div className="space-y-2">
+                            {latestRun.downloads.map((item) => (
+                              <div key={item.id} className="rounded-xl border border-white/5 bg-black/20 p-3">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="rounded-md bg-indigo-500/15 px-2 py-0.5 text-[10px] font-bold uppercase text-indigo-300">{item.source}</span>
+                                  <span className="text-sm font-semibold text-slate-200">{item.title}</span>
+                                  {item.episode && <span className="text-xs text-slate-400">{item.episode}화</span>}
+                                  {item.creator && <span className="text-xs text-slate-500">{item.creator}</span>}
+                                </div>
+                                <div className="mt-2 space-y-1 text-xs text-slate-500">
+                                  {item.files.map((file) => <div key={file} className="break-all">• {file}</div>)}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {latestRun.failures.length > 0 && (
+                        <div className="rounded-2xl border border-red-500/20 bg-red-950/15 p-4">
+                          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-red-300">
+                            <AlertCircle className="h-4 w-4" />
+                            이번 실행 실패
+                          </div>
+                          <div className="space-y-2">
+                            {latestRun.failures.map((item, index) => (
+                              <div key={`${item.id}-${index}`} className="rounded-xl border border-red-500/10 bg-black/20 p-3">
+                                <div className="flex flex-wrap items-center gap-2 text-sm">
+                                  <span className="font-semibold text-slate-200">{item.title}</span>
+                                  {item.episode && <span className="text-xs text-slate-400">{item.episode}화</span>}
+                                  <span className="rounded-md bg-red-500/10 px-2 py-0.5 text-[10px] text-red-300">{item.reason}</span>
+                                </div>
+                                <div className="mt-1 break-all text-xs text-red-300/80">{item.error}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {subtitleReport && subtitleReport.runs.length > 1 && (
+                        <div className="rounded-2xl border border-white/5 bg-slate-900/30 p-4">
+                          <div className="mb-3 text-sm font-semibold text-slate-200">최근 실행 기록</div>
+                          <div className="space-y-2">
+                            {subtitleReport.runs.slice(0, 6).map((run) => (
+                              <div key={run.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-black/20 px-3 py-2 text-xs">
+                                <span className="text-slate-400">{formatKstDate(run.finishedAt)}</span>
+                                <span className="text-slate-300">다운로드 {run.downloadedFiles} · 실패 {run.failedItems} · {formatDuration(run.durationSeconds)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="mb-8 rounded-3xl border border-white/10 bg-[#0d1426]/70 p-6 shadow-2xl backdrop-blur-xl">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-slate-200">사용자 생성</h2>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  if (collapsedCards.create) {
+                    setCollapsedCards((current) => ({ ...current, create: false }));
+                    setIsCreateOpen(true);
+                    return;
+                  }
+                  setIsCreateOpen(!isCreateOpen);
+                }}
+                className="flex items-center gap-2 rounded-xl bg-purple-600/20 px-4 py-2 text-sm font-medium text-purple-300 transition hover:bg-purple-600/30"
+              >
+                <UserPlus className="h-4 w-4" />
+                {!collapsedCards.create && isCreateOpen ? "닫기" : "새 계정 추가"}
+              </button>
+              <CollapseButton
+                collapsed={!!collapsedCards.create}
+                onClick={() => toggleCard("create")}
+              />
+            </div>
+          </div>
+
+          {!collapsedCards.create && isCreateOpen && (
             <div className="mt-6 border-t border-white/10 pt-6">
               <form onSubmit={handleCreateUser} className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 <div className="space-y-1.5">
@@ -282,9 +589,15 @@ export default function AdminDashboard({
         </div>
 
         <div className="rounded-3xl border border-white/10 bg-[#0d1426]/70 p-6 shadow-2xl backdrop-blur-xl">
-          <h2 className="mb-6 text-lg font-semibold text-slate-200">사용자 목록</h2>
+          <div className={`flex items-center justify-between ${collapsedCards.users ? "" : "mb-6"}`}>
+            <h2 className="text-lg font-semibold text-slate-200">사용자 목록</h2>
+            <CollapseButton
+              collapsed={!!collapsedCards.users}
+              onClick={() => toggleCard("users")}
+            />
+          </div>
           
-          {loading ? (
+          {!collapsedCards.users && (loading ? (
             <div className="py-12 text-center text-slate-400 flex flex-col items-center">
               <RefreshCw className="h-8 w-8 animate-spin mb-4 text-purple-500" />
               불러오는 중...
@@ -400,7 +713,7 @@ export default function AdminDashboard({
                 );
               })}
             </div>
-          )}
+          ))}
         </div>
       </div>
     </div>
