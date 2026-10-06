@@ -404,11 +404,22 @@ export default function Player(props: PlayerProps) {
       art.notice.show = `${targetEp}화 로딩 중...`;
 
       try {
-        // 1. 현재 에피소드 시청 완료 기록 및 로컬 캐시 정리
-        const prevSaveKey = `anime_progress_${animeId}_ep${currentEpRef.current}`;
-        localStorage.removeItem(prevSaveKey);
+        // 1. 현재 회차 진행도를 정확히 보존.
+        // 수동으로 다른 회차를 눌렀다고 무조건 완주 처리하면 이어보기 기록이 사라진다.
+        const prevEp = currentEpRef.current;
+        const prevSaveKey = `anime_progress_${animeId}_ep${prevEp}`;
+        const prevSec = art.currentTime || 0;
+        const prevDur = art.duration || art.template?.$video?.duration || 0;
+        const prevCompleted =
+          prevDur > 0 &&
+          (prevSec >= prevDur - 15 || (prevDur > 60 && prevSec / prevDur >= 0.95));
+        if (prevCompleted) {
+          localStorage.removeItem(prevSaveKey);
+        } else if (prevSec > 2) {
+          localStorage.setItem(prevSaveKey, String(prevSec));
+        }
         if (syncHistoryRef.current) {
-          syncHistoryRef.current(true);
+          syncHistoryRef.current(prevCompleted);
         }
 
         // 2. 이전 자막 정리 (새 회차 자막 로드 전 잔상 방지)
@@ -3197,8 +3208,11 @@ export default function Player(props: PlayerProps) {
         const initialSaveKey = getSaveKey(initialEp);
         const savedSec = parseFloat(localStorage.getItem(initialSaveKey) || "0");
 
+        let playbackRestoreHandled = false;
         const tryRestorePlaybackTime = (targetSec: number, isFromCloud = false) => {
-          if (targetSec <= 10) return;
+          if (playbackRestoreHandled || targetSec <= 10) return;
+          playbackRestoreHandled = true;
+
           const dur = art.duration || art.template?.$video?.duration || 0;
           if (dur > 0 && isPlaybackCompleted(targetSec, dur)) {
             // 이미 100% (완료) 시청된 경우 처음부터 재생
@@ -3211,12 +3225,36 @@ export default function Player(props: PlayerProps) {
           art.notice.show = `${isFromCloud ? "클라우드 " : ""}이어보기: ${Math.floor(targetSec / 60)}분 ${Math.floor(targetSec % 60)}초부터 재생`;
         };
 
-        if (savedSec > 10) {
-          const onRestore = () => {
-            tryRestorePlaybackTime(savedSec, false);
+        const restorePlaybackWhenReady = (targetSec: number, isFromCloud = false) => {
+          if (targetSec <= 10 || playbackRestoreHandled) return;
+          const video = art.template?.$video as HTMLVideoElement | undefined;
+          const metadataReady =
+            Boolean(video && video.readyState >= 1) ||
+            Boolean((art.duration || video?.duration || 0) > 0);
+
+          const restore = () => {
+            if (
+              artRef.current !== art ||
+              currentEpRef.current !== initialEp ||
+              playbackRestoreHandled
+            ) {
+              return;
+            }
+            tryRestorePlaybackTime(targetSec, isFromCloud);
           };
-          art.once("ready", onRestore);
-          art.once("video:loadedmetadata", onRestore);
+
+          // On refresh/HLS, ready or loadedmetadata may already have fired before
+          // this restore block runs (especially after an async cloud-history fetch).
+          if (metadataReady) {
+            restore();
+          } else {
+            art.once("ready", restore);
+            art.once("video:loadedmetadata", restore);
+          }
+        };
+
+        if (savedSec > 10) {
+          restorePlaybackWhenReady(savedSec, false);
         } else {
           fetch(`/api/anime/history?anime_id=${animeId}`)
             .then((r) => r.json())
@@ -3226,11 +3264,7 @@ export default function Player(props: PlayerProps) {
                 const epHistory = d.items.find((h: any) => h.episode_number === initialEp);
                 const cloudSec = epHistory ? parseFloat(epHistory.current_time || epHistory.watch_time || "0") : 0;
                 if (cloudSec > 10 && !epHistory.is_completed && artRef.current) {
-                  const onRestoreCloud = () => {
-                    tryRestorePlaybackTime(cloudSec, true);
-                  };
-                  art.once("ready", onRestoreCloud);
-                  art.once("video:loadedmetadata", onRestoreCloud);
+                  restorePlaybackWhenReady(cloudSec, true);
                 }
               }
             })
