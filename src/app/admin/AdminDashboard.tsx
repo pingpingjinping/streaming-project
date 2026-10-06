@@ -502,13 +502,17 @@ export default function AdminDashboard({
             <div className="flex items-center gap-2">
               <button
                 onClick={() => {
-                  setCollapsedCards((current) => ({ ...current, create: false }));
+                  if (collapsedCards.create) {
+                    setCollapsedCards((current) => ({ ...current, create: false }));
+                    setIsCreateOpen(true);
+                    return;
+                  }
                   setIsCreateOpen(!isCreateOpen);
                 }}
                 className="flex items-center gap-2 rounded-xl bg-purple-600/20 px-4 py-2 text-sm font-medium text-purple-300 transition hover:bg-purple-600/30"
               >
                 <UserPlus className="h-4 w-4" />
-                {isCreateOpen ? "닫기" : "새 계정 추가"}
+                {!collapsedCards.create && isCreateOpen ? "닫기" : "새 계정 추가"}
               </button>
               <CollapseButton
                 collapsed={!!collapsedCards.create}
@@ -585,7 +589,7 @@ export default function AdminDashboard({
         </div>
 
         <div className="rounded-3xl border border-white/10 bg-[#0d1426]/70 p-6 shadow-2xl backdrop-blur-xl">
-          <div className="mb-6 flex items-center justify-between">
+          <div className={`flex items-center justify-between ${collapsedCards.users ? "" : "mb-6"}`}>
             <h2 className="text-lg font-semibold text-slate-200">사용자 목록</h2>
             <CollapseButton
               collapsed={!!collapsedCards.users}
