@@ -1495,13 +1495,20 @@ var SubtitlesOctopus = function (options) {
     };
 
     self.resizeWithTimeout = function () {
+        // Fullscreen transitions and Safari viewport scrolling can emit a long
+        // burst of resize notifications. Render once at the start so subtitles
+        // stay visible, then once more after the layout has fully settled.
+        var resizeImmediately = self.resizeTimer === null;
         if (self.resizeTimer !== null) {
             clearTimeout(self.resizeTimer);
+        }
+        if (resizeImmediately) {
+            self.resize();
         }
         self.resizeTimer = setTimeout(function () {
             self.resizeTimer = null;
             self.resize();
-        }, 100);
+        }, 180);
     };
 
     self.runBenchmark = function () {
