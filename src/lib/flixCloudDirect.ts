@@ -160,7 +160,7 @@ export async function resolveFlixCloudDirect(
     return null;
   }
 
-  if (parsed.protocol !== "https:" || !/(^|\\.)flixcloud\\.cc$/i.test(parsed.hostname)) {
+  if (parsed.protocol !== "https:" || !/(^|\.)flixcloud\.cc$/i.test(parsed.hostname)) {
     return null;
   }
 
@@ -248,9 +248,9 @@ export async function resolveFlixCloudDirect(
       decipher.update(encryptedVideo),
       decipher.final(),
     ]);
-    const directUrl = decrypted.toString("utf8").replace(/\\0+$/g, "").trim();
+    const directUrl = decrypted.toString("utf8").replace(/\u0000+$/g, "").trim();
 
-    if (!/^https?:\\/\\//i.test(directUrl)) return null;
+    if (!/^https?:\/\//i.test(directUrl)) return null;
     await assertSafeProxyUrl(directUrl);
 
     const playlistKey = extractPlaylistKey(wasmBytes);
