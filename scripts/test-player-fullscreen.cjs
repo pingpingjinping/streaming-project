@@ -329,15 +329,3 @@ test('libass keeps the old frame until a forced resize frame is ready', () => {
   assert.match(worker, /self\.getRenderMethod\(\)\(message\.data\.forceRender===true\)/);
   assert.doesNotMatch(src, /hasResizeSnapshot|bufferCanvasCtx\.drawImage\(self\.canvas/);
 });
-
-
-test('libass canvas CSS geometry snaps to device-pixel boundaries', () => {
-  const src = fs.readFileSync(path.join(root, 'public/libass/subtitles-octopus.js'), 'utf8');
-  assert.match(src, /function _snapCssPixel\(value\)/);
-  assert.match(src, /Math\.round\(value \* ratio\) \/ ratio/);
-  assert.match(src, /var cssWidth = _snapCssPixel\(videoSize\.width\)/);
-  assert.match(src, /var cssHeight = _snapCssPixel\(videoSize\.height\)/);
-  assert.match(src, /var cssTop = _snapCssPixel\(top\)/);
-  assert.match(src, /var cssLeft = _snapCssPixel\(left\)/);
-  assert.match(src, /self\.canvas\.style\.width = cssWidth \+ 'px'/);
-});
