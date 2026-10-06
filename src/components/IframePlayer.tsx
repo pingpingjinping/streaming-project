@@ -787,12 +787,16 @@ export default function IframePlayer({
           const sharpness = playerSettings.subtitleSharpness || 1;
           const renderW = Math.max(1, Math.round(w * sharpness));
           const renderH = Math.max(1, Math.round(h * sharpness));
-          if (canvasRef.current) {
-            canvasRef.current.width = renderW;
-            canvasRef.current.height = renderH;
-          }
-          octopusRef.current?.resize(renderW, renderH);
-          octopusRef.current?.setCurrentTime?.(lastCurrentTimeRef.current + syncOffsetRef.current);
+
+          // Do not mutate canvas.width/height here. Setting either property
+          // clears the canvas immediately, and SubtitlesOctopus then sees the
+          // requested size as already applied and skips its worker resize.
+          // Let Octopus own the backing-size transition so it can notify
+          // libass and redraw the current frame after rotation/fullscreen.
+          octopusRef.current.resize(renderW, renderH);
+          octopusRef.current?.setCurrentTime?.(
+            lastCurrentTimeRef.current + syncOffsetRef.current
+          );
         } catch {}
       }
     };
