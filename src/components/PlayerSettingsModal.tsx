@@ -44,6 +44,7 @@ export interface PlayerSettings {
 
   // 💬 자막 & 외부 데이터
   subtitleBottom: number;       // 일반 자막 최저 하단 여백 (15 / 25 / 35 px)
+  subtitleSharpness: 1 | 1.25 | 1.5 | 2; // ASS/SSA libass 렌더 선명도 배율
   localSubBtn: boolean;         // 로컬 자막 파일 열기 버튼 표시
   anissiaCard: boolean;         // 애니시아 등록 제작자 현황 카드 표시
 }
@@ -70,6 +71,7 @@ export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
 
   // 💬 자막 & 외부 데이터
   subtitleBottom: 15,
+  subtitleSharpness: 1,
   localSubBtn: true,
   anissiaCard: true,
 };
@@ -78,6 +80,11 @@ const SETTINGS_KEY = "anime_player_settings";
 
 export function getFullscreenExitOpacity(value: unknown): PlayerSettings["fullscreenExitOpacity"] {
   return value === 0 || value === 33 || value === 66 || value === 100 ? value : 100;
+}
+
+export function getSubtitleSharpness(value: unknown): PlayerSettings["subtitleSharpness"] {
+  const numeric = Number(value);
+  return numeric === 1 || numeric === 1.25 || numeric === 1.5 || numeric === 2 ? numeric : 1;
 }
 
 let saveDbTimer: ReturnType<typeof setTimeout> | null = null;
@@ -116,6 +123,7 @@ export async function fetchUserSettingsFromDb(): Promise<{
     return {
       settings: data.settings ? {
         ...data.settings,
+        subtitleSharpness: getSubtitleSharpness(data.settings.subtitleSharpness),
         fullscreenExitOpacity: getFullscreenExitOpacity(data.settings.fullscreenExitOpacity),
       } : null,
       authenticated: Boolean(data.authenticated),
@@ -165,6 +173,7 @@ export function loadPlayerSettings(): PlayerSettings {
       doubleTouchDuration: parsed.doubleTouchDuration === 5 ? 5 : 10,
       mobileGesture: parsed.mobileGesture !== undefined ? !!parsed.mobileGesture : false,
       subtitleBottom: subBottomVal,
+      subtitleSharpness: getSubtitleSharpness(parsed.subtitleSharpness),
       fullscreenExitOpacity: getFullscreenExitOpacity(parsed.fullscreenExitOpacity),
     };
   } catch {
@@ -694,6 +703,43 @@ export default function PlayerSettingsModal({
             </div>
 
             <div className="space-y-2.5">
+              {/* ASS/SSA 자막 선명도 */}
+              <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/5 bg-slate-900/60 p-3.5 hover:border-purple-500/20 transition">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-pink-500/10 text-pink-400">
+                    <Sparkles className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-white">자막 선명도</div>
+                    <div className="text-xs text-slate-400">ASS/SSA 자막 렌더 해상도 배율 · 높을수록 선명하지만 기기 부하가 늘어납니다</div>
+                  </div>
+                </div>
+
+                <div className="inline-flex shrink-0 rounded-xl bg-slate-800/90 p-0.5 border border-white/10 text-xs font-semibold">
+                  {([1, 1.25, 1.5, 2] as const).map((val) => {
+                    const isSelected = (settings.subtitleSharpness || 1) === val;
+                    return (
+                      <button
+                        key={val}
+                        type="button"
+                        onClick={() => {
+                          const next = { ...settings, subtitleSharpness: val };
+                          savePlayerSettings(next);
+                          onUpdateSettings(next);
+                        }}
+                        className={`rounded-lg px-2.5 py-1 transition cursor-pointer ${
+                          isSelected
+                            ? "bg-pink-600 text-white shadow-sm font-bold"
+                            : "text-slate-400 hover:text-white"
+                        }`}
+                      >
+                        {val.toFixed(val === 1 ? 1 : val === 1.25 ? 2 : 1)}x
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               {/* 일반 자막 최저 높이 */}
               <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/5 bg-slate-900/60 p-3.5 hover:border-purple-500/20 transition">
                 <div className="flex items-center gap-3">

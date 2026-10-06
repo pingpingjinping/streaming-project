@@ -293,10 +293,16 @@ test('libass fullscreen resize keeps the current frame until the replacement siz
   assert.doesNotMatch(src, /self\.resize\(\);\s*setTimeout\(self\.resize, 100\)/);
 });
 
-test('ASS renderer uses moderate oversampling without exceeding the mobile-friendly render target', () => {
+test('ASS renderer exposes user-selectable subtitle sharpness and reapplies live', () => {
   const src = fs.readFileSync(path.join(root, 'src/components/Player.tsx'), 'utf8');
-  assert.match(src, /prescaleFactor:\s*1\.25/);
-  assert.match(src, /prescaleHeightLimit:\s*1440/);
+  const settings = fs.readFileSync(path.join(root, 'src/components/PlayerSettingsModal.tsx'), 'utf8');
+  assert.match(settings, /subtitleSharpness:\s*1 \| 1\.25 \| 1\.5 \| 2/);
+  assert.match(settings, /subtitleSharpness:\s*1,/);
+  assert.match(settings, /\(\[1, 1\.25, 1\.5, 2\] as const\)/);
+  assert.match(settings, />자막 선명도</);
+  assert.match(src, /prescaleFactor:\s*playerSettingsRef\.current\.subtitleSharpness \|\| 1/);
+  assert.match(src, /\? 2160 : 1440/);
+  assert.match(src, /sharpnessChanged[\s\S]*?applySubtitleRef\.current\(activeSub, currentSyncOffsetRef\.current\)/);
   assert.match(src, /typeof octopus\.resizeWithTimeout === "function"/);
 });
 
