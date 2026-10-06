@@ -551,9 +551,12 @@ export default function IframePlayer({
 
           const w = mediaFrameRef.current?.clientWidth || 1920;
           const h = mediaFrameRef.current?.clientHeight || 1080;
+          const sharpness = playerSettings.subtitleSharpness || 1;
+          const renderW = Math.max(1, Math.round(w * sharpness));
+          const renderH = Math.max(1, Math.round(h * sharpness));
           if (canvasRef.current) {
-            canvasRef.current.width = w;
-            canvasRef.current.height = h;
+            canvasRef.current.width = renderW;
+            canvasRef.current.height = renderH;
           }
 
           const blob = new Blob([sub.content], { type: "text/plain;charset=utf-8" });
@@ -576,7 +579,11 @@ export default function IframePlayer({
               try {
                 const cw = mediaFrameRef.current?.clientWidth || 1920;
                 const ch = mediaFrameRef.current?.clientHeight || 1080;
-                octopusRef.current?.resize(cw, ch);
+                const sharpness = playerSettings.subtitleSharpness || 1;
+                octopusRef.current?.resize(
+                  Math.max(1, Math.round(cw * sharpness)),
+                  Math.max(1, Math.round(ch * sharpness))
+                );
                 octopusRef.current?.setIsPaused(false, lastCurrentTimeRef.current + syncOffsetRef.current);
               } catch {}
             },
@@ -635,7 +642,15 @@ export default function IframePlayer({
       isOctopusActiveRef.current = false;
       setIsOctopusActive(false);
     };
-  }, [subtitles, currentSubIndex, parseAssToCues, parseVttToCues, isOctopusScriptLoaded, showNotice]);
+  }, [
+    subtitles,
+    currentSubIndex,
+    parseAssToCues,
+    parseVttToCues,
+    isOctopusScriptLoaded,
+    showNotice,
+    playerSettings.subtitleSharpness,
+  ]);
 
   // 8. FlixCloud postMessage polling (100ms) & message listeners
   useEffect(() => {
