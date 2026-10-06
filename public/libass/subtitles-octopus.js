@@ -1459,12 +1459,47 @@ var SubtitlesOctopus = function (options) {
         width = Math.max(1, Math.round(width));
         height = Math.max(1, Math.round(height));
         var canvasSizeChanged = self.canvas.width !== width || self.canvas.height !== height;
+        var hasResizeSnapshot = false;
 
         // Reassigning canvas.width/height clears the current subtitle frame.
+        // Preserve the old frame in the existing scratch canvas so fullscreen
+        // transitions never expose a blank subtitle layer while libass renders
+        // the new resolution.
+        if (
+            canvasSizeChanged &&
+            self.canvas.width > 0 &&
+            self.canvas.height > 0 &&
+            self.bufferCanvas &&
+            self.bufferCanvasCtx
+        ) {
+            try {
+                self.bufferCanvas.width = self.canvas.width;
+                self.bufferCanvas.height = self.canvas.height;
+                self.bufferCanvasCtx.clearRect(0, 0, self.bufferCanvas.width, self.bufferCanvas.height);
+                self.bufferCanvasCtx.drawImage(self.canvas, 0, 0);
+                hasResizeSnapshot = true;
+            } catch (e) {}
+        }
+
         // Only touch the backing store when its pixel dimensions really changed.
         if (canvasSizeChanged) {
             self.canvas.width = width;
             self.canvas.height = height;
+            if (hasResizeSnapshot) {
+                try {
+                    self.ctx.drawImage(
+                        self.bufferCanvas,
+                        0,
+                        0,
+                        self.bufferCanvas.width,
+                        self.bufferCanvas.height,
+                        0,
+                        0,
+                        width,
+                        height
+                    );
+                } catch (e) {}
+            }
         }
 
         if (videoSize != null) {
