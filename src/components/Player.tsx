@@ -662,8 +662,11 @@ export default function Player(props: PlayerProps) {
 
   // Apply initial player settings styles and maintain ref
   const playerSettingsRef = useRef<PlayerSettings>(playerSettings);
+  const lastSubtitleSharpnessRef = useRef<PlayerSettings["subtitleSharpness"]>(playerSettings.subtitleSharpness);
   useEffect(() => {
+    const sharpnessChanged = lastSubtitleSharpnessRef.current !== playerSettings.subtitleSharpness;
     playerSettingsRef.current = playerSettings;
+    lastSubtitleSharpnessRef.current = playerSettings.subtitleSharpness;
     applyPlayerSettingsStyles(playerSettings);
 
     // 더블탭 레이블 및 모바일 중앙 컨트롤 스킵 초수 실시간 동기화
@@ -684,6 +687,20 @@ export default function Player(props: PlayerProps) {
       artRef.current.hotkey = playerSettings.hotkey;
       if (artRef.current.option) {
         artRef.current.option.gesture = playerSettings.mobileGesture;
+      }
+    }
+
+    // Recreate only the active ASS/SSA renderer so sharpness changes can be
+    // compared immediately without reloading the page or restarting playback.
+    if (
+      sharpnessChanged &&
+      currentSubRef.current?.is_ass &&
+      applySubtitleRef.current
+    ) {
+      const activeSub = currentSubRef.current;
+      applySubtitleRef.current(activeSub, currentSyncOffsetRef.current);
+      if (artRef.current) {
+        artRef.current.notice.show = `자막 선명도: ${playerSettings.subtitleSharpness}x`;
       }
     }
   }, [playerSettings]);
@@ -1606,10 +1623,13 @@ export default function Player(props: PlayerProps) {
               subContent: sub.content || undefined,
               fonts: ["/libass/default.woff2"],
               fallbackFont: "/libass/default.woff2",
-              // Render a little above CSS resolution on low/medium-DPI screens.
-              // devicePixelRatio is still applied by SubtitlesOctopus itself.
-              prescaleFactor: 1.25,
-              prescaleHeightLimit: 1440,
+              // User-selectable ASS/SSA oversampling. devicePixelRatio is
+              // still applied by SubtitlesOctopus itself before this factor.
+              prescaleFactor: playerSettingsRef.current.subtitleSharpness || 1,
+              // Allow the quality modes to remain distinguishable on high-DPI
+              // phones while bounding the largest 2x render target.
+              prescaleHeightLimit:
+                (playerSettingsRef.current.subtitleSharpness || 1) > 1 ? 2160 : 1440,
               workerUrl: "/libass/subtitles-octopus-worker.js",
               legacyWorkerUrl: "/libass/subtitles-octopus-worker.js",
               timeOffset: offset,
