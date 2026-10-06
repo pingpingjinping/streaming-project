@@ -52,7 +52,12 @@ export async function GET(request: NextRequest) {
       pathname.endsWith(".ts") ||
       (body.length > 0 && body[0] === 0x47);
 
-    return new NextResponse(body, {
+    const responseBody = body.buffer.slice(
+      body.byteOffset,
+      body.byteOffset + body.byteLength
+    ) as ArrayBuffer;
+
+    return new NextResponse(responseBody, {
       status: 200,
       headers: {
         "Content-Type": looksLikeTs ? "video/mp2t" : upstreamType,
