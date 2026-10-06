@@ -297,3 +297,21 @@ test('ASS renderer uses moderate oversampling without exceeding the mobile-frien
   assert.match(src, /prescaleHeightLimit:\s*1440/);
   assert.match(src, /typeof octopus\.resizeWithTimeout === "function"/);
 });
+
+
+test('libass resize burst renders immediately and once after Safari/fullscreen layout settles', () => {
+  const src = fs.readFileSync(path.join(root, 'public/libass/subtitles-octopus.js'), 'utf8');
+  assert.match(src, /var resizeImmediately = self\.resizeTimer === null/);
+  assert.match(src, /if \(resizeImmediately\) \{\s*self\.resize\(\);\s*\}/);
+  assert.match(src, /self\.resizeTimer = setTimeout\(function \(\) \{[\s\S]*?self\.resize\(\);[\s\S]*?\}, 180\)/);
+});
+
+test('playback resume handles refresh after metadata already fired and preserves partial episodes', () => {
+  const src = fs.readFileSync(path.join(root, 'src/components/Player.tsx'), 'utf8');
+  assert.match(src, /video\.readyState >= 1/);
+  assert.match(src, /restorePlaybackWhenReady\(savedSec, false\)/);
+  assert.match(src, /restorePlaybackWhenReady\(cloudSec, true\)/);
+  assert.match(src, /const prevCompleted =[\s\S]*?prevSec >= prevDur - 15/);
+  assert.match(src, /syncHistoryRef\.current\(prevCompleted\)/);
+  assert.doesNotMatch(src, /현재 에피소드 시청 완료 기록 및 로컬 캐시 정리/);
+});
