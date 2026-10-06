@@ -10,6 +10,7 @@ import { fetchCreatorSubtitle, resolveKoreanTitle } from "@/lib/subtitles";
 import { resolveAnissiaStream } from "@/lib/resolvers/videoResolver";
 import { getManualStreamSourceById, getSubtitleEpisodeStart } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
+import { resolveFlixCloudDirect } from "@/lib/flixCloudDirect";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 
@@ -60,12 +61,13 @@ export default async function WatchPage({
     sub_url?: string;
     manual_source?: string;
     video_source?: string;
+    flix_direct?: string;
   }>;
 }) {
   const user = await requireAuth();
 
   const { id, ep } = await params;
-  const { dub, creator, sub_url, manual_source, video_source } = await searchParams;
+  const { dub, creator, sub_url, manual_source, video_source, flix_direct } = await searchParams;
   const epNum = parseInt(ep, 10) || 1;
   const isDub = dub === "1";
   const isReanime = id.startsWith("re_");
@@ -284,15 +286,57 @@ export default async function WatchPage({
     );
   }
 
-  const isIframe = streamInfo.stream_type === "iframe" || (!streamInfo.m3u8_url && Boolean(streamInfo.embed_url));
-  const embedUrl = streamInfo.embed_url || streamInfo.player_url || "";
-  const playerRef = streamInfo.player_url || "";
-  const rawM3u8 = streamInfo.m3u8_url || "";
-  const rawVtt = streamInfo.vtt_url || "";
+  const originalEmbedUrl = streamInfo.embed_url || streamInfo.player_url || "";
+  const canTestFlixDirect = /(^|\.)flixcloud\.cc$/i.test(
+    (() => {
+      try {
+        return new URL(originalEmbedUrl).hostname;
+      } catch {
+        return "";
+      }
+    })()
+  );
+  const flixDirectRequested = flix_direct === "1" && canTestFlixDirect;
+  const flixDirect = flixDirectRequested
+    ? await resolveFlixCloudDirect(originalEmbedUrl)
+    : null;
 
-  const proxiedM3u8 = (!isIframe && rawM3u8)
-    ? `/api/anime/stream/m3u8?url=${encodeURIComponent(rawM3u8)}&ref=${encodeURIComponent(playerRef)}`
-    : "";
+  const effectiveStreamInfo = flixDirect
+    ? {
+        ...streamInfo,
+        m3u8_url: flixDirect.url,
+        embed_url: "",
+        player_url: originalEmbedUrl,
+        stream_type: "m3u8" as const,
+        vtt_url: "",
+      }
+    : streamInfo;
+
+  const isIframe =
+    effectiveStreamInfo.stream_type === "iframe" ||
+    (!effectiveStreamInfo.m3u8_url && Boolean(effectiveStreamInfo.embed_url));
+  const embedUrl = effectiveStreamInfo.embed_url || effectiveStreamInfo.player_url || "";
+  const playerRef = effectiveStreamInfo.player_url || "";
+  const rawM3u8 = effectiveStreamInfo.m3u8_url || "";
+  const rawVtt = effectiveStreamInfo.vtt_url || "";
+
+  const proxiedM3u8 = flixDirect
+    ? `/api/anime/stream/flixcloud/m3u8?url=${encodeURIComponent(flixDirect.url)}&key=${encodeURIComponent(flixDirect.playlistKey)}`
+    : (!isIframe && rawM3u8)
+      ? `/api/anime/stream/m3u8?url=${encodeURIComponent(rawM3u8)}&ref=${encodeURIComponent(playerRef)}`
+      : "";
+
+  const buildFlixTestHref = (enabled: boolean) => {
+    const query = new URLSearchParams();
+    if (dub) query.set("dub", dub);
+    if (creator) query.set("creator", creator);
+    if (sub_url) query.set("sub_url", sub_url);
+    if (manual_source) query.set("manual_source", manual_source);
+    if (video_source) query.set("video_source", video_source);
+    if (enabled) query.set("flix_direct", "1");
+    const suffix = query.toString();
+    return `/watch/${id}/${epNum}${suffix ? `?${suffix}` : ""}`;
+  };
   const proxiedVtt = rawVtt ? `/api/anime/stream/vtt?url=${encodeURIComponent(rawVtt)}` : "";
 
   let linkPreEpNum: number | null = null;
@@ -338,6 +382,24 @@ export default async function WatchPage({
           activeSourceId={activeManual?.id || null}
         />
 
+        {canTestFlixDirect && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-sky-500/20 bg-sky-500/5 px-3 py-2.5 text-xs">
+            <span className={flixDirect ? "text-emerald-300" : flixDirectRequested ? "text-amber-300" : "text-slate-300"}>
+              {flixDirect
+                ? "FlixCloud 직접재생 테스트 중 · 외부 영어 CC 트랙 제외"
+                : flixDirectRequested
+                  ? "직접재생 변환 실패 · 기존 iframe으로 자동 폴백"
+                  : "FlixCloud 영어 CC OFF 직접재생 테스트"}
+            </span>
+            <Link
+              href={buildFlixTestHref(!flixDirectRequested)}
+              className="rounded-lg border border-sky-400/30 bg-slate-900/80 px-3 py-1.5 font-semibold text-sky-200 transition hover:border-sky-300 hover:text-white"
+            >
+              {flixDirectRequested ? "테스트 끄기" : "테스트 켜기"}
+            </Link>
+          </div>
+        )}
+
         <Player
           animeId={id}
           animeTitle={anime.title}
@@ -353,7 +415,7 @@ export default async function WatchPage({
           dubEpisodes={anime.dub_episodes}
           streamType={isIframe ? "iframe" : "m3u8"}
           embedUrl={embedUrl}
-          serverSources={streamInfo.server_sources}
+          serverSources={effectiveStreamInfo.server_sources}
           initialSubtitle={preloadedSub}
           initialCreator={initialCreator}
           initialSubUrl={initialSubUrl}
