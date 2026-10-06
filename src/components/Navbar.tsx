@@ -55,6 +55,9 @@ export default function Navbar() {
   useEffect(() => {
     const mobileQuery = window.matchMedia("(max-width: 1023px)");
     lastScrollYRef.current = Math.max(0, window.scrollY);
+    if (isMenuOpen || isSettingsOpen || isSourceModalOpen) {
+      setIsNavHidden(false);
+    }
 
     const keepVisible = () => {
       const active = document.activeElement;
