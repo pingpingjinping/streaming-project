@@ -24,8 +24,10 @@ export default function Navbar() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [domainStatus, setDomainStatus] = useState<"healthy" | "unhealthy" | "loading">("loading");
   const [activeSource, setActiveSource] = useState<StreamingSource>("anissia");
+  const [isNavHidden, setIsNavHidden] = useState(false);
 
   const menuRef = useRef<HTMLDivElement>(null);
+  const lastScrollYRef = useRef(0);
   const router = useRouter();
 
   // 쿠키에서 현재 active source 확인
@@ -47,6 +49,60 @@ export default function Navbar() {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  // 모바일에서는 아래로 스크롤할 때 상단바를 숨기고 위로 올리면 다시 표시한다.
+  // 가로/세로 방향 모두 적용하되, 메뉴/모달/검색 입력 중에는 상단바를 유지한다.
+  useEffect(() => {
+    const mobileQuery = window.matchMedia("(max-width: 1023px)");
+    lastScrollYRef.current = Math.max(0, window.scrollY);
+
+    const keepVisible = () => {
+      const active = document.activeElement;
+      return (
+        isMenuOpen ||
+        isSettingsOpen ||
+        isSourceModalOpen ||
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLSelectElement
+      );
+    };
+
+    const handleScroll = () => {
+      if (!mobileQuery.matches) {
+        setIsNavHidden(false);
+        lastScrollYRef.current = Math.max(0, window.scrollY);
+        return;
+      }
+
+      const currentY = Math.max(0, window.scrollY);
+      const delta = currentY - lastScrollYRef.current;
+
+      if (keepVisible() || currentY <= 24) {
+        setIsNavHidden(false);
+      } else if (delta > 14 && currentY > 72) {
+        setIsNavHidden(true);
+      } else if (delta < -10) {
+        setIsNavHidden(false);
+      }
+
+      lastScrollYRef.current = currentY;
+    };
+
+    const handleViewportChange = () => {
+      if (!mobileQuery.matches) setIsNavHidden(false);
+      lastScrollYRef.current = Math.max(0, window.scrollY);
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    window.addEventListener("resize", handleViewportChange);
+    mobileQuery.addEventListener?.("change", handleViewportChange);
+
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("resize", handleViewportChange);
+      mobileQuery.removeEventListener?.("change", handleViewportChange);
+    };
+  }, [isMenuOpen, isSettingsOpen, isSourceModalOpen]);
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -114,7 +170,9 @@ export default function Navbar() {
 
   return (
     <>
-      <header className="sticky top-0 z-40 w-full border-b border-purple-500/20 bg-[#0b0f19]/95 backdrop-blur-md safe-top">
+      <header
+        className={`sticky top-0 z-40 w-full border-b border-purple-500/20 bg-[#0b0f19]/95 backdrop-blur-md safe-top transition-transform duration-200 ease-out ${isNavHidden ? "-translate-y-full" : "translate-y-0"}`}
+      >
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8 gap-3 safe-x">
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2 font-bold text-lg text-white shrink-0">
@@ -164,7 +222,7 @@ export default function Navbar() {
             className="flex items-center gap-1.5 rounded-full border border-purple-500/30 bg-slate-900/80 px-2.5 sm:px-3 py-1.5 text-xs text-white hover:border-purple-500/60 hover:bg-slate-800 transition shadow-sm"
           >
             <RefreshCw className="h-3.5 w-3.5 text-purple-400" />
-            <span className="font-bold text-[11px] text-purple-300">
+            <span className="mobile-portrait-nav-label font-bold text-[11px] text-purple-300">
               {activeSource === "anissia" ? "애니시아" : activeSource === "reanime" ? "ReAnime" : activeSource === "anikoto" ? "Anikoto" : activeSource === "ohli24" ? "Ohli24" : "Linkkf"}
             </span>
           </button>
@@ -199,13 +257,13 @@ export default function Navbar() {
                     className="flex items-center gap-2 rounded-full border border-purple-500/30 bg-slate-900/80 px-3 py-1.5 text-xs text-white hover:border-purple-500/60 hover:bg-slate-800 transition shadow-sm"
                   >
                     <User className="h-3.5 w-3.5 text-purple-400" />
-                    <span className="font-semibold max-w-[90px] sm:max-w-[120px] truncate">{currentUser.nickname}</span>
+                    <span className="mobile-portrait-nav-label font-semibold max-w-[90px] sm:max-w-[120px] truncate">{currentUser.nickname}</span>
                     {currentUser.isAdmin && (
-                      <span className="rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 px-1.5 py-0.2 text-[9px] font-bold text-white">
+                      <span className="mobile-portrait-nav-label rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 px-1.5 py-0.2 text-[9px] font-bold text-white">
                         관리자
                       </span>
                     )}
-                    <ChevronDown className={`h-3 w-3 text-slate-400 transition-transform ${isMenuOpen ? "rotate-180" : ""}`} />
+                    <ChevronDown className={`mobile-portrait-nav-label h-3 w-3 text-slate-400 transition-transform ${isMenuOpen ? "rotate-180" : ""}`} />
                   </button>
 
                   {/* 목록형 드롭다운 메뉴 (Menu Popup) */}
@@ -317,7 +375,7 @@ export default function Navbar() {
                   className="flex items-center gap-1.5 rounded-full border border-purple-500/40 bg-purple-600/20 px-3.5 py-1.5 text-xs font-bold text-purple-300 transition hover:bg-purple-600 hover:text-white"
                 >
                   <LogIn className="h-3.5 w-3.5" />
-                  <span>로그인</span>
+                  <span className="mobile-portrait-nav-label">로그인</span>
                 </Link>
               )}
             </>
