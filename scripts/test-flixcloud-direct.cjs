@@ -36,7 +36,8 @@ test("FlixCloud direct playback stays opt-in and removes external subtitle track
   assert.match(manifest, /TYPE=SUBTITLES/);
   assert.match(manifest, /SUBTITLES="\[\^"\]\*"/);
   assert.match(manifest, /CLOSED-CAPTIONS="\[\^"\]\*"/);
-  assert.match(manifest, /flixcloud\/segment/);
+  assert.match(manifest, /proxied\(isPlaylist \? "m3u8" : "segment"/);
+  assert.match(manifest, /asSegment \? "segment" : "m3u8"/);
 
   assert.match(segment, /unwrapFlixCloudSegment/);
 });
