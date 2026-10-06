@@ -2616,28 +2616,6 @@ export default function Player(props: PlayerProps) {
                 return item.html;
               },
             },
-            {
-              name: "subtitleSharpness",
-              width: 230,
-              html: "자막 선명도",
-              tooltip: `${playerSettingsRef.current.subtitleSharpness || 1}x`,
-              selector: [
-                { html: "기본 (1.0x)", value: 1, default: (playerSettingsRef.current.subtitleSharpness || 1) === 1 },
-                { html: "선명 (1.25x)", value: 1.25, default: playerSettingsRef.current.subtitleSharpness === 1.25 },
-                { html: "더 선명 (1.5x)", value: 1.5, default: playerSettingsRef.current.subtitleSharpness === 1.5 },
-                { html: "최고 (2.0x)", value: 2, default: playerSettingsRef.current.subtitleSharpness === 2 },
-              ],
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              onSelect: function (item: any) {
-                const nextSettings: PlayerSettings = {
-                  ...playerSettingsRef.current,
-                  subtitleSharpness: item.value,
-                };
-                savePlayerSettings(nextSettings);
-                setPlayerSettings(nextSettings);
-                return item.html;
-              },
-            },
           ],
           highlight: [],
           layers: [
