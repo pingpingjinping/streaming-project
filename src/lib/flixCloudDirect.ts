@@ -102,8 +102,8 @@ async function runWasmTransform(
   seedNumber: number
 ): Promise<Buffer | null> {
   try {
-    const instantiated = await WebAssembly.instantiate(wasmBytes, {});
-    const exports = instantiated.instance.exports as Record<string, unknown>;
+    const instance = await WebAssembly.instantiate(wasmBytes, {});
+    const exports = instance.exports as Record<string, unknown>;
     const memory = exports.memory as WebAssembly.Memory | undefined;
     const seedFn = exports._s;
     const transformFn = exports._r;
