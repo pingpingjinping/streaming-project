@@ -5,7 +5,7 @@ import AdminDashboard from "./AdminDashboard";
 export const dynamic = "force-dynamic";
 
 export const metadata = {
-  title: "계정 관리 - Anihub",
+  title: "관리자 대시보드 - Anihub",
 };
 
 export default async function AdminPage() {
