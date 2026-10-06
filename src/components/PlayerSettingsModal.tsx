@@ -405,6 +405,34 @@ export default function PlayerSettingsModal({
               ))}
             </div>
           </div>
+
+          <div className="space-y-3 rounded-2xl border border-white/5 bg-slate-900/60 p-3.5">
+            <div>
+              <div className="text-sm font-semibold text-white">자막 선명도</div>
+              <p className="mt-1 text-xs text-slate-400">ASS/SSA 자막 렌더 해상도 배율입니다. 높을수록 선명하지만 기기 부하가 늘어납니다.</p>
+            </div>
+            <div className="grid grid-cols-4 gap-2" role="group" aria-label="자막 선명도">
+              {([1, 1.25, 1.5, 2] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={(settings.subtitleSharpness || 1) === value}
+                  onClick={() => {
+                    const next = { ...settings, subtitleSharpness: value };
+                    savePlayerSettings(next);
+                    onUpdateSettings(next);
+                  }}
+                  className={`rounded-xl border px-2 py-2 text-sm font-semibold transition ${
+                    (settings.subtitleSharpness || 1) === value
+                      ? "border-pink-400 bg-pink-600 text-white"
+                      : "border-white/10 bg-slate-800 text-slate-300 hover:bg-slate-700"
+                  }`}
+                >
+                  {value === 1 ? "1.0x" : `${value}x`}
+                </button>
+              ))}
+            </div>
+          </div>
           {!fullscreenExitOnly && <>
           {/* Section 1: ⏩ 재생 & 스킵 자동화 */}
           <div>
