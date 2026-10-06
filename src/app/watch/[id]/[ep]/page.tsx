@@ -131,7 +131,7 @@ export default async function WatchPage({
               dubEpisodes={[]}
               streamType={isIframe ? "iframe" : "m3u8"}
               embedUrl={streamInfo.embed_url || ""}
-              serverSources={effectiveStreamInfo.server_sources}
+              serverSources={streamInfo.server_sources}
             />
           </main>
         </div>
@@ -287,7 +287,7 @@ export default async function WatchPage({
   }
 
   const originalEmbedUrl = streamInfo.embed_url || streamInfo.player_url || "";
-  const canTestFlixDirect = /(^|\\.)flixcloud\\.cc$/i.test(
+  const canTestFlixDirect = /(^|\.)flixcloud\.cc$/i.test(
     (() => {
       try {
         return new URL(originalEmbedUrl).hostname;
@@ -415,7 +415,7 @@ export default async function WatchPage({
           dubEpisodes={anime.dub_episodes}
           streamType={isIframe ? "iframe" : "m3u8"}
           embedUrl={embedUrl}
-          serverSources={streamInfo.server_sources}
+          serverSources={effectiveStreamInfo.server_sources}
           initialSubtitle={preloadedSub}
           initialCreator={initialCreator}
           initialSubUrl={initialSubUrl}
