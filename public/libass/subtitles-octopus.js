@@ -1008,6 +1008,7 @@ var SubtitlesOctopus = function (options) {
     self.onFrameRender = options.onFrameRender || null;
     self.lastRenderTime = 0; // (internal) Last time we got some frame from worker
     self.pixelRatio = window.devicePixelRatio || 1; // (internal) Device pixel ratio (for high dpi devices)
+    self.resizeTimer = null; // (internal) Coalesce fullscreen/viewport resize bursts.
 
     self.timeOffset = options.timeOffset || 0; // Time offset would be applied to currentTime from video (option)
 
@@ -1455,8 +1456,16 @@ var SubtitlesOctopus = function (options) {
         }
 
 
-        self.canvas.width = width;
-        self.canvas.height = height;
+        width = Math.max(1, Math.round(width));
+        height = Math.max(1, Math.round(height));
+        var canvasSizeChanged = self.canvas.width !== width || self.canvas.height !== height;
+
+        // Reassigning canvas.width/height clears the current subtitle frame.
+        // Only touch the backing store when its pixel dimensions really changed.
+        if (canvasSizeChanged) {
+            self.canvas.width = width;
+            self.canvas.height = height;
+        }
 
         if (videoSize != null) {
             self.canvasParent.style.position = 'relative';
@@ -1469,20 +1478,30 @@ var SubtitlesOctopus = function (options) {
             self.canvas.style.pointerEvents = 'none';
         }
 
-        if (self.worker) {
+        if (canvasSizeChanged && self.worker) {
             try {
                 self.worker.postMessage({
                     target: 'canvas',
                     width: width,
                     height: height
                 });
+                // Canvas resizing clears the visible frame. Ask libass to redraw the
+                // current timestamp immediately instead of waiting for timeupdate.
+                if (self.video && typeof self.setCurrentTime === 'function') {
+                    self.setCurrentTime(self.video.currentTime + self.timeOffset);
+                }
             } catch (e) {}
         }
     };
 
     self.resizeWithTimeout = function () {
-        self.resize();
-        setTimeout(self.resize, 100);
+        if (self.resizeTimer !== null) {
+            clearTimeout(self.resizeTimer);
+        }
+        self.resizeTimer = setTimeout(function () {
+            self.resizeTimer = null;
+            self.resize();
+        }, 100);
     };
 
     self.runBenchmark = function () {
@@ -1609,6 +1628,10 @@ var SubtitlesOctopus = function (options) {
         if (self.ro) {
             self.ro.disconnect();
             self.ro = null;
+        }
+        if (self.resizeTimer !== null) {
+            clearTimeout(self.resizeTimer);
+            self.resizeTimer = null;
         }
 
         self.onCustomMessage = null;
