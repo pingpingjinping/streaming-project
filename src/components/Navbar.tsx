@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Film, Search, LogIn, LogOut, User, Globe, Settings, Users, ChevronDown, RefreshCw, Link2 } from "lucide-react";
+import { Film, Search, Loader2, LogIn, LogOut, User, Globe, Settings, Users, ChevronDown, RefreshCw, Link2 } from "lucide-react";
 import BaseUrlSettingsModal from "./BaseUrlSettingsModal";
 import SourceSelectModal, { StreamingSource } from "./SourceSelectModal";
 
@@ -25,9 +25,11 @@ export default function Navbar() {
   const [domainStatus, setDomainStatus] = useState<"healthy" | "unhealthy" | "loading">("loading");
   const [activeSource, setActiveSource] = useState<StreamingSource>("anissia");
   const [isNavHidden, setIsNavHidden] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
 
   const menuRef = useRef<HTMLDivElement>(null);
   const lastScrollYRef = useRef(0);
+  const searchSafetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const router = useRouter();
 
   // 쿠키에서 현재 active source 확인
@@ -108,6 +110,28 @@ export default function Navbar() {
   }, [isMenuOpen, isSettingsOpen, isSourceModalOpen]);
 
   useEffect(() => {
+    const handleNavigationComplete = () => {
+      if (searchSafetyTimerRef.current) {
+        clearTimeout(searchSafetyTimerRef.current);
+        searchSafetyTimerRef.current = null;
+      }
+      setIsSearching(false);
+    };
+
+    window.addEventListener("anime-navigation-complete", handleNavigationComplete);
+    window.addEventListener("pageshow", handleNavigationComplete);
+
+    return () => {
+      window.removeEventListener("anime-navigation-complete", handleNavigationComplete);
+      window.removeEventListener("pageshow", handleNavigationComplete);
+      if (searchSafetyTimerRef.current) {
+        clearTimeout(searchSafetyTimerRef.current);
+        searchSafetyTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     fetch("/api/auth/me")
       .then((res) => res.json())
       .then((data) => {
@@ -153,12 +177,24 @@ export default function Navbar() {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    if (keyword.trim()) {
-      const scopeParam = searchScope === "all" ? "&scope=all" : "";
-      const linkedParam=activeSource==='reanime' && searchScope!=='all'
-        && new URLSearchParams(window.location.search).get('linked')==='1'?'&linked=1':'';
-      router.push(`/?tab=search&q=${encodeURIComponent(keyword.trim())}${scopeParam}${linkedParam}`);
-    }
+    if (isSearching) return;
+
+    const query = keyword.trim();
+    if (!query) return;
+
+    const scopeParam = searchScope === "all" ? "&scope=all" : "";
+    const linkedParam=activeSource==='reanime' && searchScope!=='all'
+      && new URLSearchParams(window.location.search).get('linked')==='1'?'&linked=1':'';
+    const target = `/?tab=search&q=${encodeURIComponent(query)}${scopeParam}${linkedParam}`;
+
+    setIsSearching(true);
+    if (searchSafetyTimerRef.current) clearTimeout(searchSafetyTimerRef.current);
+    searchSafetyTimerRef.current = setTimeout(() => {
+      searchSafetyTimerRef.current = null;
+      setIsSearching(false);
+    }, 8000);
+
+    router.push(target);
   };
 
   const handleLogout = async () => {
@@ -188,12 +224,21 @@ export default function Navbar() {
         </Link>
 
         {/* Search Input */}
-        <form onSubmit={handleSearch} className="flex flex-1 max-w-sm sm:max-w-lg mx-auto sm:mx-4 gap-1.5 min-w-0">
+        <form
+          onSubmit={handleSearch}
+          aria-busy={isSearching}
+          className="flex flex-1 max-w-sm sm:max-w-lg mx-auto sm:mx-4 gap-1.5 min-w-0"
+        >
           <select
             aria-label="검색 사이트 범위"
             value={searchScope}
+            disabled={isSearching}
             onChange={(e) => setSearchScope(e.target.value as "current" | "all")}
-            className="max-w-[92px] shrink-0 rounded-full border border-purple-500/20 bg-slate-900/80 px-2 py-1.5 text-[10px] sm:text-xs text-slate-300 outline-none focus:border-purple-500"
+            className={`max-w-[92px] shrink-0 rounded-full border bg-slate-900/80 px-2 py-1.5 text-[10px] sm:text-xs text-slate-300 outline-none transition ${
+              isSearching
+                ? "cursor-wait border-purple-400/60"
+                : "border-purple-500/20 focus:border-purple-500"
+            }`}
           >
             <option value="current">현재 사이트</option>
             <option value="all">전체 사이트</option>
@@ -201,12 +246,21 @@ export default function Navbar() {
           <div className="relative min-w-0 flex-1">
             <input
               type="text"
-              placeholder="애니 제목 검색..."
+              placeholder={isSearching ? "검색 중..." : "애니 제목 검색..."}
               value={keyword}
+              disabled={isSearching}
               onChange={(e) => setKeyword(e.target.value)}
-              className="w-full rounded-full border border-purple-500/20 bg-slate-900/80 px-4 py-1.5 pl-9 text-xs sm:text-sm text-slate-200 placeholder-slate-400 outline-none transition focus:border-purple-500 focus:ring-1 focus:ring-purple-500"
+              className={`w-full rounded-full border bg-slate-900/80 px-4 py-1.5 pl-9 text-xs sm:text-sm text-slate-200 placeholder-slate-400 outline-none transition ${
+                isSearching
+                  ? "cursor-wait border-purple-400 ring-1 ring-purple-500/60"
+                  : "border-purple-500/20 focus:border-purple-500 focus:ring-1 focus:ring-purple-500"
+              }`}
             />
-            <Search className="absolute left-3 top-2 sm:top-2.5 h-3.5 w-3.5 sm:h-4 sm:w-4 text-slate-400 pointer-events-none" />
+            {isSearching ? (
+              <Loader2 className="absolute left-3 top-2 sm:top-2.5 h-3.5 w-3.5 sm:h-4 sm:w-4 animate-spin text-purple-300 pointer-events-none" />
+            ) : (
+              <Search className="absolute left-3 top-2 sm:top-2.5 h-3.5 w-3.5 sm:h-4 sm:w-4 text-slate-400 pointer-events-none" />
+            )}
           </div>
         </form>
 

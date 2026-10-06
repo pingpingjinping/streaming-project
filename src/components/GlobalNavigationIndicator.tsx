@@ -47,6 +47,9 @@ export default function GlobalNavigationIndicator() {
     });
 
     activeElRef.current = null;
+    try {
+      window.dispatchEvent(new CustomEvent("anime-navigation-complete"));
+    } catch {}
   };
 
   useEffect(() => {
