@@ -282,10 +282,12 @@ test('double click while entering does not start two fullscreen requests', async
 });
 
 
-test('libass fullscreen resize keeps the current frame until the backing size really changes', () => {
+test('libass fullscreen resize keeps the current frame until the replacement size is ready', () => {
   const src = fs.readFileSync(path.join(root, 'public/libass/subtitles-octopus.js'), 'utf8');
-  assert.match(src, /var canvasSizeChanged = self\.canvas\.width !== width \|\| self\.canvas\.height !== height/);
-  assert.match(src, /if \(canvasSizeChanged\) \{\s*self\.canvas\.width = width;\s*self\.canvas\.height = height;/);
+  assert.match(src, /var effectiveWidth = self\.pendingCanvasWidth \|\| self\.canvas\.width/);
+  assert.match(src, /var effectiveHeight = self\.pendingCanvasHeight \|\| self\.canvas\.height/);
+  assert.match(src, /var canvasSizeChanged = effectiveWidth !== width \|\| effectiveHeight !== height/);
+  assert.match(src, /if \(self\.lastRenderTime > 0\) \{\s*self\.pendingCanvasWidth = width;\s*self\.pendingCanvasHeight = height;/);
   assert.match(src, /self\.setCurrentTime\(self\.video\.currentTime \+ self\.timeOffset\)/);
   assert.match(src, /clearTimeout\(self\.resizeTimer\)/);
   assert.doesNotMatch(src, /self\.resize\(\);\s*setTimeout\(self\.resize, 100\)/);
@@ -317,9 +319,13 @@ test('playback resume handles refresh after metadata already fired and preserves
 });
 
 
-test('libass keeps the previous subtitle frame visible while fullscreen canvas resizes', () => {
+test('libass keeps the old frame until a forced resize frame is ready', () => {
   const src = fs.readFileSync(path.join(root, 'public/libass/subtitles-octopus.js'), 'utf8');
-  assert.match(src, /var hasResizeSnapshot = false/);
-  assert.match(src, /self\.bufferCanvasCtx\.drawImage\(self\.canvas, 0, 0\)/);
-  assert.match(src, /if \(hasResizeSnapshot\) \{[\s\S]*?self\.ctx\.drawImage\([\s\S]*?self\.bufferCanvas[\s\S]*?width,[\s\S]*?height[\s\S]*?\)/);
+  const worker = fs.readFileSync(path.join(root, 'public/libass/subtitles-octopus-worker.js'), 'utf8');
+  assert.match(src, /self\.pendingCanvasWidth = 0/);
+  assert.match(src, /if \(self\.lastRenderTime > 0\) \{\s*self\.pendingCanvasWidth = width;\s*self\.pendingCanvasHeight = height;/);
+  assert.match(src, /function applyPendingCanvasSize\(\)/);
+  assert.match(src, /forceRender: true/);
+  assert.match(worker, /self\.getRenderMethod\(\)\(message\.data\.forceRender===true\)/);
+  assert.doesNotMatch(src, /hasResizeSnapshot|bufferCanvasCtx\.drawImage\(self\.canvas/);
 });

@@ -1009,6 +1009,8 @@ var SubtitlesOctopus = function (options) {
     self.lastRenderTime = 0; // (internal) Last time we got some frame from worker
     self.pixelRatio = window.devicePixelRatio || 1; // (internal) Device pixel ratio (for high dpi devices)
     self.resizeTimer = null; // (internal) Coalesce fullscreen/viewport resize bursts.
+    self.pendingCanvasWidth = 0;
+    self.pendingCanvasHeight = 0;
 
     self.timeOffset = options.timeOffset || 0; // Time offset would be applied to currentTime from video (option)
 
@@ -1242,9 +1244,21 @@ var SubtitlesOctopus = function (options) {
     };
 
     self.renderFrameData = null;
+    function applyPendingCanvasSize() {
+        if (self.pendingCanvasWidth > 0 && self.pendingCanvasHeight > 0) {
+            self.canvas.width = self.pendingCanvasWidth;
+            self.canvas.height = self.pendingCanvasHeight;
+            self.pendingCanvasWidth = 0;
+            self.pendingCanvasHeight = 0;
+        }
+    }
+
     function renderFrames() {
         var data = self.renderFramesData;
         var beforeDrawTime = performance.now();
+        // Keep the previous subtitle bitmap visible until the replacement frame
+        // is ready, then swap backing resolution and draw in the same frame.
+        applyPendingCanvasSize();
         self.ctx.clearRect(0, 0, self.canvas.width, self.canvas.height);
         for (var i = 0; i < data.canvases.length; i++) {
             var image = data.canvases[i];
@@ -1284,6 +1298,7 @@ var SubtitlesOctopus = function (options) {
     function renderFastFrames() {
         var data = self.renderFramesData;
         var beforeDrawTime = performance.now();
+        applyPendingCanvasSize();
         self.ctx.clearRect(0, 0, self.canvas.width, self.canvas.height);
         for (var i = 0; i < data.bitmaps.length; i++) {
             var image = data.bitmaps[i];
@@ -1458,47 +1473,22 @@ var SubtitlesOctopus = function (options) {
 
         width = Math.max(1, Math.round(width));
         height = Math.max(1, Math.round(height));
-        var canvasSizeChanged = self.canvas.width !== width || self.canvas.height !== height;
-        var hasResizeSnapshot = false;
+        var effectiveWidth = self.pendingCanvasWidth || self.canvas.width;
+        var effectiveHeight = self.pendingCanvasHeight || self.canvas.height;
+        var canvasSizeChanged = effectiveWidth !== width || effectiveHeight !== height;
 
-        // Reassigning canvas.width/height clears the current subtitle frame.
-        // Preserve the old frame in the existing scratch canvas so fullscreen
-        // transitions never expose a blank subtitle layer while libass renders
-        // the new resolution.
-        if (
-            canvasSizeChanged &&
-            self.canvas.width > 0 &&
-            self.canvas.height > 0 &&
-            self.bufferCanvas &&
-            self.bufferCanvasCtx
-        ) {
-            try {
-                self.bufferCanvas.width = self.canvas.width;
-                self.bufferCanvas.height = self.canvas.height;
-                self.bufferCanvasCtx.clearRect(0, 0, self.bufferCanvas.width, self.bufferCanvas.height);
-                self.bufferCanvasCtx.drawImage(self.canvas, 0, 0);
-                hasResizeSnapshot = true;
-            } catch (e) {}
-        }
-
-        // Only touch the backing store when its pixel dimensions really changed.
+        // Once subtitles are already visible, do not clear the backing canvas
+        // immediately. Keep the current frame on screen and swap to the new
+        // backing resolution only when the forced libass replacement frame arrives.
         if (canvasSizeChanged) {
-            self.canvas.width = width;
-            self.canvas.height = height;
-            if (hasResizeSnapshot) {
-                try {
-                    self.ctx.drawImage(
-                        self.bufferCanvas,
-                        0,
-                        0,
-                        self.bufferCanvas.width,
-                        self.bufferCanvas.height,
-                        0,
-                        0,
-                        width,
-                        height
-                    );
-                } catch (e) {}
+            if (self.lastRenderTime > 0) {
+                self.pendingCanvasWidth = width;
+                self.pendingCanvasHeight = height;
+            } else {
+                self.canvas.width = width;
+                self.canvas.height = height;
+                self.pendingCanvasWidth = 0;
+                self.pendingCanvasHeight = 0;
             }
         }
 
@@ -1518,7 +1508,8 @@ var SubtitlesOctopus = function (options) {
                 self.worker.postMessage({
                     target: 'canvas',
                     width: width,
-                    height: height
+                    height: height,
+                    forceRender: true
                 });
                 // Canvas resizing clears the visible frame. Ask libass to redraw the
                 // current timestamp immediately instead of waiting for timeupdate.
@@ -1675,6 +1666,8 @@ var SubtitlesOctopus = function (options) {
             clearTimeout(self.resizeTimer);
             self.resizeTimer = null;
         }
+        self.pendingCanvasWidth = 0;
+        self.pendingCanvasHeight = 0;
 
         self.onCustomMessage = null;
         self.onErrorEvent = null;
