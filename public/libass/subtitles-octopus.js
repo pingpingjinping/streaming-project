@@ -1426,11 +1426,6 @@ var SubtitlesOctopus = function (options) {
         }
     };
 
-    function _snapCssPixel(value) {
-        var ratio = self.pixelRatio > 0 ? self.pixelRatio : 1;
-        return Math.round(value * ratio) / ratio;
-    }
-
     function _computeCanvasSize(width, height) {
         var scalefactor = self.prescaleFactor <= 0 ? 1.0 : self.prescaleFactor;
 
@@ -1498,20 +1493,13 @@ var SubtitlesOctopus = function (options) {
         }
 
         if (videoSize != null) {
-            // Snap CSS geometry to physical device pixels. Fractional CSS pixels
-            // can make Safari resample the whole canvas layer and soften text.
-            var cssWidth = _snapCssPixel(videoSize.width);
-            var cssHeight = _snapCssPixel(videoSize.height);
-            var cssTop = _snapCssPixel(top);
-            var cssLeft = _snapCssPixel(left);
-
             self.canvasParent.style.position = 'relative';
             self.canvas.style.display = 'block';
             self.canvas.style.position = 'absolute';
-            self.canvas.style.width = cssWidth + 'px';
-            self.canvas.style.height = cssHeight + 'px';
-            self.canvas.style.top = cssTop + 'px';
-            self.canvas.style.left = cssLeft + 'px';
+            self.canvas.style.width = videoSize.width + 'px';
+            self.canvas.style.height = videoSize.height + 'px';
+            self.canvas.style.top = top + 'px';
+            self.canvas.style.left = left + 'px';
             self.canvas.style.pointerEvents = 'none';
         }
 
