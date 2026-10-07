@@ -1,3 +1,4 @@
+import { toSourceEpisode } from "@/lib/episodeMapping";
 import * as cheerio from "cheerio";
 import { decodeSubtitleBuffer, cleanSubtitleText, convertToVtt, decodeSubtitleFile } from "@/lib/subtitleCodec";
 export { decodeSubtitleBuffer, cleanSubtitleText, convertToVtt, decodeSubtitleFile } from "@/lib/subtitleCodec";
@@ -1184,7 +1185,8 @@ export async function getAnissiaCreators(
   directAnimeNo?: number | null,
   referenceTitle = title,
   animeId?: string,
-  broadSearch = false
+  broadSearch = false,
+  sourceEpisodeStart: number | null = null,
 ): Promise<CreatorInfo[]> {
   const results: CreatorInfo[] = [];
   try {
@@ -1258,22 +1260,28 @@ export async function getAnissiaCreators(
         });
         if (!capRes.ok) return [];
         const capJson = await capRes.json();
-        const seenNames = new Set<string>();
-        return (Array.isArray(capJson?.data) ? capJson.data : []).flatMap((c: any) => {
+        // Prefer the registration containing the mapped episode, not whichever
+        // post happens to be first (usually the latest episode).
+        const creators = new Map<string, CreatorInfo>();
+        for (const c of (Array.isArray(capJson?.data) ? capJson.data : [])) {
           const name = String(c.name || "제작자").trim();
-          if (seenNames.has(name)) return [];
-          seenNames.add(name);
           const epStr = String(c.episode || "");
           const providedEpisodes = parseEpisodes(epStr);
           const targetSeason = parseSeason(referenceTitle) || parseSeason(title) || parseSeason(anime.subject);
-          const sourceEpisode = mapProviderEpisodeNumber(epStr, episodeNumber, targetSeason);
-          return [{ name, episode: epStr,
+          const sourceEpisode = sourceEpisodeStart
+            ? toSourceEpisode(episodeNumber, sourceEpisodeStart)
+            : mapProviderEpisodeNumber(epStr, episodeNumber, targetSeason);
+          const candidate: CreatorInfo = { name, episode: epStr,
             update_date: String(c.updDt || "").replace("T", " ").slice(0, 16),
             website: String(c.website || "").trim(),
             is_current_ep: providedEpisodes.includes(sourceEpisode),
             matchedTitle: anime.subject, matchScore: anime.matchScore,
-            verifiedMatch: anime.verifiedMatch }];
-        });
+            verifiedMatch: anime.verifiedMatch };
+          const key = name.toLocaleLowerCase("ko-KR");
+          const previous = creators.get(key);
+          if (!previous || (!previous.is_current_ep && candidate.is_current_ep)) creators.set(key, candidate);
+        }
+        return [...creators.values()];
       } catch { return []; }
     };
     // Bound network concurrency while retaining every manual-search candidate.
@@ -1311,14 +1319,14 @@ export async function searchAllSubtitlesParallel(
 
   const workerPromise = (async () => {
     const configuredSourceEpisode = sourceEpisodeStart && sourceEpisodeStart > 0
-      ? sourceEpisodeStart + episodeNumber - 1
+      ? toSourceEpisode(episodeNumber, sourceEpisodeStart)
       : episodeNumber;
     const resolvedTitle = await resolveKoreanTitle(title);
     const targetTitle = resolvedTitle || title;
 
     // Fetch both indexed AniAll posts and current Anissia results concurrently.
     const [anissiaCreators, aniallMatches, aniallCandidates, kairanSub, sourcePriority, rejected] = await Promise.all([
-      getAnissiaCreators(targetTitle, episodeNumber, 3500, directAnimeNo, referenceTitle, animeId, broadSearch),
+      getAnissiaCreators(targetTitle, episodeNumber, 3500, directAnimeNo, referenceTitle, animeId, broadSearch, sourceEpisodeStart),
       getAniAllMatches(targetTitle, animeId, true),
       getAniAllCandidates(targetTitle, animeId),
       includeKairan ? findKairanSubtitle(targetTitle, configuredSourceEpisode, 3500, episodeNumber) : Promise.resolve(null),
@@ -1375,7 +1383,7 @@ export async function searchAllSubtitlesParallel(
     const creatorSubPromises = topCreators.map(async (c) => {
       const targetSeason = parseSeason(c.matchedTitle || targetTitle) || parseSeason(targetTitle);
       const sourceEpisode = sourceEpisodeStart && sourceEpisodeStart > 0
-        ? sourceEpisodeStart + episodeNumber - 1
+        ? toSourceEpisode(episodeNumber, sourceEpisodeStart)
         : mapProviderEpisodeNumber(c.episode, episodeNumber, targetSeason);
       const subtitle = await fetchCreatorSubtitle(c.name, c.website, c.matchedTitle || targetTitle, sourceEpisode, 10000, episodeNumber, animeId);
       return subtitle ? { ...subtitle, matchScore: c.matchScore,
@@ -1424,3 +1432,4 @@ export async function searchAllSubtitlesParallel(
     return { subtitles: [], creators: [], needsManualSubtitleChoice: false };
   }
 }
+

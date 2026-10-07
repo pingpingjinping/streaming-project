@@ -1,4 +1,5 @@
-import { EpisodeStreamInfo, ServerSource } from "../providers/types";
+import { mapVideoEpisode, toLocalEpisode, videoEpisodeStart } from "../episodeMapping";
+import { AnimeDetail, EpisodeStreamInfo, ServerSource } from "../providers/types";
 import { reanimeProvider } from "../providers/reanime";
 import { linkkfProvider } from "../providers/linkkf";
 import { ohli24Provider } from "../providers/ohli24";
@@ -22,12 +23,15 @@ const SUBTITLE_DELIMITERS = /[~～〜―—–\-:：].*$/;
  */
 export function parseSeason(text: string): number | null {
   if (!text) return null;
-  const m1 = text.match(/(\d+)\s*기/);
+  const m1 = text.match(/(?:第\s*)?(\d+)\s*(?:기|期)/);
   if (m1) return parseInt(m1[1], 10);
   const m2 = text.match(/season\s*(\d+)/i);
   if (m2) return parseInt(m2[1], 10);
   const m3 = text.match(/(\d+)(?:st|nd|rd|th)\s*season/i);
   if (m3) return parseInt(m3[1], 10);
+
+  const part = text.match(/part\s*(\d+)/i);
+  if (part) return Number(part[1]);
 
   // 전각 로마 숫자 (Ⅰ, Ⅱ, Ⅲ, Ⅳ, Ⅴ, Ⅵ)
   if (text.includes("Ⅵ")) return 6;
@@ -122,7 +126,9 @@ export async function resolveAnissiaStream(
   title?: string,
   originalTitle?: string,
   requestedSource?: "rean" | "anikoto" | "linkkf" | "ohli24",
-  animeId?: string
+  animeId?: string,
+  subtitleEpisodeStart?: number | null,
+  seasonEpisodeCount?: number
 ): Promise<EpisodeStreamInfo | null> {
   const serverSources: ServerSource[] = [];
 
@@ -170,6 +176,21 @@ export async function resolveAnissiaStream(
   if (!jpTitle && relatedJapaneseTitles.length > 0) jpTitle = relatedJapaneseTitles[0];
 
   const targetSeason = parseSeason(korTitle) || parseSeason(jpTitle);
+  const videoEpisode = (detail: AnimeDetail | null): number | null => detail
+    ? mapVideoEpisode(episodeNumber, detail.sub_episodes.map((e) => e.number), subtitleEpisodeStart,
+        targetSeason, parseSeason(detail.title) || parseSeason(detail.original_title || ""), seasonEpisodeCount)
+    : null;
+  const recordLatestReanimeEpisode = (detail: AnimeDetail | null) => {
+    if (!detail?.sub_episodes?.length) return;
+    const episodes = detail.sub_episodes.map((e) => e.number);
+    const start = videoEpisodeStart(episodes, subtitleEpisodeStart, targetSeason,
+      parseSeason(detail.title) || parseSeason(detail.original_title || ""), seasonEpisodeCount);
+    if (start === null) return;
+    const latest = toLocalEpisode(Math.max(...episodes), start);
+    if (latest !== null) latestAvailableEp = Math.max(latestAvailableEp || 0,
+      seasonEpisodeCount ? Math.min(latest, seasonEpisodeCount) : latest);
+  };
+
 
   // 최신 업로드 회차 번호 추적 (부족한 회차 안내용)
   let latestAvailableEp: number | null = null;
@@ -184,11 +205,8 @@ export async function resolveAnissiaStream(
     // 캐시된 ID가 있다면 해당 회차가 실제로 존재하는지 검증
     if (reanimeId) {
       const detail = await reanimeProvider.getAnimeDetail(reanimeId);
-      if (detail?.sub_episodes && detail.sub_episodes.length > 0) {
-        const maxEp = Math.max(...detail.sub_episodes.map((e) => e.number));
-        if (maxEp > 0) latestAvailableEp = maxEp;
-      }
-      const hasEpisode = detail?.sub_episodes?.some((e) => e.number === episodeNumber);
+      recordLatestReanimeEpisode(detail);
+      const hasEpisode = videoEpisode(detail) !== null;
       if (!hasEpisode) {
         // 캐시된 ID에 해당 회차가 없으면 캐시 무효화 후 새로 탐색
         reanimeId = null;
@@ -223,20 +241,17 @@ export async function resolveAnissiaStream(
         const searchRes = await reanimeProvider.searchAnime(q);
         if (searchRes.items && searchRes.items.length > 0) {
           const best = selectBestReanimeItem(searchRes.items, targetSeason);
-          if (best) {
+          const candidates = [best, ...searchRes.items.filter(item => item !== best)].filter(Boolean);
+          for (const best of candidates) {
             // 해당 후보가 요청한 회차를 가지고 있는지 검증
             const candidateDetail = await reanimeProvider.getAnimeDetail(best.id);
-            if (candidateDetail?.sub_episodes && candidateDetail.sub_episodes.length > 0) {
-              const maxEp = Math.max(...candidateDetail.sub_episodes.map((e) => e.number));
-              if (maxEp > 0) {
-                latestAvailableEp = Math.max(latestAvailableEp || 0, maxEp);
-              }
-            }
-            if (candidateDetail?.sub_episodes?.some((e) => e.number === episodeNumber)) {
+            recordLatestReanimeEpisode(candidateDetail);
+            if (videoEpisode(candidateDetail) !== null) {
               reanimeId = best.id;
               break;
             }
           }
+          if (reanimeId) break;
         }
       }
     }
@@ -245,7 +260,7 @@ export async function resolveAnissiaStream(
       const detail = await reanimeProvider.getAnimeDetail(reanimeId);
       if (detail && detail.sub_episodes.length > 0) {
         // 해당 회차 번호에 맞는 watch_url 탐색
-        const epItem = detail.sub_episodes.find((e) => e.number === episodeNumber);
+        const epItem = detail.sub_episodes.find((e) => e.number === videoEpisode(detail));
 
         if (epItem?.watch_url) {
           const stream = await reanimeProvider.getEpisodeStream(epItem.watch_url);
@@ -293,9 +308,11 @@ export async function resolveAnissiaStream(
         const detail = await anikotoProvider.getAnimeDetail(linked.animeId);
         if (!detail?.sub_episodes?.length) continue;
 
-        const epItem = detail.sub_episodes.find(
-          (episode) => episode.number === linked.episodeNumber
-        );
+        const sourceEpisode = linked.mappingKind === "whole"
+          ? mapVideoEpisode(episodeNumber, detail.sub_episodes.map(e => e.number), subtitleEpisodeStart,
+              targetSeason, parseSeason(detail.title) || parseSeason(detail.original_title || ""), seasonEpisodeCount)
+          : linked.episodeNumber;
+        const epItem = detail.sub_episodes.find(episode => episode.number === sourceEpisode);
         if (!epItem?.watch_url) continue;
 
         const stream = await anikotoProvider.getEpisodeStream(epItem.watch_url);
@@ -337,7 +354,9 @@ export async function resolveAnissiaStream(
         // Recheck the detail page: a search label must not disguise a different
         // work. Complete titles preserve sequel, season, OVA and movie suffixes.
         if (!detail || ![detail.title, detail.original_title || ""].some(value => matchesIdentityTitle(value, aliases))) continue;
-        const epItem = detail.sub_episodes.find(episode => episode.number === episodeNumber);
+        const sourceEpisode = mapVideoEpisode(episodeNumber, detail.sub_episodes.map(e => e.number), subtitleEpisodeStart,
+          targetSeason, parseSeason(detail.title) || parseSeason(detail.original_title || ""), seasonEpisodeCount);
+        const epItem = detail.sub_episodes.find(episode => episode.number === sourceEpisode);
         if (epItem?.watch_url) playable.push(epItem);
       }
       // Duplicate title matches need a reviewed DB link, not result-order luck.
@@ -377,7 +396,7 @@ export async function resolveAnissiaStream(
     if (linkkfId) {
       const detail = await linkkfProvider.getAnimeDetail(linkkfId);
       if (detail && detail.sub_episodes.length > 0) {
-        const epItem = detail.sub_episodes.find((e) => e.number === episodeNumber);
+        const epItem = detail.sub_episodes.find((e) => e.number === videoEpisode(detail));
 
         if (epItem?.watch_url) {
           const stream = await linkkfProvider.getEpisodeStream(epItem.watch_url);
@@ -420,7 +439,7 @@ export async function resolveAnissiaStream(
         const ohliId = ohRes.items[0].id;
         const detail = await ohli24Provider.getAnimeDetail(ohliId);
         if (detail && detail.sub_episodes.length > 0) {
-          const epItem = detail.sub_episodes.find((e) => e.number === episodeNumber);
+          const epItem = detail.sub_episodes.find((e) => e.number === videoEpisode(detail));
 
           if (epItem?.watch_url) {
             const stream = await ohli24Provider.getEpisodeStream(epItem.watch_url);

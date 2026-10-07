@@ -10,6 +10,7 @@ import {
 import { ANISSIA_PREFIX, stripAnissiaId, toAnissiaId } from "./ids";
 import {getConfirmedReanimeIdsForAnissia} from "../reanimeMatches";
 import {getReanimeArtwork} from "./reanime";
+import { localEpisodeCount, toSourceEpisode } from "../episodeMapping";
 import { resolveAnissiaStream } from "../resolvers/videoResolver";
 
 /** Parse Anissia episode labels without concatenating punctuation-separated digits.
@@ -369,7 +370,7 @@ class AnissiaProvider implements AnimeProvider {
         const remarks = [epStr, creatorStr].filter(Boolean).join(" ");
         const timeFormatted = item.updDt ? item.updDt.replace("T", " ").slice(5, 16) : "";
         const targetDetailUrl = item.episode && item.website
-          ? `/watch/${toAnissiaId(item.animeNo)}/${item.episode}?creator=${encodeURIComponent(item.name || "")}&sub_url=${encodeURIComponent(item.website)}`
+          ? `/watch/${toAnissiaId(item.animeNo)}/${item.episode}?source_ep=1&creator=${encodeURIComponent(item.name || "")}&sub_url=${encodeURIComponent(item.website)}`
           : `/anime/${toAnissiaId(item.animeNo)}`;
 
         return {
@@ -745,7 +746,7 @@ class AnissiaProvider implements AnimeProvider {
   /**
    * 작품 상세 정보 (/anime/animeNo/{animeNo})
    */
-  async getAnimeDetail(animeId: string): Promise<AnimeDetail | null> {
+  async getAnimeDetail(animeId: string, options: { subtitleEpisodeStart?: number | null } = {}): Promise<AnimeDetail | null> {
     const rawId = stripAnissiaId(animeId);
     const animeNo = parseInt(rawId, 10);
 
@@ -797,10 +798,10 @@ class AnissiaProvider implements AnimeProvider {
       }
 
       // 최대 화수 계산
-      const maxEp = epNumbers.size > 0 ? Math.max(...Array.from(epNumbers)) : meta?.totalEpisodes || 12;
+      const maxEp = localEpisodeCount(epNumbers, options.subtitleEpisodeStart, meta?.totalEpisodes || 12);
       const subEpisodes: EpisodeItem[] = [];
       for (let i = 1; i <= Math.max(maxEp, 1); i++) {
-        const cap = captionMap.get(i);
+        const cap = captionMap.get(toSourceEpisode(i, options.subtitleEpisodeStart));
         const watchUrl = cap
           ? `/watch/${animeId}/${i}?creator=${encodeURIComponent(cap.creator)}&sub_url=${encodeURIComponent(cap.website)}`
           : `/watch/${animeId}/${i}`;

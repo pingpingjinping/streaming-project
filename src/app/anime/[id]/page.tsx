@@ -6,7 +6,7 @@ import SubtitleBundleAssignmentSetting from "@/components/SubtitleBundleAssignme
 import ReanimeDetailFallback from "@/components/ReanimeDetailFallback";
 import { getProviderByAnimeId } from "@/lib/providers";
 import { requireAuth, getCurrentUserId } from "@/lib/auth";
-import { getAnimeHistoryMap } from "@/lib/db";
+import { getAnimeHistoryMap, getSubtitleEpisodeStart } from "@/lib/db";
 import Link from "next/link";
 import LocalizedAnimeTitle from "@/components/LocalizedAnimeTitle";
 import { notFound } from "next/navigation";
@@ -19,7 +19,7 @@ export default async function AnimeDetailPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ dub?: string }>;
 }) {
-  await requireAuth();
+  const user = await requireAuth();
   const currentUserId = await getCurrentUserId();
 
   const { id } = await params;
@@ -27,7 +27,8 @@ export default async function AnimeDetailPage({
   const isDub = dub === "1";
 
   const provider = getProviderByAnimeId(id);
-  const anime = await provider.getAnimeDetail(id);
+  const subtitleEpisodeStart = await getSubtitleEpisodeStart(user.username, id);
+  const anime = await provider.getAnimeDetail(id, { subtitleEpisodeStart });
   if (!anime) {
     if (id.startsWith("re_")) {
       return (

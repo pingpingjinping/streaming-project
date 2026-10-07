@@ -10,6 +10,8 @@ import { fetchCreatorSubtitle, resolveKoreanTitle } from "@/lib/subtitles";
 import { resolveAnissiaStream } from "@/lib/resolvers/videoResolver";
 import { getManualStreamSourceById, getSubtitleEpisodeStart } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
+import { toSourceEpisode, toLocalEpisode } from "@/lib/episodeMapping";
+import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 
@@ -60,13 +62,18 @@ export default async function WatchPage({
     sub_url?: string;
     manual_source?: string;
     video_source?: string;
+    source_ep?: string;
   }>;
 }) {
   const user = await requireAuth();
 
   const { id, ep } = await params;
-  const { dub, creator, sub_url, manual_source, video_source } = await searchParams;
-  const epNum = parseInt(ep, 10) || 1;
+  const { dub, creator, sub_url, manual_source, video_source, source_ep } = await searchParams;
+  const sourceEpisodeStart = await getSubtitleEpisodeStart(user.username, id);
+  const requestedEp = parseInt(ep, 10) || 1;
+  const epNum = source_ep === "1" && id.startsWith("ani_")
+    ? toLocalEpisode(requestedEp, sourceEpisodeStart) : requestedEp;
+  if (epNum === null) notFound();
   const isDub = dub === "1";
   const isReanime = id.startsWith("re_");
   const isAnissia = id.startsWith("ani_");
@@ -95,7 +102,7 @@ export default async function WatchPage({
       : null;
 
   const provider = getProviderByAnimeId(id);
-  const anime = await provider.getAnimeDetail(id);
+  const anime = await provider.getAnimeDetail(id, { subtitleEpisodeStart: sourceEpisodeStart });
 
   // Provider 자체가 죽어 작품 상세를 못 읽어도 직접 링크는 사용할 수 있게 한다.
   if (!anime) {
@@ -165,7 +172,7 @@ export default async function WatchPage({
   }
 
   const epList = isDub ? anime.dub_episodes : anime.sub_episodes;
-  const matched = epList.find((e) => e.number === epNum) || epList[0];
+  const matched = epList.find((e) => e.number === epNum);
   const watchUrl = matched?.watch_url || "";
 
   if (!watchUrl && !activeManual) {
@@ -186,8 +193,7 @@ export default async function WatchPage({
   }
 
   const initialCreator = creator || matched?.creator_name || "";
-  const sourceEpisodeStart = await getSubtitleEpisodeStart(user.username, anime.id);
-  const sourceEpisode = sourceEpisodeStart && sourceEpisodeStart > 0 ? sourceEpisodeStart + epNum - 1 : epNum;
+  const sourceEpisode = toSourceEpisode(epNum, sourceEpisodeStart);
   const initialSubUrl = sub_url || matched?.caption_url || "";
 
   const [providerStreamInfo, preloadedSub] = await Promise.all([
@@ -200,7 +206,9 @@ export default async function WatchPage({
             anime.title,
             anime.original_title,
             requestedVideoSource,
-            id
+            id,
+            sourceEpisodeStart,
+            anime.total_episodes
           )
         : provider.getEpisodeStream(watchUrl),
     (!isDub && initialSubUrl && initialSubUrl.startsWith("http"))
@@ -363,3 +371,4 @@ export default async function WatchPage({
     </div>
   );
 }
+

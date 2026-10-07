@@ -1,4 +1,4 @@
-import { getDb } from "./db";
+import { getDb, getSubtitleEpisodeStart } from "./db";
 import { getProviderByAnimeId } from "./providers";
 
 // 사용자별 10분 TTL 캐시로 잦은 외부 웹 크롤링 요청 방지
@@ -91,7 +91,8 @@ export async function checkAndPromoteNewEpisodes(userId = "default"): Promise<bo
 
         // 남은 예산만큼만 대기 (단, 개별 호출도 최대 8초)
         const detail = await withTimeout(
-          getProviderByAnimeId(animeId).getAnimeDetail(animeId),
+          getSubtitleEpisodeStart(userId, animeId).then(subtitleEpisodeStart =>
+            getProviderByAnimeId(animeId).getAnimeDetail(animeId, { subtitleEpisodeStart })),
           Math.min(deadline - Date.now(), TOTAL_BUDGET_MS)
         );
         if (!detail) return false;

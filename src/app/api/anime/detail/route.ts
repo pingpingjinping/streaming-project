@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getProviderByAnimeId } from "@/lib/providers";
 import { getSessionUser } from "@/lib/auth";
 
+import { getSubtitleEpisodeStart } from "@/lib/db";
+
 export async function GET(request: NextRequest) {
   // 보안: 미인증 사용자가 서버를 무료 스크레이퍼로 악용하는 것을 방지
   const user = await getSessionUser();
@@ -17,7 +19,8 @@ export async function GET(request: NextRequest) {
   }
 
   const provider = getProviderByAnimeId(id);
-  const detail = await provider.getAnimeDetail(id);
+  const subtitleEpisodeStart = await getSubtitleEpisodeStart(user.username, id);
+  const detail = await provider.getAnimeDetail(id, { subtitleEpisodeStart });
   if (!detail) {
     return NextResponse.json({ error: "Anime not found" }, { status: 404 });
   }
@@ -25,7 +28,7 @@ export async function GET(request: NextRequest) {
   const noCache = searchParams.get("nocache") === "1";
   return NextResponse.json(detail, {
     headers: {
-      "Cache-Control": noCache
+      "Cache-Control": (noCache || provider.name === "anissia")
         ? "no-store"
         : "public, s-maxage=600, stale-while-revalidate=3600",
     },
