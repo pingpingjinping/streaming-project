@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { runChromiumQueued } from "@/lib/chromiumFetch";
 
 const CHROMIUM_BIN = process.env.CHROMIUM_BIN || "/usr/bin/chromium";
 const MAX_CANDIDATES = 6;
@@ -16,24 +17,9 @@ export interface TistoryWinPngFile {
 }
 
 const resultCache = new Map<string, { timestamp: number; files: TistoryWinPngFile[] }>();
-let chromiumQueue: Promise<void> = Promise.resolve();
 
 function cloneFiles(files: TistoryWinPngFile[]): TistoryWinPngFile[] {
   return files.map((file) => ({ ...file, data: Buffer.from(file.data) }));
-}
-
-async function runQueued<T>(task: () => Promise<T>): Promise<T> {
-  const previous = chromiumQueue;
-  let release!: () => void;
-  chromiumQueue = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  await previous;
-  try {
-    return await task();
-  } finally {
-    release();
-  }
 }
 
 function allowedTistoryUrl(value: string): URL | null {
@@ -233,9 +219,14 @@ const CANDIDATES = `(() => {
     "#content img, .tt_article_useless_p_margin img, .contents_style img"
   );
   nodes.forEach((img, index) => {
-    const src = img.currentSrc || img.src || "";
-    const clean = src.split("?")[0].toLowerCase();
-    if (!clean.endsWith(".png") || seen.has(src)) return;
+    const sources = [
+      img.getAttribute("data-url") || "",
+      img.getAttribute("data-phocus") || "",
+      img.currentSrc || "",
+      img.src || "",
+    ].filter(Boolean);
+    const src = sources.find((value) => value.split("?")[0].toLowerCase().endsWith(".png")) || "";
+    if (!src || seen.has(src)) return;
     seen.add(src);
     const key = "anime-wp-" + index;
     img.setAttribute("data-anime-wp-key", key);
@@ -432,7 +423,7 @@ export async function extractTistoryWinPngFiles(
     return cloneFiles(cached.files);
   }
 
-  return await runQueued(async () => {
+  return await runChromiumQueued(async () => {
     const second = resultCache.get(cacheKey);
     if (second && Date.now() - second.timestamp < CACHE_TTL_MS) {
       return cloneFiles(second.files);
