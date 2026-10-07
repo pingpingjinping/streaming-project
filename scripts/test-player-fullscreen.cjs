@@ -356,7 +356,7 @@ test('ASS subtitle sharpness is shown beside fullscreen exit opacity and applies
   assert.doesNotMatch(syncResizeBlock, /canvasRef\.current\.width\s*=|canvasRef\.current\.height\s*=/);
   assert.match(
     iframe,
-    /syncOctopusCanvasSize[\s\S]*?setCurrentTime\?\.\(\s*lastCurrentTimeRef\.current \+ syncOffsetRef\.current\s*\)/
+    /syncOctopusCanvasSize[\s\S]*?syncIframeSubtitleClock\([\s\S]*?lastCurrentTimeRef\.current \+ syncOffsetRef\.current[\s\S]*?reset: true/
   );
   assert.match(iframe, /playerSettings\.subtitleSharpness,[\s\S]*?\]\);/);
 });

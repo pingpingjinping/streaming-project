@@ -631,7 +631,8 @@ export default function IframePlayer({
                   Math.max(1, Math.round(ch * sharpness))
                 );
                 if (octopusRef.current) subtitleClockRef.current = syncIframeSubtitleClock(
-                  octopusRef.current, null, lastCurrentTimeRef.current + syncOffsetRef.current, playbackPausedRef.current);
+                  octopusRef.current, null, lastCurrentTimeRef.current + syncOffsetRef.current, playbackPausedRef.current,
+                  { offset: syncOffsetRef.current });
               } catch {}
             },
             onError: (e: any) => {
@@ -718,7 +719,7 @@ export default function IframePlayer({
         playbackStatusKnownRef.current = true;
         if (octopusRef.current?.worker) subtitleClockRef.current = syncIframeSubtitleClock(
           octopusRef.current, subtitleClockRef.current,
-          lastCurrentTimeRef.current + syncOffsetRef.current, paused);
+          lastCurrentTimeRef.current + syncOffsetRef.current, paused, { offset: syncOffsetRef.current });
       }
 
       // Handle Fullscreen queries from iframe
@@ -768,7 +769,8 @@ export default function IframePlayer({
             if (octopusRef.current.worker) {
               const effectiveTime = time + syncOffsetRef.current;
               subtitleClockRef.current = syncIframeSubtitleClock(
-                octopusRef.current, subtitleClockRef.current, effectiveTime, playbackPausedRef.current);
+                octopusRef.current, subtitleClockRef.current, effectiveTime, playbackPausedRef.current,
+                { offset: syncOffsetRef.current });
             } else {
               isOctopusActiveRef.current = false;
               setIsOctopusActive(false);
@@ -798,7 +800,7 @@ export default function IframePlayer({
           updateSubtitleHud(topHudTextRef.current, "");
         } else {
           const effectiveTime = time + syncOffsetRef.current;
-          const matchedCues = cuesRef.current.filter((c) => effectiveTime >= c.start && effectiveTime <= c.end);
+          const matchedCues = cuesRef.current.filter((c) => effectiveTime >= c.start && effectiveTime < c.end);
           updateSubtitleHud(hudTextRef.current, matchedCues.filter(c => !c.isTop).map(c => c.text).join("\n"));
           updateSubtitleHud(topHudTextRef.current, matchedCues.filter(c => c.isTop).map(c => c.text).join("\n"));
         }
@@ -837,9 +839,10 @@ export default function IframePlayer({
           // Let Octopus own the backing-size transition so it can notify
           // libass and redraw the current frame after rotation/fullscreen.
           octopusRef.current.resize(renderW, renderH);
-          octopusRef.current?.setCurrentTime?.(
-            lastCurrentTimeRef.current + syncOffsetRef.current
-          );
+          subtitleClockRef.current = syncIframeSubtitleClock(
+            octopusRef.current, subtitleClockRef.current,
+            lastCurrentTimeRef.current + syncOffsetRef.current, playbackPausedRef.current,
+            { offset: syncOffsetRef.current, reset: true });
         } catch {}
       }
     };
