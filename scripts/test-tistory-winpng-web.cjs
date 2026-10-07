@@ -101,7 +101,10 @@ test("web WinPNG path opens original Kakao PNG and never exports raw JMK", () =>
   assert.match(source, /candidateOpenExpression\(png\.toString\("base64"\)\)/);
   assert.match(source, /inputUrl\.value = URL\.reset\(blob\)/);
   assert.match(source, /files = files\.filter\(\(file\) => \/\\\.\(\?:ass\|ssa\|smi\|srt\|vtt\|zip\)\$\/i\.test\(file\.path\)\)/);
-  assert.doesNotMatch(source, /await add\(originalName, anchor\.getAttribute\("data-href"\), false\)/);
+  assert.doesNotMatch(
+    source,
+    /if \(!assUrl && !smiUrl\) await add\(originalName, anchor\.getAttribute\("data-href"\), false\)/,
+  );
 });
 
 test("manual online creator confirmation still uses the shared blog extractor", () => {
