@@ -545,14 +545,19 @@ export async function extractSubtitleFromBlogPage(
         console.warn("[Tistory WinPNG] no playable converted files", { postUrl });
       }
       for (const file of winPngFiles) {
+        const pathParts = file.path.split(/[\\/]/).filter(Boolean);
         const fileEvidence = readEpisodeEvidence(file.path, true);
-        const outer = [postEvidence, fileEvidence];
+        const folderEvidence = pathParts.slice(0, -1)
+          .map((part) => readEpisodeEvidence(part))
+          .filter((evidence) => evidence.episodes.length || evidence.season);
+        const outer = [postEvidence, ...folderEvidence, fileEvidence];
         if (outer.some((e) => !evidenceAgrees(e, request))) {
           console.warn("[Tistory WinPNG] subtitle candidate rejected by episode evidence", {
             postUrl,
             path: file.path,
             request,
             postEvidence,
+            folderEvidence,
             fileEvidence,
           });
           continue;
