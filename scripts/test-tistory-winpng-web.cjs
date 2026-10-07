@@ -93,8 +93,8 @@ test("Tistory blog extraction falls back to generated WinPNG ASS", async () => {
 
 test("web WinPNG path opens original Kakao PNG and never exports raw JMK", () => {
   const source = fs.readFileSync(path.join(__dirname, "../src/lib/tistoryWinPng.ts"), "utf8");
-  assert.match(source, /img\.getAttribute\("data-url"\)/);
-  assert.match(source, /img\.getAttribute\("data-phocus"\)/);
+  assert.match(source, /node\.getAttribute\?\.\("data-url"\)/);
+  assert.match(source, /node\.getAttribute\?\.\("data-phocus"\)/);
   assert.match(source, /blog\.kakaocdn\.net/);
   assert.match(source, /const response = await fetch\(url,/);
   assert.match(source, /"Referer": referer/);
