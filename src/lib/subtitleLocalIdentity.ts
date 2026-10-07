@@ -83,7 +83,15 @@ export function bundleScopesOverlap(first:string,second:string):boolean {
 
 export function bundleMatchesAssignment(assignment:string,candidate:string):boolean {
   const scope=parseBundleScope(assignment),file=parseBundleScope(candidate);
-  return bundleScopesOverlap(assignment,candidate) && !(scope?.type==='folder' && scope.track && file?.type==='local' && scope.track!==file.track);
+  // Older saved tracks still contain the normalized completion suffix. Compare
+  // archive/member names without it, preserving creator and source provenance.
+  const normalizedTrack=(track:string)=>track.split('|').map((part,index)=>
+    index===1 || index===2 ? part.replace(/미완성$/,'') : part).join('|');
+  if(scope?.type==='local' && file?.type==='local' && normalizedTrack(scope.track)===normalizedTrack(file.track)) {
+    return bundleScopeKey({...scope,track:file.track})===candidate;
+  }
+  return bundleScopesOverlap(assignment,candidate) && !(scope?.type==='folder' && scope.track && file?.type==='local'
+    && normalizedTrack(scope.track)!==normalizedTrack(file.track));
 }
 
 /** A folder with no chosen track leaves every variant available for selection. */

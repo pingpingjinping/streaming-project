@@ -34,6 +34,19 @@ for(const ep of Array.from({length:12},(_,i)=>i+1)) {
   for(const provider of ['anissia','aniall']) for(const suffix of ['','__2'])
     put(`${provider}_subtitles/연속 작품/${String(ep).padStart(2,'0')}${suffix}.srt`,srt(`${provider} series${suffix} episode ${ep}`));
 }
+for(const provider of ['anissia','aniall']) {
+  for(const ep of [15,16,17]) {
+    put(`${provider}_subtitles/완성 상태 ${provider}/${ep}화${ep===16?' 미완성':''}.srt`,srt(`${provider} completion ${ep}`));
+    zipFile(`${provider}_subtitles/완성 ZIP ${provider}/${provider==='anissia'?`${ep}화/제작자/`:''}${ep}화${ep===16?' 미완성':''}.zip`,
+      {[`${ep}화${ep===16?' (미완성)':''}.srt`]:srt(`${provider} ZIP completion ${ep}`)});
+  }
+  for(const suffix of ['',' 미완성'])
+    put(`${provider}_subtitles/완성 중복 ${provider}/16화${suffix}.srt`,srt(`${provider} duplicate ${suffix||'complete'}`));
+  for(const ep of [15,16]) for(const variant of ['ns','s','__2'])
+    put(`${provider}_subtitles/완성 구분 ${provider}/${ep}화${variant}${ep===16?' [미완성]':''}.srt`,srt(`${provider} variant ${variant} ${ep}`));
+  for(const ep of [15,16])
+    put(`${provider}_subtitles/미완성 제목 ${provider}/미완성의 작품 ${ep}화.srt`,srt(`${provider} title ${ep}`));
+}
 const db=require('../src/lib/db.ts'),auth=require('../src/lib/auth.ts'),storage=require('../src/lib/subtitleStorage.ts');
 const reviewed=require('../src/lib/reviewedSubtitleStorage.ts'),titles=require('../src/lib/subtitles.ts'),matches=require('../src/lib/reanimeMatches.ts');
 const identity=require('../src/lib/subtitleLocalIdentity.ts');
@@ -94,6 +107,69 @@ test('different same-episode versions require a choice, even with a work assignm
   const files=await storage.getAniAllArchiveSubtitles('버전 작품',1);await assign('re_versions','aniall',files[0]);
   // One selected release track can be applied; other tracks are never chosen arbitrarily.
   const assigned=await play('re_versions','버전 작품');assert.equal(assigned.count,1);assert.ok(assigned.subtitles[0].content.includes('version one'));
+});
+test('trailing completion status preserves the selected track across loose files and ZIPs',async()=>{
+  for(const provider of ['anissia','aniall']) for(const layout of ['완성 상태','완성 ZIP']) {
+    const title=`${layout} ${provider}`,id=`re_completion_${provider}_${layout}`;
+    const files=provider==='anissia' ? await storage.getAnissiaArchiveSubtitles([title],15)
+      : await storage.getAniAllArchiveSubtitles(title,15);
+    assert.equal(files.length,1,`${provider} ${layout}`);assert.equal((await assign(id,provider,files[0])).success,true);
+    const incomplete=await play(id,title,16);
+    assert.equal(incomplete.count,1);assert.equal(incomplete.needs_manual_subtitle_choice,false);
+    assert.equal(incomplete.subtitles[0].episodeConfirmed,true);
+    assert.match(incomplete.subtitles[0].orig_filename,/미완성/);
+    const complete=await play(id,title,17);
+    assert.equal(complete.count,1);assert.equal(complete.needs_manual_subtitle_choice,false);
+    assert.ok(complete.subtitles[0].content.includes('17'));
+    assert.equal((await assign(id,provider,incomplete.subtitles[0])).success,true);
+    assert.equal((await play(id,title,17)).count,1);
+  }
+});
+test('complete and incomplete files for the same episode still require a choice',async()=>{
+  for(const provider of ['anissia','aniall']) {
+    const title=`완성 중복 ${provider}`,id=`re_completion_duplicate_${provider}`;
+    const files=provider==='anissia' ? await storage.getAnissiaArchiveSubtitles([title],16)
+      : await storage.getAniAllArchiveSubtitles(title,16);
+    assert.equal(files.length,2);assert.equal(files[0].sourceBundleKey,files[1].sourceBundleKey);
+    assert.notEqual(files[0].localFileId,files[1].localFileId);
+    await assign(id,provider,files[0]);
+    const result=await play(id,title,16);
+    assert.equal(result.count,2);assert.equal(result.needs_manual_subtitle_choice,true);
+  }
+});
+test('completion suffix normalization preserves sponsor, copy and title distinctions',async()=>{
+  for(const provider of ['anissia','aniall']) {
+    const title=`완성 구분 ${provider}`;
+    const get=ep=>provider==='anissia' ? storage.getAnissiaArchiveSubtitles([title],ep)
+      : storage.getAniAllArchiveSubtitles(title,ep);
+    const first=await get(15),second=await get(16);
+    assert.equal(first.length,3);assert.equal(second.length,3);
+    assert.equal(new Set(second.map(s=>s.sourceBundleKey)).size,3);
+    for(const variant of ['ns','s','__2']) {
+      const initial=first.find(s=>s.orig_filename===`15화${variant}.srt`);
+      const next=second.find(s=>s.orig_filename===`16화${variant} [미완성].srt`);
+      assert.equal(next.sourceBundleKey,initial.sourceBundleKey);
+    }
+    const titled=provider==='anissia' ? await storage.getAnissiaArchiveSubtitles([`미완성 제목 ${provider}`],16)
+      : await storage.getAniAllArchiveSubtitles(`미완성 제목 ${provider}`,16);
+    assert.equal(titled.length,1);
+    assert.match(identity.parseBundleScope(titled[0].sourceBundleKey).track,/미완성의작품/);
+  }
+});
+test('previously saved incomplete tracks match while creator, source, season and kind stay scoped',async()=>{
+  const title='완성 상태 anissia',files=await storage.getAnissiaArchiveSubtitles([title],16);
+  const current=identity.parseBundleScope(files[0].sourceBundleKey);
+  const oldTrack=current.track.split('|').map((part,index)=>index===1||index===2?part+'미완성':part).join('|');
+  for(const type of ['folder','local']) {
+    for(const [key,value]of assignments)if(identity.parseBundleScope(value.bundleKey)?.work===current.work)assignments.delete(key);
+    const legacy=identity.bundleScopeKey({...current,type,track:oldTrack});
+    const id=`re_legacy_completion_${type}`;
+    assignments.set(`alice:${id}`,{animeId:id,provider:'anissia',bundleKey:legacy,label:'기존 미완성 선택',exclusive:true});
+    const next=await play(id,title,17);assert.equal(next.count,1);assert.equal(next.needs_manual_subtitle_choice,false);
+    for(const changed of [{season:2},{kind:'ova'},{work:'다른 작품'},{track:current.track.replace(/^로컬파일/,'다른제작자')},
+      {track:current.track+'|source:anissia:999'}])
+      assert.equal(identity.bundleMatchesAssignment(legacy,identity.bundleScopeKey({...current,...changed})),false);
+  }
 });
 test('single unnumbered reviewed special remains manual after work-wide assignment',async()=>{
   const bonus=registryRow('bonus','bonus.ass','작품 특전','special-work');rows=[bonus];
