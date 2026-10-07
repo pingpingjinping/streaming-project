@@ -3,6 +3,9 @@ import { getAnimeDetail, getEpisodeStream } from "@/lib/linkkf";
 import { assertSafeProxyUrl, UnsafeProxyUrlError } from "@/lib/proxyGuard";
 import { getSessionUser } from "@/lib/auth";
 
+import { getSubtitleEpisodeStart } from "@/lib/db";
+import { resolveAnissiaStream } from "@/lib/resolvers/videoResolver";
+
 export const dynamic = "force-dynamic";
 
 const OP_SEARCH_SEC = 240; // 앞 4분
@@ -88,14 +91,17 @@ export async function GET(request: NextRequest) {
     if (!m3u8Url && animeId) {
       const { getProviderByAnimeId } = await import("@/lib/providers");
       const provider = getProviderByAnimeId(animeId);
-      const detail = await provider.getAnimeDetail(animeId);
+      const subtitleEpisodeStart = await getSubtitleEpisodeStart(user.username, animeId);
+      const detail = await provider.getAnimeDetail(animeId, { subtitleEpisodeStart });
       if (detail) {
         const epList = isDub && detail.dub_episodes && detail.dub_episodes.length > 0
           ? detail.dub_episodes
           : detail.sub_episodes;
-        const targetEp = epList.find((e) => e.number === ep) || epList[0];
+        const targetEp = epList.find((e) => e.number === ep);
         if (targetEp && targetEp.watch_url) {
-          const streamInfo = await provider.getEpisodeStream(targetEp.watch_url);
+          const streamInfo = provider.name === "anissia"
+            ? await resolveAnissiaStream(Number(animeId.slice(4)), ep, detail.title, detail.original_title, undefined, animeId, subtitleEpisodeStart, detail.total_episodes)
+            : await provider.getEpisodeStream(targetEp.watch_url);
           if (streamInfo && streamInfo.m3u8_url) {
             m3u8Url = streamInfo.m3u8_url;
           }

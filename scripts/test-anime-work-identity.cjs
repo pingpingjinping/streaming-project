@@ -59,6 +59,7 @@ test('full title normalization permits accents but keeps sequel, OVA and disting
 function resolver({items = [], details = {}, meta = null, linked = [], failedQuery = "", work = {titles: [korean,native,romaji], format: 'MOVIE'}} = {}) {
   const streams = [], searches = [], detailCalls = [], metadataQueries = [];
   const api = load('src/lib/resolvers/videoResolver.ts', {
+    '../episodeMapping': load('src/lib/episodeMapping.ts', {}),
     '../providers/reanime': {reanimeProvider: {}}, '../providers/linkkf': {linkkfProvider: {}},
     '../providers/ohli24': {ohli24Provider: {}},
     '../db': {getAnissiaStreamCache: async () => null, setAnissiaStreamCache: async () => {}},
@@ -127,3 +128,4 @@ test('one failed Anikoto alias search does not discard a proven match from anoth
   assert.equal(api.metadataQueries.length,0);
   assert.equal(api.streams.length,1);
 });
+

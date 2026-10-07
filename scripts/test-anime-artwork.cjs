@@ -11,6 +11,7 @@ function load(file,deps={},globals={}) {
 const response=data=>({ok:true,json:async()=>data});
 function anissia(fetch,links=new Map(),artwork=async()=>null,clock=Date) {
   return load('src/lib/providers/anissia.ts',{
+    '../episodeMapping':load('src/lib/episodeMapping.ts'),
     './ids':requireIds(),'../resolvers/videoResolver':{resolveAnissiaStream:async()=>null},
     '../reanimeMatches':{getConfirmedReanimeIdsForAnissia:async()=>links},'./reanime':{getReanimeArtwork:artwork},
   },{fetch,Date:clock});

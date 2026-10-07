@@ -1,8 +1,10 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 export default function SubtitleEpisodeStartSetting({ animeId }: { animeId: string }) {
+  const router = useRouter();
   const [value, setValue] = useState("");
   const [saved, setSaved] = useState<number | null>(null);
   const [notice, setNotice] = useState("");
@@ -45,6 +47,8 @@ export default function SubtitleEpisodeStartSetting({ animeId }: { animeId: stri
       });
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.message || "저장하지 못했습니다.");
+      router.refresh();
+      window.dispatchEvent(new CustomEvent("subtitle-settings-changed", { detail: { animeId } }));
       setSaved(start);
       setValue(start === null ? "" : String(start));
       setNotice(start === null ? "기본 회차 검색으로 되돌렸어." : `${start}화부터 연결하도록 저장했어.`);

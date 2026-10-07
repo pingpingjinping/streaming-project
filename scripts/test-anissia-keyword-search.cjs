@@ -19,6 +19,11 @@ try {
 }
 
 function lookup(fetch, monthly = []) {
+  const mapping = {exports:{}};
+  vm.runInNewContext(require('typescript').transpileModule(
+    fs.readFileSync(path.join(__dirname, '../src/lib/episodeMapping.ts'), 'utf8'),
+    {compilerOptions:{module:require('typescript').ModuleKind.CommonJS}},
+  ).outputText, mapping);
   const context = vm.createContext({
     fetch, AbortSignal, console, HEADERS: {},
     getMonthlyAnissiaCandidates: async () => monthly,
@@ -28,6 +33,7 @@ function lookup(fetch, monthly = []) {
     parseSeason: () => 0,
     scoreAnimeMatch: () => 80,
     parseEpisodes: (episode) => [Number(episode)],
+    toSourceEpisode: mapping.exports.toSourceEpisode,
     mapProviderEpisodeNumber: (_, episode) => episode,
   });
   vm.runInContext(code, context);
@@ -86,4 +92,18 @@ test('manual keyword search does not add unrelated monthly suggestions', async (
   const result = await lookup(p.fetch, [{ animeNo: 99, subject: '다른 작품', score: 100 }])('슬라임', 2, 3500, null, '슬라임', 're_1', true);
   assert.equal(result.length, 9);
   assert.ok(!p.captions.includes(99));
+});
+
+test('configured season offset selects the current source post and keeps one creator candidate', async () => {
+  const api = lookup(async () => response([
+    {name:'creator',episode:'25',website:'https://blog.example/25'},
+    {name:'creator',episode:'13',website:'https://blog.example/13'},
+    {name:'creator',episode:'14',website:'https://blog.example/14'},
+  ]));
+  for (const [local,source] of [[1,13],[2,14],[13,25]]) {
+    const result = await api('정반대의 너와 나 2기',local,3500,42,'정반대의 너와 나 2기','ani_42',false,13);
+    assert.equal(result.length,1);
+    assert.equal(result[0].website,`https://blog.example/${source}`);
+    assert.equal(result[0].is_current_ep,true);
+  }
 });

@@ -1,3 +1,4 @@
+import { toSourceEpisode } from "@/lib/episodeMapping";
 import { NextRequest, NextResponse } from "next/server";
 import {
   searchAllSubtitlesParallel,
@@ -52,7 +53,7 @@ async function fetchPreferredBlogSubtitle(
   const targetTitle = resolvedTitle || requestedTitle;
   const targetSeason = parseSeason(targetTitle) || parseSeason(requestedTitle);
   const sourceEpisode = sourceEpisodeStart && sourceEpisodeStart > 0
-    ? sourceEpisodeStart + episode - 1
+    ? toSourceEpisode(episode, sourceEpisodeStart)
     : mapProviderEpisodeNumber(preference.creatorEpisode, episode, targetSeason);
 
   let subtitle = null;
@@ -105,7 +106,7 @@ async function fetchPreferredLocalSubtitles(
   const matchedTitle = await resolveKoreanTitle(requestedTitle) || requestedTitle;
   const season = parseSeason(matchedTitle) || parseSeason(requestedTitle);
   const sourceEpisode = sourceEpisodeStart && sourceEpisodeStart > 0
-    ? sourceEpisodeStart + episode - 1
+    ? toSourceEpisode(episode, sourceEpisodeStart)
     : mapProviderEpisodeNumber(preference.creatorEpisode, episode, season);
   if (preference.sourceProvider === "aniall") {
     const blogTitle = preference.creatorName.replace(/^AniAll\s*[·|]\s*/i, "").trim();
@@ -151,7 +152,9 @@ export async function GET(request: NextRequest) {
   const sourceEpisodeStart = animeIdParam
     ? await getSubtitleEpisodeStart(user.username, animeIdParam)
     : null;
-  const sourceEpisode = sourceEpisodeStart && sourceEpisodeStart > 0 ? sourceEpisodeStart + ep - 1 : ep;
+  const sourceEpisode = sourceEpisodeStart && sourceEpisodeStart > 0
+    ? toSourceEpisode(ep, sourceEpisodeStart)
+    : ep;
   const website = searchParams.get("website")?.trim() || searchParams.get("sub_url")?.trim() || "";
   const creatorName = searchParams.get("creatorName")?.trim() || searchParams.get("creator")?.trim() || "";
   const [rejections, bundleAssignment, bundleAssignments, creatorPreference, episodeOverrides] = animeIdParam
@@ -567,7 +570,7 @@ export async function POST(request: NextRequest) {
     const targetTitle = resolvedTitle || requestedTitle;
     const targetSeason = parseSeason(targetTitle) || parseSeason(requestedTitle);
     const sourceEpisode = sourceEpisodeStart && sourceEpisodeStart > 0
-      ? sourceEpisodeStart + ep - 1
+      ? toSourceEpisode(ep, sourceEpisodeStart)
       : mapProviderEpisodeNumber(String(creatorEpisode || ""), ep, targetSeason);
 
     const isErusha = (creatorName.includes("에루샤") || (website && website.toLowerCase().includes("erulabo")))
@@ -675,3 +678,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

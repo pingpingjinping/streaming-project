@@ -1,3 +1,4 @@
+import { toSourceEpisode } from "@/lib/episodeMapping";
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import {
@@ -104,7 +105,9 @@ export async function GET(request: NextRequest) {
 
     const anissiaNoMatch = animeId.match(/^(?:ani_)?(\d+)$/);
     const anissiaNo = anissiaNoMatch ? Number(anissiaNoMatch[1]) : null;
-    const sourceEpisode = sourceEpisodeStart && sourceEpisodeStart > 0 ? sourceEpisodeStart + episode - 1 : episode;
+    const sourceEpisode = sourceEpisodeStart && sourceEpisodeStart > 0
+      ? toSourceEpisode(episode, sourceEpisodeStart)
+      : episode;
     const assignedAnissiaLabel = !allowReassignmentSearch && (assignedScope?.type==='local' || assignedScope?.type==='folder') && bundleAssignment?.provider==='anissia' ? assignedScope.work.replace(/^[1-9]\d*__/,'') : "";
     const anissiaArchives = await getAnissiaArchiveSubtitles(
       [title, resolvedTitle, assignedAnissiaLabel].filter(Boolean),

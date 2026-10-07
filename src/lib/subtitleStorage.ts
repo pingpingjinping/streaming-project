@@ -1,3 +1,4 @@
+import { toSourceEpisode } from "@/lib/episodeMapping";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -519,7 +520,7 @@ export async function getAniAllArchiveSubtitles(blogTitle: string, episode: numb
   const dir = path.join(corpus,folder), names = assigned?.type==='folder' ? await folderSubtitleFiles(dir) : await readdir(dir);
   const sourceFor=(filename:string)=>sourceFiles[`aniall_subtitles/${folder}/${filename}`];
   const eligibleFile=(filename:string)=>!sourceFor(filename) || Boolean(options.bundleKey || options.manualSearch || (postId && sourceFor(filename)!.sources.some(s=>s.source==='aniall' && s.id===postId)));
-  const request = {episode,sourceEpisode:(startEpisodeOverride || 1)+episode-1,season:assigned?.season || seasonNumber || 1};
+  const request = {episode,sourceEpisode:toSourceEpisode(episode,startEpisodeOverride),season:assigned?.season || seasonNumber || 1};
   const wantedKind = assigned?.kind || subtitleScope('',blogTitle).kind;
   const results: Array<{blogTitle:string;name:string;orig_filename:string;content:string;format:'ASS'|'VTT';is_ass:boolean;
     sourceBundleKey:string;sourceBundleLabel:string;sourceFolderKey:string;sourceFolderLabel:string;localFileId:string;episodeConfirmed:boolean}> = [];
