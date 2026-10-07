@@ -395,6 +395,24 @@ async function initializeDb() {
     console.warn("[initDb subtitle_bundle_assignments warning]:", e?.message);
   }
 
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS subtitle_creator_preferences (
+        user_id VARCHAR(100) NOT NULL,
+        anime_id VARCHAR(100) NOT NULL,
+        source_provider VARCHAR(16) NOT NULL,
+        creator_name TEXT NOT NULL,
+        website TEXT NOT NULL,
+        matched_title TEXT NOT NULL DEFAULT '',
+        creator_episode VARCHAR(64) NOT NULL DEFAULT '',
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, anime_id)
+      )
+    `;
+  } catch (e: any) {
+    console.warn("[initDb subtitle_creator_preferences warning]:", e?.message);
+  }
+
   // User playback overrides only; reviewed work/episode tables are immutable here.
   try {
     await sql`CREATE TABLE IF NOT EXISTS subtitle_episode_overrides (
@@ -590,6 +608,11 @@ export async function saveSubtitleBundleAssignment(
         DO UPDATE SET provider = EXCLUDED.provider, bundle_key = EXCLUDED.bundle_key,
           label = EXCLUDED.label, exclusive = TRUE, updated_at = CURRENT_TIMESTAMP
       `;
+      // A deliberate local bundle choice replaces an older online creator preference.
+      await tx`
+        DELETE FROM subtitle_creator_preferences
+        WHERE user_id = ${userId} AND anime_id = ${animeId}
+      `;
     });
     return true;
   } catch (e) {
@@ -610,6 +633,106 @@ export async function deleteSubtitleBundleAssignment(userId: string, animeId: st
     return true;
   } catch (e) {
     console.error("[deleteSubtitleBundleAssignment error]:", e);
+    return false;
+  }
+}
+
+export type SubtitleCreatorProvider = "aniall" | "anissia";
+
+export interface SubtitleCreatorPreference {
+  animeId: string;
+  sourceProvider: SubtitleCreatorProvider;
+  creatorName: string;
+  website: string;
+  matchedTitle: string;
+  creatorEpisode: string;
+}
+
+function toSubtitleCreatorPreference(row: any): SubtitleCreatorPreference {
+  return {
+    animeId: String(row.anime_id),
+    sourceProvider: String(row.source_provider) as SubtitleCreatorProvider,
+    creatorName: String(row.creator_name || ""),
+    website: String(row.website || ""),
+    matchedTitle: String(row.matched_title || ""),
+    creatorEpisode: String(row.creator_episode || ""),
+  };
+}
+
+export async function getSubtitleCreatorPreference(
+  userId: string,
+  animeId: string,
+): Promise<SubtitleCreatorPreference | null> {
+  const sql = getDb();
+  if (!sql || !userId || !animeId) return null;
+  await initDb();
+  try {
+    const rows = await sql`
+      SELECT anime_id, source_provider, creator_name, website, matched_title, creator_episode
+      FROM subtitle_creator_preferences
+      WHERE user_id = ${userId} AND anime_id = ${animeId}
+      LIMIT 1
+    `;
+    return rows[0] ? toSubtitleCreatorPreference(rows[0]) : null;
+  } catch (e) {
+    console.warn("[getSubtitleCreatorPreference warning]:", e);
+    return null;
+  }
+}
+
+export async function saveSubtitleCreatorPreference(
+  userId: string,
+  animeId: string,
+  value: Omit<SubtitleCreatorPreference, "animeId">,
+): Promise<boolean> {
+  const sql = getDb();
+  if (!sql || !userId || !animeId || animeId.length > 100 ||
+      !["aniall", "anissia"].includes(value.sourceProvider) ||
+      !value.creatorName || value.creatorName.length > 500 ||
+      !value.website || value.website.length > 2048 ||
+      value.matchedTitle.length > 1000 || value.creatorEpisode.length > 64) return false;
+  await initDb();
+  try {
+    await sql.begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(hashtext(${userId}))`;
+      // An explicit blog-creator choice and a local bundle choice are mutually exclusive.
+      await tx`
+        DELETE FROM subtitle_bundle_assignments
+        WHERE user_id = ${userId} AND anime_id = ${animeId}
+      `;
+      await tx`
+        INSERT INTO subtitle_creator_preferences
+          (user_id, anime_id, source_provider, creator_name, website, matched_title, creator_episode, updated_at)
+        VALUES (
+          ${userId}, ${animeId}, ${value.sourceProvider}, ${value.creatorName},
+          ${value.website}, ${value.matchedTitle}, ${value.creatorEpisode}, CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (user_id, anime_id)
+        DO UPDATE SET source_provider = EXCLUDED.source_provider,
+          creator_name = EXCLUDED.creator_name, website = EXCLUDED.website,
+          matched_title = EXCLUDED.matched_title, creator_episode = EXCLUDED.creator_episode,
+          updated_at = CURRENT_TIMESTAMP
+      `;
+    });
+    return true;
+  } catch (e) {
+    console.error("[saveSubtitleCreatorPreference error]:", e);
+    return false;
+  }
+}
+
+export async function deleteSubtitleCreatorPreference(userId: string, animeId: string): Promise<boolean> {
+  const sql = getDb();
+  if (!sql || !userId || !animeId) return false;
+  await initDb();
+  try {
+    await sql`
+      DELETE FROM subtitle_creator_preferences
+      WHERE user_id = ${userId} AND anime_id = ${animeId}
+    `;
+    return true;
+  } catch (e) {
+    console.error("[deleteSubtitleCreatorPreference error]:", e);
     return false;
   }
 }

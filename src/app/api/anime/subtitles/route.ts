@@ -17,7 +17,10 @@ import {
   getSubtitleRejections,
   getSubtitleBundleAssignment,
   getSubtitleBundleAssignments,
+  getSubtitleCreatorPreference,
+  saveSubtitleCreatorPreference,
   getSubtitleEpisodeOverrides,
+  type SubtitleCreatorPreference,
 } from "@/lib/db";
 import { getAniAllArchiveSubtitle, getAnissiaArchiveSubtitles, getUploadedSubtitles, getVerifiedSubtitleCache, getAniAllArchiveSubtitles } from "@/lib/subtitleStorage";
 import { getReviewedSubtitles } from "@/lib/reviewedSubtitleStorage";
@@ -32,6 +35,62 @@ async function pruneLocalCache(animeId: string, episode: number, subtitles: Arra
     .filter(s => s.format === "ASS" || s.format === "VTT")
     .map(s => ({content: s.content, format: s.format as "ASS" | "VTT"}))); }
   catch (error) { console.warn("[Subtitle cache cleanup deferred]", error); }
+}
+
+async function fetchPreferredBlogSubtitle(
+  preference: SubtitleCreatorPreference,
+  fallbackTitle: string,
+  episode: number,
+  sourceEpisodeStart: number | null,
+) {
+  if (!preference.website.startsWith("http")) return null;
+  await assertSafeProxyUrl(preference.website);
+
+  const requestedTitle = preference.matchedTitle || fallbackTitle;
+  const resolvedTitle = await resolveKoreanTitle(requestedTitle);
+  const targetTitle = resolvedTitle || requestedTitle;
+  const targetSeason = parseSeason(targetTitle) || parseSeason(requestedTitle);
+  const sourceEpisode = sourceEpisodeStart && sourceEpisodeStart > 0
+    ? sourceEpisodeStart + episode - 1
+    : mapProviderEpisodeNumber(preference.creatorEpisode, episode, targetSeason);
+
+  let subtitle = null;
+  if (preference.creatorName.includes("카이란") || preference.website.toLowerCase().includes("kairan")) {
+    subtitle = await findKairanSubtitle(targetTitle, sourceEpisode, 5000, episode);
+  } else {
+    if (preference.sourceProvider === "aniall") {
+      const blogTitle = preference.creatorName.replace(/^AniAll\s*[·|]\s*/i, "").trim();
+      subtitle = await getAniAllArchiveSubtitle(
+        blogTitle,
+        episode,
+        targetSeason,
+        sourceEpisodeStart,
+        preference.website,
+      );
+    }
+    if (!subtitle) {
+      subtitle = await fetchCreatorSubtitle(
+        preference.creatorName,
+        preference.website,
+        targetTitle,
+        sourceEpisode,
+        5000,
+        episode,
+      );
+    }
+  }
+
+  if (!subtitle?.content) return null;
+  const lower = subtitle.content.slice(0, 300).toLowerCase();
+  if (lower.includes("<!doctype html") || lower.includes("<html") || lower.includes("<head>")) return null;
+
+  return {
+    ...subtitle,
+    sourceCreatorWebsite: preference.website,
+    sourceMatchedTitle: preference.matchedTitle || requestedTitle,
+    sourceProvider: preference.sourceProvider,
+    localArchive: false,
+  };
 }
 
 export async function GET(request: NextRequest) {
@@ -63,14 +122,15 @@ export async function GET(request: NextRequest) {
   const sourceEpisode = sourceEpisodeStart && sourceEpisodeStart > 0 ? sourceEpisodeStart + ep - 1 : ep;
   const website = searchParams.get("website")?.trim() || searchParams.get("sub_url")?.trim() || "";
   const creatorName = searchParams.get("creatorName")?.trim() || searchParams.get("creator")?.trim() || "";
-  const [rejections, bundleAssignment, bundleAssignments, episodeOverrides] = animeIdParam
+  const [rejections, bundleAssignment, bundleAssignments, creatorPreference, episodeOverrides] = animeIdParam
     ? await Promise.all([
         getSubtitleRejections(animeIdParam),
         getSubtitleBundleAssignment(user.username, animeIdParam),
         getSubtitleBundleAssignments(user.username),
+        getSubtitleCreatorPreference(user.username, animeIdParam),
         getSubtitleEpisodeOverrides(user.username,animeIdParam),
       ])
-    : [[], null, [], []];
+    : [[], null, [], null, []];
   const isRejected = (provider: string, sourceKey: string) =>
     rejections.some((entry) => entry.provider === provider && entry.sourceKey === sourceKey);
   const claimedByOtherAnime = (provider: string, bundleKey?: string) =>
@@ -123,6 +183,68 @@ export async function GET(request: NextRequest) {
       (referenceTitle ? await resolveKoreanTitle(referenceTitle) || referenceTitle : searchTarget);
 
     const sourcePriority = await getSubtitleSourcePriority();
+
+    if (creatorPreference && !bundleAssignment &&
+        !isRejected(creatorPreference.sourceProvider, creatorPreference.website)) {
+      let preferredSubtitle = null;
+      try {
+        preferredSubtitle = await fetchPreferredBlogSubtitle(
+          creatorPreference,
+          searchTarget,
+          ep,
+          sourceEpisodeStart,
+        );
+      } catch (error) {
+        console.warn("[Preferred subtitle creator unavailable]", {
+          animeId: animeIdParam,
+          episode: ep,
+          creator: creatorPreference.creatorName,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      const preferredCreator = {
+        name: creatorPreference.creatorName,
+        episode: creatorPreference.creatorEpisode || String(sourceEpisode),
+        update_date: "",
+        website: creatorPreference.website,
+        is_current_ep: Boolean(preferredSubtitle),
+        matchedTitle: creatorPreference.matchedTitle || searchTarget,
+        verifiedMatch: true,
+        sourceProvider: creatorPreference.sourceProvider,
+        localArchive: false,
+      };
+      if (preferredSubtitle) {
+        return NextResponse.json({
+          success: true,
+          anime_title: title,
+          resolved_title: resolvedTitle,
+          episode: ep,
+          count: 1,
+          subtitles: [preferredSubtitle],
+          creators: [preferredCreator],
+          preferred_creator: true,
+          needs_manual_subtitle_choice: false,
+        }, { headers: { "Cache-Control": "no-store" } });
+      }
+
+      // Do not silently jump to a different DB/blog after an explicit creator
+      // choice. Only reopen the picker when that creator genuinely has no
+      // usable subtitle for this episode.
+      return NextResponse.json({
+        success: true,
+        anime_title: title,
+        resolved_title: resolvedTitle,
+        episode: ep,
+        count: 0,
+        subtitles: [],
+        creators: [preferredCreator],
+        preferred_creator: true,
+        preferred_creator_missing: true,
+        needs_manual_subtitle_choice: true,
+        subtitle_notice: `선택한 제작자 '${creatorPreference.creatorName}'의 ${ep}화 자막을 찾지 못했어요. 다른 자막을 선택해 주세요.`,
+      }, { headers: { "Cache-Control": "no-store" } });
+    }
 
     const findReviewedLocal = async (source: "aniall" | "naver", includeUnknown = true) => {
       if (bundleAssignment && bundleAssignment.provider !== source) return null;
@@ -447,9 +569,30 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    const normalizedProvider = sourceProvider === "aniall" ? "aniall" : "anissia";
+    let creatorPreferenceSaved = false;
+    if (animeId && website && !localArchive) {
+      creatorPreferenceSaved = await saveSubtitleCreatorPreference(user.username, animeId, {
+        sourceProvider: normalizedProvider,
+        creatorName: String(creatorName),
+        website: String(website),
+        matchedTitle: String(matchedTitle || requestedTitle || title),
+        creatorEpisode: String(creatorEpisode || ""),
+      });
+      if (!creatorPreferenceSaved) {
+        console.warn("[Subtitle creator preference save failed]", { animeId, creatorName, website });
+      }
+    }
+
     return NextResponse.json({
       success: true,
-      subtitle: { ...sub, sourceProvider: sourceProvider === "aniall" ? "aniall" : "anissia" },
+      subtitle: {
+        ...sub,
+        sourceProvider: normalizedProvider,
+        sourceCreatorWebsite: website || undefined,
+        sourceMatchedTitle: matchedTitle || requestedTitle,
+      },
+      creator_preference_saved: creatorPreferenceSaved,
     });
   } catch (error) {
     console.error("[Subtitles POST error]:", error);
