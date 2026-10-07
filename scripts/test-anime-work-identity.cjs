@@ -56,22 +56,22 @@ test('full title normalization permits accents but keeps sequel, OVA and disting
     assert.equal(api.matchesIdentityTitle(title, [romaji]), false);
   }
 });
-function resolver({items = [], details = {}, meta = null, linked = [], work = {titles: [korean,native,romaji], format: 'MOVIE'}} = {}) {
-  const streams = [], searches = [], detailCalls = [];
+function resolver({items = [], details = {}, meta = null, linked = [], failedQuery = "", work = {titles: [korean,native,romaji], format: 'MOVIE'}} = {}) {
+  const streams = [], searches = [], detailCalls = [], metadataQueries = [];
   const api = load('src/lib/resolvers/videoResolver.ts', {
     '../providers/reanime': {reanimeProvider: {}}, '../providers/linkkf': {linkkfProvider: {}},
     '../providers/ohli24': {ohli24Provider: {}},
     '../db': {getAnissiaStreamCache: async () => null, setAnissiaStreamCache: async () => {}},
-    '../providers/anissia': {fetchAniListMeta: async () => meta},
+    '../providers/anissia': {fetchAniListMeta: async query => {metadataQueries.push(query);return meta;}},
     '../anikotoLinks': {getAnikotoPlaybackCandidates: async () => linked},
     '../animeWorkIdentity': {...identity(), getAnimeWorkIdentity: async () => work},
     '../providers/anikoto': {anikotoProvider: {
-      searchAnime: async query => {searches.push(query); return {items};},
+      searchAnime: async query => {searches.push(query); if (query === failedQuery) throw Error("search offline"); return {items};},
       getAnimeDetail: async id => {detailCalls.push(id); return details[id] || null;},
       getEpisodeStream: async url => {streams.push(url); return {success: true, embed_url: url, server_sources: []};},
     }},
   });
-  return {...api, streams, searches, detailCalls,
+  return {...api, streams, searches, detailCalls, metadataQueries,
     run: () => api.resolveAnissiaStream(3468,1,korean,native,'anikoto','ani_3468')};
 }
 function detail(title, ep = 1, url = 'https://anikoto.example/correct') {
@@ -119,4 +119,11 @@ test('reviewed Anikoto mapping and episode offset stay authoritative', async () 
   assert.equal((await api.run()).success,true);
   assert.deepEqual(api.streams,['https://anikoto.example/13']);
   assert.equal(api.searches.length,0);
+});
+
+test('one failed Anikoto alias search does not discard a proven match from another query', async () => {
+  const api = resolver({failedQuery:native,items:[{id:'ak_right',title:romaji}],details:{ak_right:detail(romaji)}});
+  assert.equal((await api.run()).success,true);
+  assert.equal(api.metadataQueries.length,0);
+  assert.equal(api.streams.length,1);
 });

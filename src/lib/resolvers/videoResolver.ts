@@ -6,7 +6,7 @@ import { anikotoProvider } from "../providers/anikoto";
 import { getAnissiaStreamCache, setAnissiaStreamCache } from "../db";
 import { fetchAniListMeta } from "../providers/anissia";
 import { getAnikotoPlaybackCandidates } from "../anikotoLinks";
-import { getAnimeWorkIdentity, matchesIdentityTitle } from "../animeWorkIdentity";
+import { getAnimeWorkIdentity, matchesIdentityTitle, normalizeIdentityTitle } from "../animeWorkIdentity";
 
 const HEADERS: Record<string, string> = {
   "User-Agent":
@@ -165,6 +165,7 @@ export async function resolveAnissiaStream(
   // 과거 작품은 Anissia 원제가 비어 있는 경우가 많다. 같은 한국어 제목의
   // OVA/후속 항목에서 공통 일본어 원제를 복구해 ReAnime 매칭에 사용한다.
   const requestedWorkTitles = [korTitle, jpTitle].filter(Boolean);
+  const requestedJapaneseTitle = jpTitle;
   const relatedJapaneseTitles = jpTitle || anissiaId === null ? [] : await findRelatedJapaneseTitles(anissiaId, korTitle);
   if (!jpTitle && relatedJapaneseTitles.length > 0) jpTitle = relatedJapaneseTitles[0];
 
@@ -312,15 +313,18 @@ export async function resolveAnissiaStream(
       const aliases = [...new Set([...(work?.titles || []), ...requestedWorkTitles])];
       // AniList search is fuzzy. Only a full existing alias match lets its
       // romaji/native names become identity evidence for the requested work.
-      const meta = await fetchAniListMeta(requestedWorkTitles[1] || korTitle).catch(() => null);
+      const hasCatalogRomanTitle = work?.titles.some(value => /^[a-z0-9]{4,}$/.test(normalizeIdentityTitle(value)));
+      const meta = hasCatalogRomanTitle ? null
+        : await fetchAniListMeta(requestedJapaneseTitle || korTitle).catch(() => null);
       if (meta && [meta.nativeTitle, meta.romajiTitle].some(value => matchesIdentityTitle(value || "", aliases))) {
         aliases.push(...[meta.nativeTitle, meta.romajiTitle].filter(Boolean));
       }
       const searchQueries = [...new Set(aliases)].filter(q => q.length >= 2).slice(0, 6);
       const candidates = new Set<string>();
-      for (const query of searchQueries) {
-        const searchRes = await anikotoProvider.searchAnime(query, 1);
-        for (const candidate of searchRes.items.slice(0, 5)) {
+      const searchResults = await Promise.allSettled(searchQueries.map(query => anikotoProvider.searchAnime(query, 1)));
+      for (const result of searchResults) {
+        if (result.status !== "fulfilled") continue;
+        for (const candidate of result.value.items.slice(0, 5)) {
           if ([candidate.title, candidate.original_title || ""].some(value => matchesIdentityTitle(value, aliases))) {
             candidates.add(candidate.id);
           }
