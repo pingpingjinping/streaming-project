@@ -396,7 +396,7 @@ async function decodeWithTistoryViewer(pageUrl: string, timeoutMs: number): Prom
     pageUrl,
   ];
   const child = spawn(CHROMIUM_BIN, args, {
-    stdio: ["ignore", "ignore", "ignore"],
+    stdio: ["ignore", "ignore", "pipe"],
     env: {
       ...process.env,
       HOME: "/tmp",
@@ -405,9 +405,29 @@ async function decodeWithTistoryViewer(pageUrl: string, timeoutMs: number): Prom
     },
   });
 
+  let chromiumStderr = "";
+  child.stderr?.setEncoding("utf8");
+  child.stderr?.on("data", (chunk: string) => {
+    if (chromiumStderr.length < 12000) chromiumStderr += chunk;
+  });
+
   let client: CdpClient | null = null;
   try {
-    const port = await waitForDevToolsPort(profileDir, child, Math.min(8000, timeoutMs));
+    let port: number;
+    try {
+      // Chromium can take noticeably longer to become ready on a small Pi,
+      // especially on the first cold launch after an image rebuild.
+      port = await waitForDevToolsPort(profileDir, child, Math.min(20000, timeoutMs));
+    } catch (error) {
+      const detail = chromiumStderr.trim().slice(-6000);
+      console.warn("[Tistory WinPNG] Chromium startup failed", {
+        pageUrl,
+        exitCode: child.exitCode,
+        signalCode: child.signalCode,
+        stderr: detail || "(no Chromium stderr)",
+      });
+      throw error;
+    }
     const socketUrl = await targetWebSocket(port, pageUrl, Math.min(6000, timeoutMs));
     client = await CdpClient.connect(socketUrl, Math.min(5000, timeoutMs));
     await client.send("Runtime.enable");
