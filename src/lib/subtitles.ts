@@ -527,7 +527,9 @@ export async function extractSubtitleFromBlogPage(
     const host = new URL(postUrl).hostname.toLowerCase();
     if (host === "tistory.com" || host.endsWith(".tistory.com")) {
       const winPngFiles = await extractTistoryWinPngFiles(postUrl, {
-        timeoutMs: Math.max(12000, Math.min(30000, timeoutMs + 18000)),
+        // Match the weekly downloader's proven Jamaker allowance. Self-hosted
+        // Pi requests can safely wait longer than the old short web fallback.
+        timeoutMs: Math.max(60000, Math.min(90000, timeoutMs + 70000)),
       });
       const priority: Record<string, number> = {
         ass: 1, ssa: 2, smi: 3, srt: 4, vtt: 5, zip: 6,
