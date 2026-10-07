@@ -247,3 +247,130 @@ test('startup and pending seek do not overwrite saved progress locally or in the
   assert.deepEqual(api.saved,['600']);
   assert.equal(api.posted[0].watch_time,600);
 });
+
+// Use the shipped libass worker's clock functions, not a duplicate interpolator.
+let workerClockCode;
+function subtitleWorker() {
+  if (!workerClockCode) {
+    const text=fs.readFileSync(path.join(__dirname,'../public/libass/subtitles-octopus-worker.js'),'utf8');
+    const ast=ts.createSourceFile('worker.js',text,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
+    const wanted=new Set(['self.getCurrentTime','self.setCurrentTime','self.setIsPaused']);
+    const parts=[];
+    function visit(node) {
+      if(ts.isBinaryExpression(node)&&wanted.has(node.left.getText(ast)))parts.push(node.getText(ast)+';');
+      ts.forEachChild(node,visit);
+    }
+    visit(ast); assert.equal(parts.length,3); workerClockCode=parts.join('\n');
+  }
+  let now=0, state=null;
+  const worker={rate:1,_isPaused:true,rafId:1,nextIsRaf:false,
+    requestAnimationFrame:()=>1,getRenderMethod:()=>()=>{}};
+  vm.runInNewContext(workerClockCode,{self:worker,Date:{now:()=>now},console,setTimeout:()=>1,clearTimeout:()=>{}});
+  const renderer={setCurrentTime:time=>worker.setCurrentTime(time),
+    setIsPaused:(paused,time)=>{worker.setCurrentTime(time);worker.setIsPaused(paused);},
+    setRate:rate=>{worker.rate=rate;}};
+  return {
+    receive(at,seconds,paused=false,options={}) {
+      now=at; state=playback.syncIframeSubtitleClock(renderer,state,seconds,paused,{nowMs:at,...options});return state;
+    },
+    time(at) {now=at;return worker.getCurrentTime();},
+  };
+}
+const activeText=(time,cues)=>cues.filter(c=>time>=c.start&&time<c.end).map(c=>c.text).join(' + ');
+test('delayed increasing iframe timestamps cannot rewind the worker across a dialogue boundary', () => {
+  const cues=[{start:599,end:600.11,text:'old'},{start:600.11,end:602,text:'new'}];
+  const clock=subtitleWorker();
+  clock.receive(0,600);
+  assert.equal(activeText(clock.time(120),cues),'new');
+  const corrected=clock.receive(130,600.1);
+  assert.ok(corrected.rate<1&&corrected.rate>0);
+  assert.equal(activeText(clock.time(130),cues),'new');
+  assert.equal(activeText(clock.time(145),cues),'new');
+  for(let wall=230;wall<=1230;wall+=100)clock.receive(wall,600+(wall-30)/1000);
+  assert.ok(clock.time(1230)>=601.2&&clock.time(1230)-601.2<0.04);
+});
+test('regular time replies add no subtitle delay and ordinary overlap remains visible', () => {
+  const clock=subtitleWorker();
+  for(let wall=0;wall<=2000;wall+=100) {
+    clock.receive(wall,600+wall/1000);
+    assert.ok(Math.abs(clock.time(wall+50)-(600+(wall+50)/1000))<1e-8);
+  }
+  const overlapping=[{start:600,end:600.5,text:'old'},{start:600.4,end:601,text:'new'}];
+  const overlapClock=subtitleWorker();overlapClock.receive(0,600);
+  assert.equal(activeText(overlapClock.time(450),overlapping),'old + new');
+  assert.equal(activeText(overlapClock.time(550),overlapping),'new');
+});
+test('small jitter stays bounded and worker time never moves backward at normal speed', () => {
+  const clock=subtitleWorker();let last=0;
+  const delays=[0,30,5,45,10,0,25];
+  for(let sample=0;sample<=200;sample++) {
+    const wall=sample*100+delays[sample%delays.length], seconds=600+sample/10;
+    if(sample>0)last=clock.time(wall);
+    clock.receive(wall,seconds);
+    const after=clock.time(wall);
+    assert.ok(after>=last-1e-8,'no backward boundary crossing');
+    assert.ok(after>=seconds-1e-8&&after-seconds<=0.100001,'correction remains within 100ms');
+  }
+});
+test('changing reply latency cannot turn an inferred rate adjustment into a small rewind', () => {
+  for(let seed=1;seed<=20;seed++) {
+    const clock=subtitleWorker();let rng=seed;
+    for(let sample=0;sample<200;sample++) {
+      rng=(rng*1664525+1013904223)>>>0;
+      const wall=sample*100+rng%76, seconds=600+sample/10;
+      const before=sample?clock.time(wall):seconds;
+      clock.receive(wall,seconds);
+      const after=clock.time(wall);
+      if(before-seconds<=0.100001)assert.ok(after>=before-1e-8,`seed ${seed}, sample ${sample}`);
+      assert.ok(after>=seconds-1e-8&&after-seconds<=0.100001);
+    }
+  }
+});
+test('backward/forward seeks, sync offsets and long polling gaps reset the clock immediately', () => {
+  const clock=subtitleWorker();clock.receive(0,600);clock.receive(130,600.1);
+  for(const [wall,seconds,options] of [[230,590,{}],[330,900,{}],[430,900.02,{offset:-0.08}],
+    [530,900.04,{offset:-0.08,reset:true}],[2530,902.04,{offset:-0.08}]]) {
+    clock.receive(wall,seconds,false,options);
+    assert.ok(Math.abs(clock.time(wall)-seconds)<1e-8);
+  }
+});
+test('pausing or ending during a slew freezes the exact video time without repeated frames', () => {
+  const clock=subtitleWorker();clock.receive(0,600);clock.receive(130,600.1);
+  clock.receive(150,600.11,true);
+  assert.equal(clock.time(1000),600.11);
+  const frozen=clock.receive(1150,600.11,true);
+  assert.equal(clock.receive(1250,600.11,true),frozen);
+  clock.receive(1300,600.11,false);
+  assert.ok(Math.abs(clock.time(1400)-600.21)<1e-8);
+});
+test('iframe clock follows slow and fast video rates after observing the time progression', () => {
+  for(const speed of [0.5,0.75,1,1.25,1.5,2]) {
+    const clock=subtitleWorker();
+    for(let wall=0;wall<=2500;wall+=100)clock.receive(wall,600+speed*wall/1000);
+    assert.ok(Math.abs(clock.time(2550)-(600+speed*2.55))<0.03,`speed ${speed}`);
+  }
+});
+test('changing video speed relearns the rate without a persistent subtitle offset', () => {
+  const clock=subtitleWorker();let seconds=600;
+  clock.receive(0,seconds);
+  for(let wall=100;wall<=4000;wall+=100) {
+    const speed=wall<=1000?1:wall<=2500?2:0.5;
+    seconds+=speed*0.1;
+    clock.receive(wall,seconds);
+    assert.ok(clock.time(wall)>=seconds-1e-8&&clock.time(wall)-seconds<=0.100001);
+    if(wall===1000||wall===2500||wall===4000)
+      assert.ok(Math.abs(clock.time(wall+50)-(seconds+speed*0.05))<0.03);
+  }
+});
+test('HUD replaces adjacent cues at the exact end but preserves actual overlap and top captions', () => {
+  const api=messageControl();api.context.octopusRef.current=null;api.context.subtitles=[{is_ass:false}];
+  const hud={innerText:'',style:{display:''}},top={innerText:'',style:{display:''}};
+  api.context.hudTextRef.current=hud;api.context.topHudTextRef.current=top;
+  api.context.cuesRef.current=[{start:10,end:11,text:'old'},{start:11,end:12,text:'new'},
+    {start:10.5,end:11.5,text:'sign',isTop:true}];
+  api.send({currentTime:10.9});assert.equal(hud.innerText,'old');
+  api.send({currentTime:11});assert.equal(hud.innerText,'new');assert.equal(top.innerText,'sign');
+  api.send({currentTime:12});assert.equal(hud.innerText,'');
+  api.context.cuesRef.current=[{start:10,end:11.1,text:'old'},{start:11,end:12,text:'new'}];
+  api.send({currentTime:11});assert.equal(hud.innerText,'old\nnew');
+});
