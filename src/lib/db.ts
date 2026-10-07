@@ -578,6 +578,7 @@ export async function saveSubtitleBundleAssignment(
   provider: SubtitleBundleProvider,
   bundleKey: string,
   label = "",
+  expectedBundleKey?: string,
 ): Promise<boolean> {
   const sql = getDb();
   if (!sql || !userId || !animeId || animeId.length > 100 ||
@@ -585,9 +586,12 @@ export async function saveSubtitleBundleAssignment(
       !bundleKey || bundleKey.length > 2000 || label.length > 1000) return false;
   await initDb();
   try {
-    await sql.begin(async (tx) => {
+    return await sql.begin(async (tx) => {
       await tx`SELECT pg_advisory_xact_lock(hashtext(${userId}))`;
       const current=await tx`SELECT anime_id,bundle_key FROM subtitle_bundle_assignments WHERE user_id=${userId} AND provider=${provider}`;
+      // Automatic metadata enrichment must not overwrite a newer manual choice
+      // or a different episode's refinement while this request was in flight.
+      if(expectedBundleKey!==undefined && !current.some(row=>row.anime_id===animeId && row.bundle_key===expectedBundleKey))return false;
       for(const row of current) {
         if(row.anime_id!==animeId && bundleScopesOverlap(bundleKey,row.bundle_key)) {
           await tx`DELETE FROM subtitle_bundle_assignments WHERE user_id=${userId} AND anime_id=${row.anime_id}`;
@@ -613,8 +617,8 @@ export async function saveSubtitleBundleAssignment(
         DELETE FROM subtitle_creator_preferences
         WHERE user_id = ${userId} AND anime_id = ${animeId}
       `;
+      return true;
     });
-    return true;
   } catch (e) {
     console.error("[saveSubtitleBundleAssignment error]:", e);
     return false;

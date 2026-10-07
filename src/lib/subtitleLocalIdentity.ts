@@ -73,25 +73,51 @@ export function parseLocalFileKey(key: string): {relative: string; member: strin
   } catch {return null;}
 }
 
-/** A folder owns all tracks of its original season/format slice. */
+/** Folder ownership covers its work slice; local ownership follows compatible tracks. */
 export function bundleScopesOverlap(first:string,second:string):boolean {
   if(first===second)return true;
   const a=parseBundleScope(first),b=parseBundleScope(second);
   if(!a || !b || a.type==='reviewed' || b.type==='reviewed')return false;
-  return (a.type==='folder' || b.type==='folder') && a.provider===b.provider && a.work===b.work && a.kind===b.kind && a.season===b.season;
+  return a.provider===b.provider && a.work===b.work && a.kind===b.kind && a.season===b.season
+    && (a.type==='folder' || b.type==='folder' || localTracksCompatible(a.track,b.track));
+}
+
+function normalizedLocalTrack(track:string):string {
+  return track.split('|').map((part,index)=>index===1 || index===2 ? part.replace(/미완성$/,'') : part).join('|');
+}
+const unknownLocalCreator=(value:string)=>!value || value==='로컬파일';
+
+/** A migrated track may lack metadata that a later download supplies. */
+function localTracksCompatible(first:string,second:string):boolean {
+  const a=normalizedLocalTrack(first),b=normalizedLocalTrack(second);
+  if(a===b)return true;
+  const left=a.split('|'),right=b.split('|');
+  const valid=(parts:string[])=>parts.length===3 || (parts.length===4 && /^source:(?:anissia|aniall):[1-9]\d*$/.test(parts[3]));
+  if(!valid(left) || !valid(right) || left[1]!==right[1] || left[2]!==right[2])return false;
+  // A missing creator is not a contradictory creator. Explicit names and
+  // recorded source IDs must still agree whenever both sides have them.
+  return (left[0]===right[0] || unknownLocalCreator(left[0]) || unknownLocalCreator(right[0]))
+    && (!left[3] || !right[3] || left[3]===right[3]);
+}
+
+/** Fill missing saved metadata only after one confirmed release candidate remains. */
+export function refineLocalBundleAssignment(assignment:string,candidate:string):string|null {
+  const scope=parseBundleScope(assignment),file=parseBundleScope(candidate);
+  if(!scope || scope.type==='reviewed' || !scope.track || file?.type!=='local'
+    || !bundleMatchesAssignment(assignment,candidate))return null;
+  const saved=normalizedLocalTrack(scope.track).split('|'),current=normalizedLocalTrack(file.track).split('|');
+  if(![3,4].includes(saved.length) || ![3,4].includes(current.length))return null;
+  const creator=unknownLocalCreator(saved[0])?current[0]:saved[0];
+  const source=saved[3] || current[3];
+  const track=[creator,current[1],current[2],...(source?[source]:[])].join('|');
+  const refined=bundleScopeKey({...scope,track});
+  return refined===assignment?null:refined;
 }
 
 export function bundleMatchesAssignment(assignment:string,candidate:string):boolean {
   const scope=parseBundleScope(assignment),file=parseBundleScope(candidate);
-  // Older saved tracks still contain the normalized completion suffix. Compare
-  // archive/member names without it, preserving creator and source provenance.
-  const normalizedTrack=(track:string)=>track.split('|').map((part,index)=>
-    index===1 || index===2 ? part.replace(/미완성$/,'') : part).join('|');
-  if(scope?.type==='local' && file?.type==='local' && normalizedTrack(scope.track)===normalizedTrack(file.track)) {
-    return bundleScopeKey({...scope,track:file.track})===candidate;
-  }
   return bundleScopesOverlap(assignment,candidate) && !(scope?.type==='folder' && scope.track && file?.type==='local'
-    && normalizedTrack(scope.track)!==normalizedTrack(file.track));
+    && !localTracksCompatible(scope.track,file.track));
 }
 
 /** A folder with no chosen track leaves every variant available for selection. */

@@ -7,6 +7,7 @@ require.extensions['.ts']=(module,file)=>module._compile(ts.transpileModule(fs.r
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'subtitle-overrides-'));process.env.SUBTITLE_STORAGE_DIR=root;delete process.env.DATABASE_URL;
 const AdmZip=require('adm-zip'),digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 const srt=text=>Buffer.from(`1\n00:00:01,000 --> 00:00:03,000\n${text}\n`);
+const ass=text=>Buffer.from(`[Script Info]\nScriptType: v4.00+\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,${text}\n`);
 function put(relative,bytes){const file=path.join(root,relative);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,bytes);return file;}
 function zipFile(relative,files){const zip=new AdmZip();for(const[name,bytes]of Object.entries(files))zip.addFile(name,bytes);const bytes=zip.toBuffer();put(relative,bytes);return bytes;}
 zipFile('anissia_subtitles/101__작품 A/1화/제작자/subtitle.zip',{'01ns.srt':srt('A one ns'),'01s.srt':srt('A one sponsor')});
@@ -47,6 +48,34 @@ for(const provider of ['anissia','aniall']) {
   for(const ep of [15,16])
     put(`${provider}_subtitles/미완성 제목 ${provider}/미완성의 작품 ${ep}화.srt`,srt(`${provider} title ${ep}`));
 }
+const migrationSources={version:1,files:{}};
+function weeklyFile(relative,provider,id,creator,episode,bytes) {
+  put(relative,bytes);
+  migrationSources.files[relative]={sha256:digest(bytes),sources:[{source:provider,id:String(id),title:relative.split('/')[1],
+    creator,episode:String(episode),source_url:''}]};
+}
+for(const provider of ['anissia','aniall']) {
+  for(const layout of ['혼합 경로','혼합 ZIP']) {
+    const title=`${layout} ${provider}`,extension=layout==='혼합 ZIP'?'zip':'ass';
+    const bytes=(ep,text)=>{const content=ass(text);if(extension==='ass')return content;
+      const zip=new AdmZip();zip.addFile(`혼즈키4 ${ep}화.ass`,content);return zip.toBuffer();};
+    put(`${provider}_subtitles/${title}/혼즈키4 9화.${extension}`,bytes(9,`${provider} legacy nine`));
+    for(const ep of [24,25]) weeklyFile(`${provider}_subtitles/${title}/${ep}화/카이란/혼즈키4 ${ep}화.${extension}`,
+      provider,700,'카이란',ep,bytes(ep,`${provider} weekly ${ep}`));
+    weeklyFile(`${provider}_subtitles/${title}/26화/다른제작자/혼즈키4 26화.${extension}`,provider,700,'다른제작자',26,bytes(26,`${provider} other creator`));
+    weeklyFile(`${provider}_subtitles/${title}/27화/카이란/혼즈키4 27화.${extension}`,provider,701,'카이란',27,bytes(27,`${provider} other source`));
+  }
+  const duplicate=`새 출처 중복 ${provider}`;
+  put(`${provider}_subtitles/${duplicate}/혼즈키4 9화.ass`,ass(`${provider} duplicate legacy`));
+  for(const creator of ['카이란','다른제작자']) weeklyFile(`${provider}_subtitles/${duplicate}/24화/${creator}/혼즈키4 24화.ass`,
+    provider,creator==='카이란'?710:711,creator,24,ass(`${provider} duplicate ${creator}`));
+}
+put('anissia_subtitles/파일별 제작자/finish.txt',JSON.stringify({subject:'파일별 제작자',name:'마지막 다운로드 제작자'}));
+for(const ep of [9,24])weeklyFile(`anissia_subtitles/파일별 제작자/혼즈키4 ${ep}화.ass`,'anissia',720,ep===9?'카이란':'다른제작자',ep,ass(`registered creator ${ep}`));
+put('anissia_subtitles/동일 내용 복수 출처/혼즈키4 9화.ass',ass('identical provenance legacy'));
+for(const creator of ['카이란','다른제작자'])weeklyFile(`anissia_subtitles/동일 내용 복수 출처/24화/${creator}/혼즈키4 24화.ass`,
+  'anissia',creator==='카이란'?730:731,creator,24,ass('identical duplicated content'));
+put('.weekly-subtitle-sources.json',JSON.stringify(migrationSources));
 const db=require('../src/lib/db.ts'),auth=require('../src/lib/auth.ts'),storage=require('../src/lib/subtitleStorage.ts');
 const reviewed=require('../src/lib/reviewedSubtitleStorage.ts'),titles=require('../src/lib/subtitles.ts'),matches=require('../src/lib/reanimeMatches.ts');
 const identity=require('../src/lib/subtitleLocalIdentity.ts');
@@ -58,7 +87,8 @@ let username='alice';const assignments=new Map(),exceptions=new Map();let rows=[
 patch(auth,'getSessionUser',async()=>({username}));
 patch(db,'getSubtitleBundleAssignment',async(u,a)=>assignments.get(`${u}:${a}`)||null);
 patch(db,'getSubtitleBundleAssignments',async u=>[...assignments.entries()].filter(([k])=>k.startsWith(u+':')).map(([,v])=>v));
-patch(db,'saveSubtitleBundleAssignment',async(u,a,provider,bundleKey,label)=>{
+patch(db,'saveSubtitleBundleAssignment',async(u,a,provider,bundleKey,label,expectedBundleKey)=>{
+  if(expectedBundleKey!==undefined && assignments.get(`${u}:${a}`)?.bundleKey!==expectedBundleKey)return false;
   for(const[k,v]of assignments)if(k.startsWith(u+':')&&v.provider===provider&&identity.bundleScopesOverlap(v.bundleKey,bundleKey))assignments.delete(k);
   assignments.set(`${u}:${a}`,{animeId:a,provider,bundleKey,label,exclusive:true});return true;
 });
@@ -166,10 +196,97 @@ test('previously saved incomplete tracks match while creator, source, season and
     const id=`re_legacy_completion_${type}`;
     assignments.set(`alice:${id}`,{animeId:id,provider:'anissia',bundleKey:legacy,label:'기존 미완성 선택',exclusive:true});
     const next=await play(id,title,17);assert.equal(next.count,1);assert.equal(next.needs_manual_subtitle_choice,false);
-    for(const changed of [{season:2},{kind:'ova'},{work:'다른 작품'},{track:current.track.replace(/^로컬파일/,'다른제작자')},
-      {track:current.track+'|source:anissia:999'}])
+    for(const changed of [{season:2},{kind:'ova'},{work:'다른 작품'}])
       assert.equal(identity.bundleMatchesAssignment(legacy,identity.bundleScopeKey({...current,...changed})),false);
   }
+});
+test('legacy flat ASS and ZIP selections follow registered nested episodes without reassigning the work',async()=>{
+  for(const provider of ['anissia','aniall']) for(const layout of ['혼합 경로','혼합 ZIP']) for(const scopeType of ['folder','local']) {
+    const title=`${layout} ${provider}`,id=`re_migration_${provider}_${layout}_${scopeType}`;
+    for(const [key,value]of assignments)if(identity.parseBundleScope(value.bundleKey)?.work===title)assignments.delete(key);
+    const files=provider==='anissia' ? await storage.getAnissiaArchiveSubtitles([title],9)
+      : await storage.getAniAllArchiveSubtitles(title,9);
+    assert.equal(files.length,1);
+    const initial=files[0];
+    const body={animeId:id,provider,bundleKey:scopeType==='folder'?initial.sourceFolderKey:initial.sourceBundleKey,fileId:initial.localFileId};
+    assert.equal((await (await bundleRoute.PUT(request('subtitle-bundle','PUT',body))).json()).success,true);
+    for(const ep of [24,25]) {
+      const result=await play(id,title,ep);
+      assert.equal(result.count,1);assert.equal(result.needs_manual_subtitle_choice,false);
+      assert.equal(result.subtitles[0].episodeConfirmed,true);assert.ok(result.subtitles[0].content.includes(`weekly ${ep}`));
+      assert.match(result.subtitles[0].orig_filename,new RegExp(`${ep}화\\.ass$`));
+    }
+    const selected=(await play(id,title,24)).subtitles[0];
+    const learned=identity.parseBundleScope(assignments.get(`alice:${id}`).bundleKey);
+    assert.equal(learned.type,scopeType);assert.match(learned.track,/source:(?:anissia|aniall):700$/);
+    if(provider==='anissia')assert.match(learned.track,/^카이란\|/);
+    assert.equal((await play(id,title,27)).count,0);
+    if(provider==='anissia')assert.equal((await play(id,title,26)).count,0);
+    assert.equal((await assign(id,provider,selected)).success,true);
+    const old=await play(id,title,9);assert.equal(old.count,1);assert.ok(old.subtitles[0].content.includes('legacy nine'));
+    assert.match(identity.parseBundleScope(assignments.get(`alice:${id}`).bundleKey).track,/source:(?:anissia|aniall):700$/);
+    const otherSource=await play(id,title,27);assert.equal(otherSource.count,0);assert.equal(otherSource.assignment_missing,true);
+    if(provider==='anissia') {
+      const otherCreator=await play(id,title,26);assert.equal(otherCreator.count,0);assert.equal(otherCreator.assignment_missing,true);
+    }
+  }
+});
+test('multiple registered candidates compatible with an unknown legacy track still require a choice',async()=>{
+  for(const provider of ['anissia','aniall']) {
+    const title=`새 출처 중복 ${provider}`,id=`re_migration_duplicates_${provider}`;
+    const first=provider==='anissia'?await storage.getAnissiaArchiveSubtitles([title],9):await storage.getAniAllArchiveSubtitles(title,9);
+    await assign(id,provider,first[0]);
+    const savedBefore=assignments.get(`alice:${id}`).bundleKey;
+    const result=await play(id,title,24);assert.equal(result.count,2);assert.equal(result.needs_manual_subtitle_choice,true);
+    assert.equal(assignments.get(`alice:${id}`).bundleKey,savedBefore);
+    assert.equal(new Set(result.subtitles.map(s=>s.sourceBundleKey)).size,2);
+    await assign(id,provider,result.subtitles.find(s=>s.content.includes('duplicate 카이란')));
+    const selected=await play(id,title,24);assert.equal(selected.count,1);assert.equal(selected.needs_manual_subtitle_choice,false);
+    assert.ok(selected.subtitles[0].content.includes('duplicate 카이란'));
+  }
+});
+test('per-file source creators override a stale root marker and exact file resolution agrees',async()=>{
+  const first=(await storage.getAnissiaArchiveSubtitles(['파일별 제작자'],9))[0];
+  assert.equal(first.creator,'카이란');
+  assert.equal((await storage.getLocalSubtitleFile(first.localFileId)).sourceBundleKey,first.sourceBundleKey);
+  await assign('re_migration_file_creator','anissia',first);
+  const next=await play('re_migration_file_creator','파일별 제작자',24);assert.equal(next.count,0);assert.equal(next.assignment_missing,true);
+});
+test('identical content from different sources does not teach an arbitrary source preference',async()=>{
+  const title='동일 내용 복수 출처',id='re_migration_identical_sources';
+  await assign(id,'anissia',(await storage.getAnissiaArchiveSubtitles([title],9))[0]);
+  const before=assignments.get(`alice:${id}`).bundleKey;
+  const result=await play(id,title,24);assert.equal(result.count,1);assert.equal(result.needs_manual_subtitle_choice,false);
+  assert.equal(assignments.get(`alice:${id}`).bundleKey,before);
+});
+test('a deferred metadata save does not block playback and a later unique episode can retry',async()=>{
+  const title='혼합 경로 anissia',id='re_migration_deferred';
+  for(const [key,value]of assignments)if(identity.parseBundleScope(value.bundleKey)?.work===title)assignments.delete(key);
+  await assign(id,'anissia',(await storage.getAnissiaArchiveSubtitles([title],9))[0]);
+  const before=assignments.get(`alice:${id}`).bundleKey,save=db.saveSubtitleBundleAssignment;
+  try {
+    db.saveSubtitleBundleAssignment=async()=>false;
+    const result=await play(id,title,24);assert.equal(result.count,1);assert.equal(result.needs_manual_subtitle_choice,false);
+    assert.equal(assignments.get(`alice:${id}`).bundleKey,before);
+  }finally{db.saveSubtitleBundleAssignment=save;}
+  assert.equal((await play(id,title,25)).count,1);
+  assert.match(identity.parseBundleScope(assignments.get(`alice:${id}`).bundleKey).track,/^카이란\|.*source:anissia:700$/);
+});
+test('legacy compatibility retains work, season, kind, creator, source and filename variant boundaries',()=>{
+  const scope={type:'local',provider:'anissia',work:'compatibility',kind:'main',season:1,track:'카이란|작품ep화|작품ep화|source:anissia:700'};
+  const known=identity.bundleScopeKey(scope),legacy=identity.bundleScopeKey({...scope,track:'로컬파일|작품ep화|작품ep화'});
+  assert.equal(identity.bundleMatchesAssignment(legacy,known),true);
+  assert.equal(identity.bundleMatchesAssignment(known,legacy),true);
+  assert.equal(identity.bundleScopesOverlap(legacy,known),true);
+  for(const changes of [{provider:'aniall'},{work:'elsewhere'},{season:2},{kind:'ova'},
+    {track:'카이란|작품ep화ns|작품ep화ns|source:anissia:700'},
+    {track:'카이란|작품ep화__2|작품ep화__2|source:anissia:700'}])
+    assert.equal(identity.bundleMatchesAssignment(legacy,identity.bundleScopeKey({...scope,...changes})),false);
+  for(const track of ['다른제작자|작품ep화|작품ep화|source:anissia:700','카이란|작품ep화|작품ep화|source:anissia:701'])
+    assert.equal(identity.bundleMatchesAssignment(known,identity.bundleScopeKey({...scope,track})),false);
+  assert.equal(identity.refineLocalBundleAssignment(legacy,known),known);
+  assert.equal(identity.refineLocalBundleAssignment(known,legacy),null);
+  assert.equal(identity.refineLocalBundleAssignment(identity.bundleScopeKey({...scope,type:'folder',track:undefined}),known),null);
 });
 test('single unnumbered reviewed special remains manual after work-wide assignment',async()=>{
   const bonus=registryRow('bonus','bonus.ass','작품 특전','special-work');rows=[bonus];
@@ -332,6 +449,24 @@ test('Postgres persists scoped ownership and episode exceptions without modifyin
     assert.equal((await exports.getSubtitleBundleAssignment('alice','folder-ova')).bundleKey,folderOva);
     assert.equal((await exports.getSubtitleBundleAssignment('alice','folder-season')).bundleKey,folderSeason);
     assert.equal((await exports.getSubtitleBundleAssignment('bob','bob-track')).bundleKey,localKey);
+    const legacyScope={type:'folder',provider:'anissia',work:'동시 메타데이터 보강',kind:'main',season:1,track:'로컬파일|작품ep화|작품ep화'};
+    const legacyKey=identity.bundleScopeKey(legacyScope);
+    const refinedA=identity.bundleScopeKey({...legacyScope,track:'카이란|작품ep화|작품ep화|source:anissia:700'});
+    const refinedB=identity.bundleScopeKey({...legacyScope,track:'다른제작자|작품ep화|작품ep화|source:anissia:701'});
+    await exports.saveSubtitleBundleAssignment('alice','refining','anissia',legacyKey,'Legacy');
+    const refinements=await Promise.all([
+      exports.saveSubtitleBundleAssignment('alice','refining','anissia',refinedA,'A',legacyKey),
+      exports.saveSubtitleBundleAssignment('alice','refining','anissia',refinedB,'B',legacyKey),
+    ]);
+    assert.deepEqual([...refinements].sort(),[false,true]);
+    assert.equal((await exports.getSubtitleBundleAssignment('alice','refining')).bundleKey,refinements[0]?refinedA:refinedB);
+    // A manual choice or deletion after the GET began takes precedence.
+    await exports.saveSubtitleBundleAssignment('alice','refining','anissia',refinedB,'Manual');
+    assert.equal(await exports.saveSubtitleBundleAssignment('alice','refining','anissia',refinedA,'Stale GET',legacyKey),false);
+    assert.equal((await exports.getSubtitleBundleAssignment('alice','refining')).bundleKey,refinedB);
+    await exports.deleteSubtitleBundleAssignment('alice','refining');
+    assert.equal(await exports.saveSubtitleBundleAssignment('alice','refining','anissia',refinedA,'Deleted',legacyKey),false);
+    assert.equal(await exports.getSubtitleBundleAssignment('alice','refining'),null);
     assert.equal(await snapshot(),before);
   } finally {
     db.getDb=previous;if(sql) await sql.end();
