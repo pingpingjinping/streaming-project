@@ -5,6 +5,7 @@ import { inspectSubtitleArchive } from "@/lib/subtitleUpload";
 import { EpisodeEvidence, EpisodeRequest, readEpisodeEvidence, evidenceAgrees, selectEpisodeEntries, subtitleFilenameFromUrl } from "@/lib/subtitleEpisodes";
 import { getCachedKoreanAnimeTitle, saveKoreanAnimeTitleMapping, getAniAllMatches, getAniAllCandidates, getSubtitleSourcePriority, getSubtitleRejections } from "@/lib/db";
 import { getMonthlyAnissiaCandidates } from "@/lib/reanimeMatches";
+import { extractTistoryWinPngFiles } from "@/lib/tistoryWinPng";
 
 export const HEADERS: Record<string, string> = {
   "User-Agent":
@@ -517,6 +518,55 @@ export async function extractSubtitleFromBlogPage(
       { localEpisode, evidence: outer });
     if (extracted) return { name: creatorName, episode: localEpisode, ...extracted,
       url: postUrl, sourceCreatorWebsite: postUrl };
+  }
+
+  // Newer Tistory posts can hide JMK/ASS/SMI files inside WinPNG images instead
+  // of exposing a normal attachment link. Run the author's own viewer in the
+  // system Chromium only after the ordinary attachment path found nothing.
+  try {
+    const host = new URL(postUrl).hostname.toLowerCase();
+    if (host === "tistory.com" || host.endsWith(".tistory.com")) {
+      const winPngFiles = await extractTistoryWinPngFiles(postUrl, {
+        timeoutMs: Math.max(12000, Math.min(30000, timeoutMs + 18000)),
+      });
+      const priority: Record<string, number> = {
+        ass: 1, ssa: 2, smi: 3, srt: 4, vtt: 5, jmk: 6, zip: 7,
+      };
+      winPngFiles.sort((a, b) => {
+        const extA = a.path.split(".").pop()?.toLowerCase() || "";
+        const extB = b.path.split(".").pop()?.toLowerCase() || "";
+        return (priority[extA] || 99) - (priority[extB] || 99)
+          || Number(b.generated) - Number(a.generated);
+      });
+
+      for (const file of winPngFiles) {
+        const fileEvidence = readEpisodeEvidence(file.path, true);
+        const outer = [postEvidence, fileEvidence];
+        if (outer.some((e) => !evidenceAgrees(e, request))) continue;
+        const extracted = extractSubtitleFromBuffer(
+          file.data,
+          episodeNumber,
+          file.path,
+          true,
+          targetSeason,
+          { localEpisode, evidence: outer },
+        );
+        if (extracted) {
+          return {
+            name: creatorName,
+            episode: localEpisode,
+            ...extracted,
+            url: postUrl,
+            sourceCreatorWebsite: postUrl,
+          };
+        }
+      }
+    }
+  } catch (error) {
+    console.warn("[Tistory WinPNG subtitle fallback]", {
+      postUrl,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
   return null;
 }
