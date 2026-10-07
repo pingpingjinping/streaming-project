@@ -93,8 +93,8 @@ test("Tistory blog extraction falls back to generated WinPNG ASS", async () => {
 
 test("web WinPNG path opens original Kakao PNG and never exports raw JMK", () => {
   const source = fs.readFileSync(path.join(__dirname, "../src/lib/tistoryWinPng.ts"), "utf8");
-  assert.match(source, /img\.getAttribute\("data-url"\)/);
-  assert.match(source, /img\.getAttribute\("data-phocus"\)/);
+  assert.match(source, /node\.getAttribute\?\.\("data-url"\)/);
+  assert.match(source, /node\.getAttribute\?\.\("data-phocus"\)/);
   assert.match(source, /blog\.kakaocdn\.net/);
   assert.match(source, /const response = await fetch\(url,/);
   assert.match(source, /"Referer": referer/);
@@ -119,4 +119,27 @@ test("web WinPNG waits long enough for Raspberry Pi Jamaker conversion", () => {
   assert.match(source, /Math\.max\(45000, Math\.min\(options\.timeoutMs \?\? 75000, 90000\)\)/);
   assert.match(subtitlesSource, /Math\.max\(60000, Math\.min\(90000, timeoutMs \+ 70000\)\)/);
   assert.match(source, /\[Tistory WinPNG\] conversion did not finish/);
+});
+
+test("web WinPNG candidate scan matches downloader-style article attributes", () => {
+  const source = fs.readFileSync(path.join(__dirname, "../src/lib/tistoryWinPng.ts"), "utf8");
+  assert.match(source, /root\.querySelectorAll\("\*"\)/);
+  assert.match(source, /node\.getAttribute\?\.\("data-url"\)/);
+  assert.match(source, /node\.getAttribute\?\.\("data-phocus"\)/);
+  assert.match(source, /node\.getAttribute\?\.\("src"\)/);
+  assert.match(source, /waitFor<Array<\{ src: string \}>>/);
+});
+
+test("failed WinPNG extraction is not warm-cached", () => {
+  const source = fs.readFileSync(path.join(__dirname, "../src/lib/tistoryWinPng.ts"), "utf8");
+  assert.match(source, /if \(files\.length\) \{/);
+  assert.match(source, /resultCache\.delete\(cacheKey\)/);
+});
+
+test("web WinPNG exposes Chromium startup stderr and allows slow Pi launch", () => {
+  const source = fs.readFileSync(path.join(__dirname, "../src/lib/tistoryWinPng.ts"), "utf8");
+  assert.match(source, /stdio: \["ignore", "ignore", "pipe"\]/);
+  assert.match(source, /Math\.min\(20000, timeoutMs\)/);
+  assert.match(source, /\[Tistory WinPNG\] Chromium startup failed/);
+  assert.match(source, /stderr: detail \|\| "\(no Chromium stderr\)"/);
 });
