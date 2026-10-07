@@ -353,7 +353,7 @@ export async function GET(request: NextRequest) {
         && new Set(subtitles.map(s=>s.sourceBundleKey)).size===1) {
         const refined=refineLocalBundleAssignment(bundleAssignment.bundleKey,distinct[0].sourceBundleKey);
         if(refined)try {
-          if(await saveSubtitleBundleAssignment(user.username,animeIdParam,bundleAssignment.provider,refined,bundleAssignment.label))
+          if(await saveSubtitleBundleAssignment(user.username,animeIdParam,bundleAssignment.provider,refined,bundleAssignment.label,bundleAssignment.bundleKey))
             effectiveAssignment={...bundleAssignment,bundleKey:refined};
         }catch(error){console.warn('[Local subtitle metadata refinement deferred]',error);}
       }

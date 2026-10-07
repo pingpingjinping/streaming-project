@@ -87,7 +87,8 @@ let username='alice';const assignments=new Map(),exceptions=new Map();let rows=[
 patch(auth,'getSessionUser',async()=>({username}));
 patch(db,'getSubtitleBundleAssignment',async(u,a)=>assignments.get(`${u}:${a}`)||null);
 patch(db,'getSubtitleBundleAssignments',async u=>[...assignments.entries()].filter(([k])=>k.startsWith(u+':')).map(([,v])=>v));
-patch(db,'saveSubtitleBundleAssignment',async(u,a,provider,bundleKey,label)=>{
+patch(db,'saveSubtitleBundleAssignment',async(u,a,provider,bundleKey,label,expectedBundleKey)=>{
+  if(expectedBundleKey!==undefined && assignments.get(`${u}:${a}`)?.bundleKey!==expectedBundleKey)return false;
   for(const[k,v]of assignments)if(k.startsWith(u+':')&&v.provider===provider&&identity.bundleScopesOverlap(v.bundleKey,bundleKey))assignments.delete(k);
   assignments.set(`${u}:${a}`,{animeId:a,provider,bundleKey,label,exclusive:true});return true;
 });
@@ -448,6 +449,24 @@ test('Postgres persists scoped ownership and episode exceptions without modifyin
     assert.equal((await exports.getSubtitleBundleAssignment('alice','folder-ova')).bundleKey,folderOva);
     assert.equal((await exports.getSubtitleBundleAssignment('alice','folder-season')).bundleKey,folderSeason);
     assert.equal((await exports.getSubtitleBundleAssignment('bob','bob-track')).bundleKey,localKey);
+    const legacyScope={type:'folder',provider:'anissia',work:'동시 메타데이터 보강',kind:'main',season:1,track:'로컬파일|작품ep화|작품ep화'};
+    const legacyKey=identity.bundleScopeKey(legacyScope);
+    const refinedA=identity.bundleScopeKey({...legacyScope,track:'카이란|작품ep화|작품ep화|source:anissia:700'});
+    const refinedB=identity.bundleScopeKey({...legacyScope,track:'다른제작자|작품ep화|작품ep화|source:anissia:701'});
+    await exports.saveSubtitleBundleAssignment('alice','refining','anissia',legacyKey,'Legacy');
+    const refinements=await Promise.all([
+      exports.saveSubtitleBundleAssignment('alice','refining','anissia',refinedA,'A',legacyKey),
+      exports.saveSubtitleBundleAssignment('alice','refining','anissia',refinedB,'B',legacyKey),
+    ]);
+    assert.deepEqual([...refinements].sort(),[false,true]);
+    assert.equal((await exports.getSubtitleBundleAssignment('alice','refining')).bundleKey,refinements[0]?refinedA:refinedB);
+    // A manual choice or deletion after the GET began takes precedence.
+    await exports.saveSubtitleBundleAssignment('alice','refining','anissia',refinedB,'Manual');
+    assert.equal(await exports.saveSubtitleBundleAssignment('alice','refining','anissia',refinedA,'Stale GET',legacyKey),false);
+    assert.equal((await exports.getSubtitleBundleAssignment('alice','refining')).bundleKey,refinedB);
+    await exports.deleteSubtitleBundleAssignment('alice','refining');
+    assert.equal(await exports.saveSubtitleBundleAssignment('alice','refining','anissia',refinedA,'Deleted',legacyKey),false);
+    assert.equal(await exports.getSubtitleBundleAssignment('alice','refining'),null);
     assert.equal(await snapshot(),before);
   } finally {
     db.getDb=previous;if(sql) await sql.end();
