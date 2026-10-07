@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    if (body.localArchive === true || body.isCached === true) {
+    if (body.localArchive === true || body.isCached === true || body.temporary === true) {
       return NextResponse.json({success: true, skipped: true});
     }
     const animeId = String(body.animeId || "").trim();

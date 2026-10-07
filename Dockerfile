@@ -38,6 +38,7 @@ COPY --from=builder --chown=node:node /app/public ./public
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 COPY --from=builder --chown=node:node /app/.subtitle-cache-tools ./scripts/subtitle-cache
+COPY --from=builder --chown=node:node /app/scripts/winpng ./scripts/winpng
 RUN mkdir -p /app/data/subtitles && chown -R node:node /app/data
 
 USER node

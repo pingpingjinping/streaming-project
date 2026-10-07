@@ -37,6 +37,7 @@ test('viewing cache policy accepts web subtitles and skips cached/local files',(
   assert.equal(canCacheSubtitle(web),true);
   assert.equal(canCacheSubtitle({...web,localArchive:true}),false);
   assert.equal(canCacheSubtitle({...web,isCached:true}),false);
+  assert.equal(canCacheSubtitle({...web,temporary:true}),false);
   assert.equal(canCacheSubtitle({...web,sourceProvider:'naver'}),false);
 });
 test('cleanup removes exact decoded content only within the same work and episode',async()=>{
@@ -199,6 +200,8 @@ test('cache HTTP endpoint skips local flags and records validated source episode
     const send=body=>POST(new NextRequest('http://localhost/api/anime/subtitle-cache',{method:'POST',body:JSON.stringify(body),headers:{'Content-Type':'application/json'}}));
     assert.equal((await (await send({localArchive:true})).json()).skipped,true);
     const body={animeId:'re_http',episodeNumber:1,sourceProvider:'anissia',sourceUrl:'https://example.com/13',matchedTitle:'작품 2기',filename:'13.srt',...subtitle('http'),mediaSeconds:60};
+    assert.equal((await (await send({...body,animeId:'re_temporary',temporary:true})).json()).skipped,true);
+    assert.equal(fs.existsSync(dir('re_temporary')),false);
     assert.equal((await send({...body,mediaSeconds:null})).status,400);
     assert.equal((await send(body)).status,200);
     const meta=JSON.parse(fs.readFileSync(path.join(dir('re_http'),fs.readdirSync(dir('re_http')).find(n=>n.endsWith('.json')))));

@@ -2,6 +2,12 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // The local WinPNG worker runs as a separate Node process. Trace its native
+  // image decoder explicitly so the standalone Pi image includes ARM64 sharp.
+  outputFileTracingIncludes: {
+    "/api/anime/subtitles": ["./scripts/winpng/*.cjs", "./node_modules/sharp/**/*",
+      "./node_modules/@img/**/*", "./node_modules/detect-libc/**/*", "./node_modules/semver/**/*"],
+  },
   reactStrictMode: false,
   images: {
     remotePatterns: [
