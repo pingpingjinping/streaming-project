@@ -541,10 +541,22 @@ export async function extractSubtitleFromBlogPage(
           || Number(b.generated) - Number(a.generated);
       });
 
+      if (!winPngFiles.length) {
+        console.warn("[Tistory WinPNG] no playable converted files", { postUrl });
+      }
       for (const file of winPngFiles) {
         const fileEvidence = readEpisodeEvidence(file.path, true);
         const outer = [postEvidence, fileEvidence];
-        if (outer.some((e) => !evidenceAgrees(e, request))) continue;
+        if (outer.some((e) => !evidenceAgrees(e, request))) {
+          console.warn("[Tistory WinPNG] subtitle candidate rejected by episode evidence", {
+            postUrl,
+            path: file.path,
+            request,
+            postEvidence,
+            fileEvidence,
+          });
+          continue;
+        }
         const extracted = extractSubtitleFromBuffer(
           file.data,
           episodeNumber,
@@ -562,6 +574,12 @@ export async function extractSubtitleFromBlogPage(
             sourceCreatorWebsite: postUrl,
           };
         }
+        console.warn("[Tistory WinPNG] converted candidate not selected", {
+          postUrl,
+          path: file.path,
+          request,
+          fileEvidence,
+        });
       }
     }
   } catch (error) {
