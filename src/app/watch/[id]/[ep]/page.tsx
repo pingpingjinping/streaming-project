@@ -212,7 +212,8 @@ export default async function WatchPage({
               resolved || anime.title,
               sourceEpisode,
               4000,
-              epNum
+              epNum,
+              id
             )
           )
           .catch(() => null)

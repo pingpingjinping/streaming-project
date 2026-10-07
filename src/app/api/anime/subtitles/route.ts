@@ -42,6 +42,7 @@ async function fetchPreferredBlogSubtitle(
   fallbackTitle: string,
   episode: number,
   sourceEpisodeStart: number | null,
+  animeId: string,
 ) {
   if (!preference.website.startsWith("http")) return null;
   await assertSafeProxyUrl(preference.website);
@@ -65,6 +66,7 @@ async function fetchPreferredBlogSubtitle(
       sourceEpisode,
       5000,
       episode,
+      animeId,
     );
   }
 
@@ -262,6 +264,7 @@ export async function GET(request: NextRequest) {
           searchTarget,
           ep,
           sourceEpisodeStart,
+          animeIdParam,
         );
       } catch (error) {
         console.warn("[Preferred subtitle creator unavailable]", {
@@ -432,7 +435,7 @@ export async function GET(request: NextRequest) {
     // 직접 저장한 웹 링크와 AniAll/Anissia 링크는 모든 Pi 로컬 보관함을 확인한 뒤 사용한다.
     const savedUrl = animeIdParam ? await getManualSubtitleLink(user.username, animeIdParam, ep) : null;
     if (savedUrl && !isRejected("anissia", savedUrl)) {
-      const manual = await fetchCreatorSubtitle("직접 자막", savedUrl, title, sourceEpisode, 12000, ep);
+      const manual = await fetchCreatorSubtitle("직접 자막", savedUrl, title, sourceEpisode, 12000, ep, animeIdParam);
       if (manual?.content) {
         return NextResponse.json({ success: true, anime_title: title, episode: ep, count: 1, subtitles: [manual], creators: [] }, { headers: { "Cache-Control": "no-store" } });
       }
@@ -440,7 +443,7 @@ export async function GET(request: NextRequest) {
 
     if (website && website.startsWith("http") && sourcePriority !== "aniall"
       && !isRejected("anissia", website)) {
-      const directSub = await fetchCreatorSubtitle(creatorName || "제작자", website, searchTarget, sourceEpisode, 5000, ep);
+      const directSub = await fetchCreatorSubtitle(creatorName || "제작자", website, searchTarget, sourceEpisode, 5000, ep, animeIdParam);
       if (directSub && directSub.content) {
         return NextResponse.json({
           success: true,
@@ -610,7 +613,7 @@ export async function POST(request: NextRequest) {
         const blogTitle = String(creatorName).replace(/^AniAll\s*[·|]\s*/i, "").trim();
         sub = await getAniAllArchiveSubtitle(blogTitle, ep, targetSeason, sourceEpisodeStart, String(website));
       }
-      if (!sub) sub = await fetchCreatorSubtitle(creatorName, website, targetTitle, sourceEpisode, 5000, ep);
+      if (!sub) sub = await fetchCreatorSubtitle(creatorName, website, targetTitle, sourceEpisode, 5000, ep, animeId);
     }
 
     if (!sub || !sub.content) {

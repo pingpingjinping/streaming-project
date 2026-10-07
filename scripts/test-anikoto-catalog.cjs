@@ -143,3 +143,17 @@ test('authenticated list API uses the same filters and returns Anikoto metadata'
     assert.deepEqual(plain(response.filters.types), plain(catalog.ANIKOTO_TYPES));
   }
 });
+test('Anikoto search retains native data-jp identity rather than only the displayed title', async () => {
+  const p = provider(() => '<div id="list-items"><div class="item"><a data-jp="パリに咲くエトワール" href="/watch/etoile"><span class="name">Paris ni Saku Etoile</span></a></div></div>');
+  const result = await p.searchAnime('Paris ni Saku Etoile');
+  assert.equal(result.items[0].original_title,'パリに咲くエトワール');
+});
+test('Anikoto detail keeps the full work heading and native title for resolver validation', async () => {
+  const p = provider(url => url.includes('/ajax/episode/list/')
+    ? JSON.stringify({status:200,result:'<a data-num="1" data-ids="token" data-sub="1" data-slug="1"></a>'})
+    : '<meta property="og:title" content="Watch Paris ni Saku Etoile at Anikoto"><div id="watch-main" data-id="123" data-url="https://anikoto.example/watch/etoile"></div><h1 data-jp="パリに咲くエトワール">Paris ni Saku Etoile</h1>');
+  const detail = await p.getAnimeDetail('ak_etoile');
+  assert.equal(detail.title,'Paris ni Saku Etoile');
+  assert.equal(detail.original_title,'パリに咲くエトワール');
+  assert.equal(detail.sub_episodes[0].number,1);
+});
