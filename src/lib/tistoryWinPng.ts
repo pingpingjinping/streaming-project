@@ -520,11 +520,22 @@ async function decodeWithTistoryViewer(pageUrl: string, timeoutMs: number): Prom
       console.log("[Tistory WinPNG] conversion rows collected", {
         pageUrl,
         rows: rows.length,
+        paths: rows.slice(0, 8).map((row) => ({
+          path: String(row?.path || "").slice(0, 300),
+          generated: Boolean(row?.generated),
+        })),
       });
 
       for (const row of rows) {
         const relative = safePath(row?.path);
-        if (!relative || typeof row?.base64 !== "string") continue;
+        if (!relative || typeof row?.base64 !== "string") {
+          console.warn("[Tistory WinPNG] converted row rejected", {
+            pageUrl,
+            path: String(row?.path || "").slice(0, 300),
+            reason: !relative ? "unsafe_path" : "missing_base64",
+          });
+          continue;
+        }
         let data: Buffer;
         try {
           data = Buffer.from(row.base64, "base64");
@@ -541,6 +552,11 @@ async function decodeWithTistoryViewer(pageUrl: string, timeoutMs: number): Prom
         collected.push({ path: relative, data, generated: Boolean(row.generated) });
       }
     }
+    console.log("[Tistory WinPNG] playable files collected", {
+      pageUrl,
+      count: collected.length,
+      paths: collected.slice(0, 8).map((file) => file.path),
+    });
     return collected;
   } finally {
     client?.close();

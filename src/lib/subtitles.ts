@@ -541,10 +541,34 @@ export async function extractSubtitleFromBlogPage(
           || Number(b.generated) - Number(a.generated);
       });
 
+      if (!winPngFiles.length) {
+        console.warn("[Tistory WinPNG] no playable converted files", { postUrl });
+      }
       for (const file of winPngFiles) {
+        const pathParts = file.path.split(/[\\/]/).filter(Boolean);
         const fileEvidence = readEpisodeEvidence(file.path, true);
-        const outer = [postEvidence, fileEvidence];
-        if (outer.some((e) => !evidenceAgrees(e, request))) continue;
+        // A numbered subtitle filename is stronger than its containing folder.
+        // Example: "1화/02.ass" is episode 2, not episode 1. Only when the
+        // filename itself has no episode evidence do we fall back to the
+        // nearest parent folder such as "1화/main.ass".
+        const nearestFolderEvidence = pathParts.slice(0, -1).reverse()
+          .map((part) => readEpisodeEvidence(part))
+          .find((evidence) => evidence.episodes.length || evidence.season);
+        const folderEvidence = !fileEvidence.episodes.length && nearestFolderEvidence
+          ? [nearestFolderEvidence]
+          : [];
+        const outer = [postEvidence, ...folderEvidence, fileEvidence];
+        if (outer.some((e) => !evidenceAgrees(e, request))) {
+          console.warn("[Tistory WinPNG] subtitle candidate rejected by episode evidence", {
+            postUrl,
+            path: file.path,
+            request,
+            postEvidence,
+            folderEvidence,
+            fileEvidence,
+          });
+          continue;
+        }
         const extracted = extractSubtitleFromBuffer(
           file.data,
           episodeNumber,
@@ -562,6 +586,12 @@ export async function extractSubtitleFromBlogPage(
             sourceCreatorWebsite: postUrl,
           };
         }
+        console.warn("[Tistory WinPNG] converted candidate not selected", {
+          postUrl,
+          path: file.path,
+          request,
+          fileEvidence,
+        });
       }
     }
   } catch (error) {
