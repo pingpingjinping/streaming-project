@@ -18,6 +18,7 @@ import {
   getSubtitleRejections,
   getSubtitleBundleAssignment,
   getSubtitleBundleAssignments,
+  saveSubtitleBundleAssignment,
   getSubtitleCreatorPreference,
   saveSubtitleCreatorPreference,
   getSubtitleEpisodeOverrides,
@@ -26,7 +27,7 @@ import {
 import { getAniAllArchiveSubtitle, getAnissiaArchiveSubtitles, getUploadedSubtitles, getVerifiedSubtitleCache, getAniAllArchiveSubtitles } from "@/lib/subtitleStorage";
 import { getReviewedSubtitles } from "@/lib/reviewedSubtitleStorage";
 import { getReanimeMatch } from "@/lib/reanimeMatches";
-import { parseBundleScope, bundleScopesOverlap } from "@/lib/subtitleLocalIdentity";
+import { parseBundleScope, bundleScopesOverlap, refineLocalBundleAssignment } from "@/lib/subtitleLocalIdentity";
 import {resolveSubtitleOverride, distinctLocalSubtitles} from "@/lib/subtitleOverrides";
 import { pruneVerifiedSubtitleCache } from "@/lib/subtitleCache";
 
@@ -345,9 +346,20 @@ export async function GET(request: NextRequest) {
     const localResponse = async (subtitles: Array<any>, creators: Array<any> = []) => {
       const distinct=distinctLocalSubtitles(subtitles);
       if(!distinct.length) return null;
+      let effectiveAssignment=bundleAssignment;
+      // A unique confirmed continuation can add provenance to a legacy choice.
+      // Ambiguous episodes and folder-only choices never lock a release silently.
+      if(bundleAssignment && distinct.length===1 && distinct[0].episodeConfirmed && distinct[0].sourceBundleKey
+        && new Set(subtitles.map(s=>s.sourceBundleKey)).size===1) {
+        const refined=refineLocalBundleAssignment(bundleAssignment.bundleKey,distinct[0].sourceBundleKey);
+        if(refined)try {
+          if(await saveSubtitleBundleAssignment(user.username,animeIdParam,bundleAssignment.provider,refined,bundleAssignment.label))
+            effectiveAssignment={...bundleAssignment,bundleKey:refined};
+        }catch(error){console.warn('[Local subtitle metadata refinement deferred]',error);}
+      }
       await pruneLocalCache(animeIdParam,ep,distinct.filter(s=>s.episodeConfirmed));
       return NextResponse.json({success:true,anime_title:title,resolved_title:resolvedTitle,episode:ep,count:distinct.length,
-        subtitles:distinct,creators,local_archive:true,bundle_assignment:bundleAssignment,
+        subtitles:distinct,creators,local_archive:true,bundle_assignment:effectiveAssignment,
         needs_manual_subtitle_choice:distinct.length>1 || distinct.some(s=>!s.episodeConfirmed)}, {headers:{'Cache-Control':'no-store'}});
     };
     const findAniAllLocal = async () => {
@@ -678,4 +690,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-
