@@ -28,6 +28,7 @@ test('Anissia auto-matched Anikoto iframe has the same sandbox policy as direct 
     './PlayerSettingsModal': {DEFAULT_PLAYER_SETTINGS: {}},
     './usePlayerFullscreen': {usePlayerFullscreen: () => ({mode: 'inline', isFullscreen: false, toggleFullscreen() {}})},
     './useContainedPlayerFrame': {useContainedPlayerFrame() {}},
+    '@/lib/iframePlayback': load('src/lib/iframePlayback.ts'),
   });
   function findIframe(node) {
     if (!node || typeof node !== 'object') return;

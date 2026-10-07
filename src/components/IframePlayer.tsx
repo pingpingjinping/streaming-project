@@ -27,6 +27,7 @@ import SubtitleSelectModal, { CreatorInfo, SubtitleOption } from "./SubtitleSele
 import type { ServerSource } from "@/lib/providers/types";
 import { usePlayerFullscreen } from "./usePlayerFullscreen";
 import { useContainedPlayerFrame } from "./useContainedPlayerFrame";
+import { iframeSeekMessage, iframePausedState, syncIframeSubtitleClock, updateSubtitleHud, type IframeSubtitleClock } from "@/lib/iframePlayback";
 import PlayerSettingsModal, {
   DEFAULT_PLAYER_SETTINGS,
   loadPlayerSettings,
@@ -173,6 +174,11 @@ export default function IframePlayer({
   const lastHistorySaveTime = useRef(0);
   const lastCurrentTimeRef = useRef(0);
   const lastDurationRef = useRef(0);
+  const resumeHistoryReadyRef = useRef(false);
+  const playbackPausedRef = useRef(true);
+  const playbackStatusKnownRef = useRef(false);
+  const lastClockAdvanceRef = useRef(0);
+  const subtitleClockRef = useRef<IframeSubtitleClock | null>(null);
   const pendingResumeRef = useRef<{
     episode: number;
     seconds: number;
@@ -200,10 +206,13 @@ export default function IframePlayer({
     if (typeof observedTime === "number" && Number.isFinite(observedTime)) {
       if (Math.abs(observedTime - pending.seconds) <= 4 || observedTime > pending.seconds + 5) {
         pendingResumeRef.current = null;
+        showNotice(`이어보기: ${formatTime(pending.seconds)}부터 재생합니다.`, 5000);
         return;
       }
     }
 
+    // Metadata must be loaded before seek attempts consume the retry budget.
+    if (!Number.isFinite(lastDurationRef.current) || lastDurationRef.current <= 0) return;
     const now = Date.now();
     if (!force && now - pending.lastAttemptAt < 650) return;
     if (pending.attempts >= 12) return;
@@ -212,12 +221,13 @@ export default function IframePlayer({
 
     pending.attempts += 1;
     pending.lastAttemptAt = now;
-    target.postMessage({ command: "seek", time: pending.seconds }, "*");
-    target.postMessage({ command: "setCurrentTime", time: pending.seconds }, "*");
-  }, [episodeNumber]);
+    target.postMessage(iframeSeekMessage(pending.seconds), "*");
+  }, [episodeNumber, showNotice]);
 
   const syncHistory = useCallback(
     (isEnded = false) => {
+      // Preserve the saved position while the initial resume seek is pending.
+      if (!resumeHistoryReadyRef.current || pendingResumeRef.current) return;
       const curTime = lastCurrentTimeRef.current;
       const dur = lastDurationRef.current;
       if (curTime <= 2 && !isEnded) return;
@@ -620,7 +630,8 @@ export default function IframePlayer({
                   Math.max(1, Math.round(cw * sharpness)),
                   Math.max(1, Math.round(ch * sharpness))
                 );
-                octopusRef.current?.setIsPaused(false, lastCurrentTimeRef.current + syncOffsetRef.current);
+                if (octopusRef.current) subtitleClockRef.current = syncIframeSubtitleClock(
+                  octopusRef.current, null, lastCurrentTimeRef.current + syncOffsetRef.current, playbackPausedRef.current);
               } catch {}
             },
             onError: (e: any) => {
@@ -699,6 +710,16 @@ export default function IframePlayer({
     const handleMessage = (event: MessageEvent) => {
       if (!event.data) return;
       const isPlayerMessage = event.source === iframeRef.current?.contentWindow;
+      if (!isPlayerMessage || typeof event.data !== "object") return;
+
+      const paused = iframePausedState(event.data);
+      if (paused !== null) {
+        playbackPausedRef.current = paused;
+        playbackStatusKnownRef.current = true;
+        if (octopusRef.current?.worker) subtitleClockRef.current = syncIframeSubtitleClock(
+          octopusRef.current, subtitleClockRef.current,
+          lastCurrentTimeRef.current + syncOffsetRef.current, paused);
+      }
 
       // Handle Fullscreen queries from iframe
       if (isPlayerMessage && event.data.zenCommand === "getFullscreenState") {
@@ -715,19 +736,25 @@ export default function IframePlayer({
       }
 
       // Handle currentTime updates from FlixCloud
-      if (typeof event.data.currentTime === "number") {
+      if (typeof event.data.currentTime === "number" && Number.isFinite(event.data.currentTime) && event.data.currentTime >= 0) {
         const time = event.data.currentTime;
+        if (!playbackStatusKnownRef.current) {
+          // Other bridges may omit status; freeze once their clock stops.
+          if (time !== lastCurrentTimeRef.current) lastClockAdvanceRef.current = Date.now();
+          playbackPausedRef.current = Date.now() - lastClockAdvanceRef.current >= 500;
+        }
         setCurrentVideoTime(time);
         lastCurrentTimeRef.current = time;
 
-        if (typeof event.data.duration === "number") {
+        if (typeof event.data.duration === "number" && Number.isFinite(event.data.duration) && event.data.duration > 0) {
           setVideoDuration(event.data.duration);
           lastDurationRef.current = event.data.duration;
         }
 
+        tryResumeIframe(time);
         const duration = lastDurationRef.current;
         const progressKey = `anime_progress_${animeId}_ep${episodeNumber}`;
-        if (time > 2) {
+        if (time > 2 && resumeHistoryReadyRef.current && !pendingResumeRef.current) {
           if (isPlaybackCompleted(time, duration)) {
             localStorage.removeItem(progressKey);
           } else {
@@ -735,21 +762,13 @@ export default function IframePlayer({
           }
         }
 
-        // The iframe can ignore seek messages sent before its player is ready.
-        // Retry only after it starts answering getTime, then stop as soon as
-        // the reported time confirms the resume seek (or the user moved ahead).
-        tryResumeIframe(time);
-
         // Drive SubtitlesOctopus if ASS (safely isolated from HUD rendering)
         if (octopusRef.current && typeof octopusRef.current.setCurrentTime === "function") {
           try {
             if (octopusRef.current.worker) {
               const effectiveTime = time + syncOffsetRef.current;
-              // 워커의 requestAnimationFrame(가라오케/애니메이션 루프)을 계속 돌려주기 위해 setIsPaused(false) 전송
-              if (typeof octopusRef.current.setIsPaused === "function") {
-                octopusRef.current.setIsPaused(false, effectiveTime);
-              }
-              octopusRef.current.setCurrentTime(effectiveTime);
+              subtitleClockRef.current = syncIframeSubtitleClock(
+                octopusRef.current, subtitleClockRef.current, effectiveTime, playbackPausedRef.current);
             } else {
               isOctopusActiveRef.current = false;
               setIsOctopusActive(false);
@@ -775,40 +794,13 @@ export default function IframePlayer({
           (isCurrentAss && isOctopusActiveRef.current);
 
         if (shouldHideHud) {
-          if (hudTextRef.current) {
-            hudTextRef.current.style.display = "none";
-            hudTextRef.current.innerText = "";
-          }
-          if (topHudTextRef.current) {
-            topHudTextRef.current.style.display = "none";
-            topHudTextRef.current.innerText = "";
-          }
+          updateSubtitleHud(hudTextRef.current, "");
+          updateSubtitleHud(topHudTextRef.current, "");
         } else {
-          // VTT 자막이거나, ASS 자막이지만 Octopus가 준비/로딩 중일 때 즉시 0ms 딜레이로 HTML HUD로 선명하게 표시!
           const effectiveTime = time + syncOffsetRef.current;
           const matchedCues = cuesRef.current.filter((c) => effectiveTime >= c.start && effectiveTime <= c.end);
-          const bottomCues = matchedCues.filter((c) => !c.isTop);
-          const topCues = matchedCues.filter((c) => c.isTop);
-
-          if (hudTextRef.current) {
-            if (bottomCues.length > 0) {
-              hudTextRef.current.innerText = bottomCues.map((c) => c.text).join("\n");
-              hudTextRef.current.style.display = "block";
-            } else {
-              hudTextRef.current.innerText = "";
-              hudTextRef.current.style.display = "none";
-            }
-          }
-
-          if (topHudTextRef.current) {
-            if (topCues.length > 0) {
-              topHudTextRef.current.innerText = topCues.map((c) => c.text).join("\n");
-              topHudTextRef.current.style.display = "block";
-            } else {
-              topHudTextRef.current.innerText = "";
-              topHudTextRef.current.style.display = "none";
-            }
-          }
+          updateSubtitleHud(hudTextRef.current, matchedCues.filter(c => !c.isTop).map(c => c.text).join("\n"));
+          updateSubtitleHud(topHudTextRef.current, matchedCues.filter(c => c.isTop).map(c => c.text).join("\n"));
         }
 
         // Save history every 10 seconds
@@ -916,6 +908,12 @@ export default function IframePlayer({
     let isCancelled = false;
     const retryTimers: Array<ReturnType<typeof setTimeout>> = [];
     pendingResumeRef.current = null;
+    resumeHistoryReadyRef.current = false;
+    lastCurrentTimeRef.current = 0;
+    lastDurationRef.current = 0;
+    playbackPausedRef.current = true;
+    playbackStatusKnownRef.current = false;
+    subtitleClockRef.current = null;
 
     async function checkSavedHistory() {
       try {
@@ -924,7 +922,8 @@ export default function IframePlayer({
 
         let data: any = null;
         try {
-          const res = await fetch(`/api/anime/history?anime_id=${encodeURIComponent(animeId)}`);
+          const res = await fetch(`/api/anime/history?anime_id=${encodeURIComponent(animeId)}`,
+            { signal: AbortSignal.timeout(3500) });
           if (res.ok) data = await res.json();
         } catch (err) {
           // A failed cloud lookup must not discard the saved local position.
@@ -959,7 +958,7 @@ export default function IframePlayer({
           attempts: 0,
           lastAttemptAt: 0,
         };
-        showNotice(`이어보기: ${formatTime(savedTime)}부터 재생합니다.`, 5000);
+        showNotice(`이어보기: ${formatTime(savedTime)} 위치로 이동 중…`, 5000);
 
         // Try immediately, after iframe load, and again while getTime replies.
         // Multiple attempts are intentional because FlixCloud may ignore an
@@ -971,6 +970,8 @@ export default function IframePlayer({
         }
       } catch (err) {
         console.error("Failed to fetch anime history for resume:", err);
+      } finally {
+        if (!isCancelled) resumeHistoryReadyRef.current = true;
       }
     }
 
@@ -1171,7 +1172,10 @@ export default function IframePlayer({
             <iframe
               ref={iframeRef}
               src={embedUrl}
-              onLoad={() => tryResumeIframe(undefined, true)}
+              onLoad={() => {
+                iframeRef.current?.contentWindow?.postMessage({ command: "getStatus" }, "*");
+                tryResumeIframe(undefined, true);
+              }}
               title="Anime Player"
               className="absolute inset-0 h-full w-full border-0 z-0"
               allow="autoplay; fullscreen; encrypted-media; picture-in-picture"

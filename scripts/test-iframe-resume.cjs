@@ -13,9 +13,9 @@ const source = fs.readFileSync(
 test("iframe resume retries after player readiness instead of one early seek", () => {
   assert.match(source, /pendingResumeRef/);
   assert.match(source, /tryResumeIframe\(time\)/);
-  assert.match(source, /onLoad=\{\(\) => tryResumeIframe\(undefined, true\)\}/);
-  assert.match(source, /command: "seek"/);
-  assert.match(source, /command: "setCurrentTime"/);
+  assert.match(source, /command: "getStatus"/);
+  assert.match(source, /iframeSeekMessage\(pending.seconds\)/);
+  assert.doesNotMatch(source, /command: "setCurrentTime"/);
   assert.match(source, /\[0, 400, 1000, 2000, 3500, 5500\]/);
 });
 
@@ -45,6 +45,7 @@ async function restoreProgress(fetchHistory, localTime = 600, cancelled = false)
   const pendingResumeRef = {current: null}, timers = [], removed = [];
   const context = {
     animeId: "ani_1", episodeNumber: 1, isCancelled: cancelled, pendingResumeRef,
+    resumeHistoryReadyRef: {current:false}, AbortSignal,
     localStorage: {getItem: () => String(localTime), removeItem: key => removed.push(key)},
     fetch: fetchHistory, console: {warn() {}, error() {}},
     isPlaybackCompleted: (time, duration) => time >= duration - 15 || time / duration >= .95,
@@ -55,7 +56,7 @@ async function restoreProgress(fetchHistory, localTime = 600, cancelled = false)
     compilerOptions: {target: ts.ScriptTarget.ES2022},
   }).outputText;
   await vm.runInNewContext(code + "\ncheckSavedHistory()", context);
-  return {pending: pendingResumeRef.current, timers, removed};
+  return {pending: pendingResumeRef.current, timers, removed, historyReady:context.resumeHistoryReadyRef.current};
 }
 
 test("network failure, invalid JSON and HTTP errors retain local iframe resume", async () => {
@@ -87,4 +88,162 @@ test("cancelled history lookup and negligible progress do not schedule resume", 
   const failed = async () => {throw new Error("offline");};
   assert.equal((await restoreProgress(failed, 600, true)).pending, null);
   assert.equal((await restoreProgress(failed, 10)).pending, null);
+});
+
+
+function playbackHelpers() {
+  const exports = {};
+  const code = ts.transpileModule(fs.readFileSync(path.join(__dirname,'../src/lib/iframePlayback.ts'),'utf8'), {
+    compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022},
+  }).outputText;
+  vm.runInNewContext(code,{exports});
+  return exports;
+}
+const playback = playbackHelpers();
+function resumeControl(duration = 0) {
+  const messages = [], notices = [];
+  const pendingResumeRef = {current:{episode:1,seconds:600,attempts:0,lastAttemptAt:0}};
+  const lastDurationRef = {current:duration};
+  const start = source.indexOf('const tryResumeIframe = useCallback(');
+  const end = source.indexOf('\n\n  const syncHistory',start);
+  const context = {useCallback:fn=>fn,pendingResumeRef,episodeNumber:1,lastDurationRef,
+    iframeRef:{current:{contentWindow:{postMessage:data=>messages.push(data)}}},
+    iframeSeekMessage:playback.iframeSeekMessage,showNotice:msg=>notices.push(msg),formatTime:String};
+  const code = ts.transpileModule(source.slice(start,end), {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+  const run = vm.runInNewContext(code+'\ntryResumeIframe',context);
+  return {run,pendingResumeRef,lastDurationRef,messages,notices};
+}
+test('resume sends the value parameter consumed by the actual FlixCloud seek bridge', () => {
+  const api = resumeControl(1500);
+  api.run(0,true);
+  let actualSeek;
+  // Contract observed in ReAnime's current /e/... player: command + value.
+  const upstreamBridge = ({command,value}) => {if(command === 'seek')actualSeek=value;};
+  api.messages.forEach(upstreamBridge);
+  assert.equal(actualSeek,600);
+  assert.equal(api.messages.length,1);
+  assert.equal(api.messages[0].time,undefined);
+  assert.equal(api.pendingResumeRef.current.attempts,1);
+});
+test('a delayed player cannot consume resume attempts before metadata is ready', () => {
+  const api = resumeControl();
+  for(let i=0;i<30;i++)api.run(0,true);
+  assert.equal(api.messages.length,0);
+  assert.equal(api.pendingResumeRef.current.attempts,0);
+  api.lastDurationRef.current=1500;
+  api.run(0,true);
+  assert.equal(api.messages[0].value,600);
+  assert.equal(api.notices.length,0);
+  api.run(600);
+  assert.equal(api.pendingResumeRef.current,null);
+  assert.equal(api.notices.length,1);
+});
+test('FlixCloud pause/playing/loading/end signals synchronize the ASS animation state', () => {
+  for(const status of ['Paused','Loading','Ended','Error'])assert.equal(playback.iframePausedState({playerStatus:status}),true);
+  assert.equal(playback.iframePausedState({playerStatus:'Playing'}),false);
+  assert.equal(playback.iframePausedState({paused:true}),true);
+  assert.equal(playback.iframePausedState({currentTime:10}),null);
+});
+test('paused subtitle time stays frozen across repeated polls and resumes only on a playing transition', () => {
+  const calls = [];
+  const renderer = {
+    setIsPaused:(paused,time)=>calls.push(['pause',paused,time]),
+    setCurrentTime:time=>calls.push(['time',time]),
+  };
+  let state = playback.syncIframeSubtitleClock(renderer,null,600,false);
+  state = playback.syncIframeSubtitleClock(renderer,state,600,true);
+  const frozenCount=calls.length;
+  for(let i=0;i<100;i++)state=playback.syncIframeSubtitleClock(renderer,state,600,true);
+  assert.equal(calls.length,frozenCount);
+  assert.deepEqual(calls.at(-1),['pause',true,600]);
+  state=playback.syncIframeSubtitleClock(renderer,state,600,false);
+  assert.deepEqual(calls.at(-1),['pause',false,600]);
+  state=playback.syncIframeSubtitleClock(renderer,state,600.1,false);
+  assert.deepEqual(calls.at(-1),['time',600.1]);
+  assert.equal(calls.filter(c=>c[0]==='pause'&&c[1]===false).length,2);
+});
+test('paused subtitles still update after a seek, offset change or renderer replacement', () => {
+  const calls = [];
+  const renderer = {setIsPaused:(paused,time)=>calls.push(['pause',paused,time]),setCurrentTime:time=>calls.push(['time',time])};
+  let state = playback.syncIframeSubtitleClock(renderer,null,600,true);
+  state=playback.syncIframeSubtitleClock(renderer,state,601,true);
+  assert.deepEqual(calls.at(-1),['time',601]);
+  const replacement={...renderer};
+  state=playback.syncIframeSubtitleClock(replacement,state,601,true);
+  assert.deepEqual(calls.slice(-2),[['pause',true,601],['time',601]]);
+});
+test('unchanged paused HUD subtitles do not replace text or toggle visibility on each poll', () => {
+  let text='',display='',writes=0;
+  const element={get innerText(){return text;},set innerText(value){text=value;writes++;},
+    style:{get display(){return display;},set display(value){display=value;writes++;}}};
+  playback.updateSubtitleHud(element,'paused dialogue');
+  const initial=writes;
+  for(let i=0;i<100;i++)playback.updateSubtitleHud(element,'paused dialogue');
+  assert.equal(writes,initial);
+  playback.updateSubtitleHud(element,'new dialogue');
+  assert.equal(writes,initial+1);
+  playback.updateSubtitleHud(element,'');
+  assert.equal(display,'none');
+  assert.equal(text,'');
+});
+
+function messageControl() {
+  const ref = current => ({current});
+  const frame = {}, calls = [], saved = [], posted = [];
+  const context = {...playback, iframeRef:ref({contentWindow:frame}),
+    playbackPausedRef:ref(true), playbackStatusKnownRef:ref(false), lastClockAdvanceRef:ref(0),
+    lastCurrentTimeRef:ref(0), lastDurationRef:ref(0), syncOffsetRef:ref(0), subtitleClockRef:ref(null),
+    octopusRef:ref({worker:{},setIsPaused:(paused,time)=>calls.push(['pause',paused,time]),
+      setCurrentTime:time=>calls.push(['time',time])}),
+    resumeHistoryReadyRef:ref(false), pendingResumeRef:ref(null), lastHistorySaveTime:ref(0),
+    animeId:'ani_1', animeTitle:'Test', episodeNumber:1, animePoster:'', initialEpTitle:'',
+    isPlaybackCompleted:()=>false, useCallback:fn=>fn, fetch:(_url,options)=>{posted.push(JSON.parse(options.body));return Promise.resolve();},
+    localStorage:{setItem:(_key,value)=>saved.push(value),removeItem:()=>{}},
+    setCurrentVideoTime:()=>{}, setVideoDuration:()=>{}, tryResumeIframe:()=>{},
+    isOctopusActiveRef:ref(true), setIsOctopusActive:()=>{}, subtitles:[{is_ass:true}], currentSubIndex:0,
+    isSubEnabledRef:ref(true), cuesRef:ref([]), hudTextRef:ref(null), topHudTextRef:ref(null), console,
+  };
+  const historyStart=source.indexOf('const syncHistory = useCallback(');
+  const historyEnd=source.indexOf('\n\n  // Helper:',historyStart);
+  const start=source.indexOf('const handleMessage = (event: MessageEvent)');
+  const end=source.indexOf('\n\n    window.addEventListener("message", handleMessage)',start);
+  const code=ts.transpileModule(source.slice(historyStart,historyEnd)+'\n'+source.slice(start,end),{
+    compilerOptions:{target:ts.ScriptTarget.ES2022},
+  }).outputText;
+  const run=vm.runInNewContext(code+'\nhandleMessage',context);
+  return {context,calls,saved,posted,send:data=>run({source:frame,data}),foreign:data=>run({source:{},data})};
+}
+test('player message handling freezes ASS after pause and rejects foreign or invalid time messages', () => {
+  const api=messageControl();
+  api.send({playerStatus:'Playing'});
+  api.send({currentTime:600,duration:1500});
+  api.send({playerStatus:'Paused'});
+  const count=api.calls.length;
+  for(let i=0;i<100;i++)api.send({currentTime:600,duration:1500});
+  assert.equal(api.calls.length,count);
+  assert.deepEqual(api.calls.at(-1),['pause',true,600]);
+  api.foreign({playerStatus:'Playing',currentTime:700});
+  for(const currentTime of [NaN,Infinity,-1])api.send({currentTime});
+  assert.equal(api.context.lastCurrentTimeRef.current,600);
+  assert.equal(api.calls.length,count);
+  api.send({playerStatus:'Playing'});
+  api.send({currentTime:600.1});
+  assert.deepEqual(api.calls.slice(-2),[['pause',false,600],['time',600.1]]);
+});
+test('startup and pending seek do not overwrite saved progress locally or in the cloud', () => {
+  const api=messageControl();
+  api.send({currentTime:20,duration:1500});
+  assert.equal(api.saved.length,0);
+  assert.equal(api.posted.length,0);
+  api.context.resumeHistoryReadyRef.current=true;
+  api.context.pendingResumeRef.current={seconds:600};
+  api.context.lastHistorySaveTime.current=0;
+  api.send({currentTime:21,duration:1500});
+  assert.equal(api.saved.length,0);
+  assert.equal(api.posted.length,0);
+  api.context.tryResumeIframe=time=>{if(time===600)api.context.pendingResumeRef.current=null;};
+  api.context.lastHistorySaveTime.current=0;
+  api.send({currentTime:600,duration:1500});
+  assert.deepEqual(api.saved,['600']);
+  assert.equal(api.posted[0].watch_time,600);
 });
