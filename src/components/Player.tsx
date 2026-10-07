@@ -1,6 +1,6 @@
 "use client";
 import { canCacheSubtitle } from "@/lib/subtitleCachePolicy";
-import { exitPlayerFullscreen, getPlayerFullscreenElement, requestPlayerFullscreen } from "@/lib/playerFullscreen";
+import { enableWebFullscreenScrollRoom, exitPlayerFullscreen, getPlayerFullscreenElement, requestPlayerFullscreen } from "@/lib/playerFullscreen";
 import LocalizedAnimeTitle from "@/components/LocalizedAnimeTitle";
 
 import { useEffect, useRef, useState, useCallback } from "react";
@@ -2313,6 +2313,7 @@ export default function Player(props: PlayerProps) {
     let isMounted = true;
     let cleanupDoubleTap: (() => void) | null = null;
     let cleanupUnload: (() => void) | null = null;
+    let cleanupWebFullscreenScrollRoom: (() => void) | null = null;
 
     async function init() {
       try {
@@ -2713,6 +2714,12 @@ export default function Player(props: PlayerProps) {
         };
         art.on("fullscreen", syncFullscreenControl);
         art.on("fullscreenWeb", syncFullscreenControl);
+        art.on("fullscreenWeb", (active: boolean) => {
+          cleanupWebFullscreenScrollRoom?.();
+          cleanupWebFullscreenScrollRoom = active
+            ? enableWebFullscreenScrollRoom(document, window)
+            : null;
+        });
 
         if (!isMounted) {
           try {
@@ -3538,6 +3545,12 @@ export default function Player(props: PlayerProps) {
         try {
           cleanupUnload();
         } catch {}
+      }
+      if (cleanupWebFullscreenScrollRoom) {
+        try {
+          cleanupWebFullscreenScrollRoom();
+        } catch {}
+        cleanupWebFullscreenScrollRoom = null;
       }
       if (docPipWindowRef.current && !docPipWindowRef.current.closed) {
         try {

@@ -218,8 +218,24 @@ test('prefixed Safari API and native exit are supported without calling video-on
 
 // Exercise hook lifecycle and real event dispatch without a browser/device UA shim.
 function harness(nav = android) {
-  const document = Object.assign(new EventTarget(), {fullscreenElement: null, body: {style: {overflow: 'scroll'}}});
-  const window = new EventTarget();
+  const document = Object.assign(new EventTarget(), {
+    fullscreenElement: null,
+    documentElement: {style: {overflowX: '', overflowY: '', height: '', minHeight: ''}},
+    body: {style: {overflow: 'scroll', height: '', minHeight: '', maxHeight: ''}},
+  });
+  const window = Object.assign(new EventTarget(), {
+    scrollX: 7,
+    scrollY: 123,
+    scrollTo(options, y) {
+      if (typeof options === 'object') {
+        this.scrollX = options.left ?? this.scrollX;
+        this.scrollY = options.top ?? this.scrollY;
+      } else {
+        this.scrollX = options;
+        this.scrollY = y;
+      }
+    },
+  });
   const slots = [], pending = [];
   let index = 0, value;
   const changed = (a, b) => !a || a.length !== b.length || a.some((v, i) => v !== b[i]);
@@ -252,22 +268,45 @@ test('Android browser back/exit clears native state; resizing cannot keep fullsc
   assert.equal(h.document.body.style.overflow, 'scroll');
   h.unmount();
 });
-test('iPhone web mode survives rerender/resize and restores scroll on Escape or unmount', async () => {
+test('iPhone web mode keeps an invisible root scroll room for Safari chrome and restores the page', async () => {
   const h = harness(iphone);
   await h.render().toggleFullscreen();
   assert.equal(h.render().mode, 'web');
   assert.equal(h.document.body.style.overflow, 'hidden');
+  assert.equal(h.document.body.style.height, '100dvh');
+  assert.equal(h.document.documentElement.style.overflowY, 'auto');
+  assert.equal(h.document.documentElement.style.height, `calc(100dvh + ${api.WEB_FULLSCREEN_SCROLL_ROOM_PX}px)`);
+  assert.equal(h.window.scrollY, 0);
+
+  // Rotation often reveals Safari's toolbar; reset the hidden scroll position
+  // so the next upward swipe can retract it again.
+  h.window.scrollY = api.WEB_FULLSCREEN_SCROLL_ROOM_PX;
+  h.window.dispatchEvent(new Event('orientationchange'));
+  assert.equal(h.window.scrollY, 0);
+
   h.window.dispatchEvent(new Event('resize'));
   h.document.dispatchEvent(new Event('fullscreenchange'));
   assert.equal(h.render().mode, 'web');
   assert.equal(h.document.body.style.overflow, 'hidden');
+
   const escape = Object.assign(new Event('keydown'), {key: 'Escape'});
   h.window.dispatchEvent(escape);
   assert.equal(h.render().mode, 'inline');
   assert.equal(h.document.body.style.overflow, 'scroll');
+  assert.equal(h.document.documentElement.style.height, '');
+  assert.equal(h.window.scrollX, 7);
+  assert.equal(h.window.scrollY, 123);
+
   await h.render().toggleFullscreen(); h.render(); h.unmount();
   assert.equal(h.document.body.style.overflow, 'scroll');
 });
+test('ArtPlayer web fullscreen uses the same Safari scroll-room helper', () => {
+  const src = fs.readFileSync(path.join(root, 'src/components/Player.tsx'), 'utf8');
+  assert.match(src, /enableWebFullscreenScrollRoom/);
+  assert.match(src, /art\.on\("fullscreenWeb", \(active: boolean\) => \{/);
+  assert.match(src, /cleanupWebFullscreenScrollRoom = active[\s\S]*?enableWebFullscreenScrollRoom\(document, window\)/);
+});
+
 test('double click while entering does not start two fullscreen requests', async () => {
   const h = harness();
   let requests = 0, resolve;
