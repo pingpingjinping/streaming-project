@@ -409,13 +409,20 @@ async function decodeWithTistoryViewer(pageUrl: string, timeoutMs: number): Prom
       client,
       VIEWER_READY,
       Boolean,
-      Math.min(15000, timeoutMs),
+      Math.min(20000, timeoutMs),
     );
-    if (!ready) return [];
+    if (!ready) {
+      console.warn("[Tistory WinPNG] viewer readiness timeout", { pageUrl, timeoutMs });
+      return [];
+    }
 
     await client.evaluate(SETUP);
     const candidates = await client.evaluate<Array<{ src: string }>>(CANDIDATES);
-    if (!Array.isArray(candidates) || !candidates.length) return [];
+    if (!Array.isArray(candidates) || !candidates.length) {
+      console.warn("[Tistory WinPNG] no original Kakao PNG candidates", { pageUrl });
+      return [];
+    }
+    console.log("[Tistory WinPNG] candidates ready", { pageUrl, count: candidates.length });
 
     const collected: TistoryWinPngFile[] = [];
     const seen = new Set<string>();
@@ -432,27 +439,54 @@ async function decodeWithTistoryViewer(pageUrl: string, timeoutMs: number): Prom
         pageUrl,
         Math.min(15000, Math.max(4000, deadline - Date.now())),
       );
-      if (!png) continue;
+      if (!png) {
+        console.warn("[Tistory WinPNG] original Kakao PNG download failed", {
+          pageUrl,
+          candidate: candidate.src,
+        });
+        continue;
+      }
+      console.log("[Tistory WinPNG] original Kakao PNG downloaded", {
+        pageUrl,
+        bytes: png.length,
+      });
       const opened = await client.evaluate<boolean>(
         candidateOpenExpression(png.toString("base64")),
         Math.min(12000, Math.max(1000, deadline - Date.now())),
       );
-      if (!opened) continue;
+      if (!opened) {
+        console.warn("[Tistory WinPNG] viewer rejected downloaded PNG", { pageUrl });
+        continue;
+      }
 
       const state = await waitFor<string>(
         client,
         VIEWER_STATE,
         (value) => value === "done" || value === "failed",
-        Math.min(9000, Math.max(1000, deadline - Date.now())),
-        220,
+        Math.min(60000, Math.max(1000, deadline - Date.now())),
+        250,
       );
-      if (state !== "done") continue;
+      if (state !== "done") {
+        console.warn("[Tistory WinPNG] conversion did not finish", {
+          pageUrl,
+          state: state || "timeout",
+          remainingMs: Math.max(0, deadline - Date.now()),
+        });
+        continue;
+      }
 
       const rows = await client.evaluate<Array<{ path: string; base64: string; generated: boolean }>>(
         COLLECT,
         Math.min(12000, Math.max(1000, deadline - Date.now())),
       );
-      if (!Array.isArray(rows)) continue;
+      if (!Array.isArray(rows)) {
+        console.warn("[Tistory WinPNG] viewer returned invalid rows", { pageUrl });
+        continue;
+      }
+      console.log("[Tistory WinPNG] conversion rows collected", {
+        pageUrl,
+        rows: rows.length,
+      });
 
       for (const row of rows) {
         const relative = safePath(row?.path);
@@ -500,7 +534,10 @@ export async function extractTistoryWinPngFiles(
       return cloneFiles(second.files);
     }
 
-    const timeoutMs = Math.max(8000, Math.min(options.timeoutMs ?? 28000, 45000));
+    // The proven downloader path allows up to 60 seconds for a single Jamaker
+    // conversion. Raspberry Pi can exceed the old 9-second per-image web wait,
+    // so give the browser path enough room to match that behavior.
+    const timeoutMs = Math.max(45000, Math.min(options.timeoutMs ?? 75000, 90000));
     let files: TistoryWinPngFile[] = [];
     try {
       files = await decodeWithTistoryViewer(cacheKey, timeoutMs);

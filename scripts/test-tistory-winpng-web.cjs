@@ -111,3 +111,12 @@ test("manual online creator confirmation still uses the shared blog extractor", 
   const route = fs.readFileSync(path.join(__dirname, "../src/app/api/anime/subtitles/route.ts"), "utf8");
   assert.match(route, /fetchCreatorSubtitle\(creatorName, website, targetTitle, sourceEpisode, 5000, ep\)/);
 });
+
+test("web WinPNG waits long enough for Raspberry Pi Jamaker conversion", () => {
+  const source = fs.readFileSync(path.join(__dirname, "../src/lib/tistoryWinPng.ts"), "utf8");
+  const subtitlesSource = fs.readFileSync(path.join(__dirname, "../src/lib/subtitles.ts"), "utf8");
+  assert.match(source, /Math\.min\(60000, Math\.max\(1000, deadline - Date\.now\(\)\)\)/);
+  assert.match(source, /Math\.max\(45000, Math\.min\(options\.timeoutMs \?\? 75000, 90000\)\)/);
+  assert.match(subtitlesSource, /Math\.max\(60000, Math\.min\(90000, timeoutMs \+ 70000\)\)/);
+  assert.match(source, /\[Tistory WinPNG\] conversion did not finish/);
+});
