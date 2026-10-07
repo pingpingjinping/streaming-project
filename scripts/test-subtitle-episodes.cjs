@@ -17,11 +17,16 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'subtitle-regression-'));
 process.env.SUBTITLE_STORAGE_DIR = root;
 delete process.env.DATABASE_URL;
 const AdmZip = require('adm-zip');
+// Synthetic attachment tests must not launch a real browser when all mocked
+// attachments are rejected. WinPNG extraction has its own regression suite.
+const winPng = require('../src/lib/tistoryWinPng.ts');
+const realWinPngExtractor = winPng.extractTistoryWinPngFiles;
+winPng.extractTistoryWinPngFiles = async () => [];
 const { extractSubtitleFromBuffer, fetchCreatorSubtitle, extractSubtitleFromBlogPage, decodeSubtitleFile } = require('../src/lib/subtitles.ts');
 const { readEpisodeEvidence } = require('../src/lib/subtitleEpisodes.ts');
 const { inspectSubtitleArchive, automaticArchiveAssignments } = require('../src/lib/subtitleUpload.ts');
 const realFetch = global.fetch;
-after(() => { global.fetch = realFetch; fs.rmSync(root, { recursive: true, force: true }); });
+after(() => { global.fetch = realFetch; winPng.extractTistoryWinPngFiles = realWinPngExtractor; fs.rmSync(root, { recursive: true, force: true }); });
 function srt(text) { return Buffer.from(`1\n00:00:01,000 --> 00:00:04,000\n${text}\n\n2\n00:00:05,000 --> 00:00:07,000\nsubtitle regression\n`); }
 function zip(files) { const z = new AdmZip(); for (const [name, text] of Object.entries(files)) z.addFile(name, srt(text)); return z.toBuffer(); }
 function network(page, html, files) {
