@@ -120,3 +120,18 @@ test("web WinPNG waits long enough for Raspberry Pi Jamaker conversion", () => {
   assert.match(subtitlesSource, /Math\.max\(60000, Math\.min\(90000, timeoutMs \+ 70000\)\)/);
   assert.match(source, /\[Tistory WinPNG\] conversion did not finish/);
 });
+
+test("web WinPNG candidate scan matches downloader-style article attributes", () => {
+  const source = fs.readFileSync(path.join(__dirname, "../src/lib/tistoryWinPng.ts"), "utf8");
+  assert.match(source, /root\.querySelectorAll\("\*"\)/);
+  assert.match(source, /node\.getAttribute\?\.\("data-url"\)/);
+  assert.match(source, /node\.getAttribute\?\.\("data-phocus"\)/);
+  assert.match(source, /node\.getAttribute\?\.\("src"\)/);
+  assert.match(source, /waitFor<Array<\{ src: string \}>>/);
+});
+
+test("failed WinPNG extraction is not warm-cached", () => {
+  const source = fs.readFileSync(path.join(__dirname, "../src/lib/tistoryWinPng.ts"), "utf8");
+  assert.match(source, /if \(files\.length\) \{/);
+  assert.match(source, /resultCache\.delete\(cacheKey\)/);
+});
