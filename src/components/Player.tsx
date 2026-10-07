@@ -96,6 +96,7 @@ function updateSpeed2xButton(rate: number, doc?: Document) {
 }
 
 interface SubtitleItem {
+  temporary?: boolean;
   name: string;
   format: "ASS" | "VTT";
   is_ass: boolean;
@@ -2060,6 +2061,7 @@ export default function Player(props: PlayerProps) {
       const data = await res.json();
       if (data.success && data.subtitle) {
         const newSub: SubtitleItem = {
+          temporary: Boolean(data.subtitle.temporary),
           name: `${data.subtitle.name} (${data.subtitle.format})`,
           format: data.subtitle.format,
           is_ass: data.subtitle.is_ass,
@@ -2078,8 +2080,8 @@ export default function Player(props: PlayerProps) {
           currentSub.name === newSub.name
         );
 
-        if (isAss) {
-          // 🌟 ASS 자막인 경우: 즉시 화면 자막을 이 ASS 자막으로 교체 적용!
+        if (isAss || newSub.temporary) {
+          // Apply a creator's ASS or explicitly selected temporary VTT now.
           setSubs((prev) => {
             const nextSubs = [newSub, ...prev.filter((s) => s.name !== newSub.name)];
             setSelectedSubIndex(0);
@@ -2089,7 +2091,9 @@ export default function Player(props: PlayerProps) {
           });
 
           if (artRef.current) {
-            artRef.current.notice.show = `✅ ${creator.name} ASS 자막 등록 및 적용 완료!`;
+            artRef.current.notice.show = newSub.temporary
+              ? `${creator.name} 임시 자막 적용 · 일부 효과 생략`
+              : `✅ ${creator.name} ASS 자막 등록 및 적용 완료!`;
           }
         } else {
           // 🌟 ASS가 아닌 일반 자막인 경우:
@@ -2138,6 +2142,7 @@ export default function Player(props: PlayerProps) {
   const handleSelectFoundSubtitle = (option: SubtitleOption) => {
     setNeedsManualSubtitleChoice(false);setSubtitleNotice("");
     const subtitle: SubtitleItem = {
+      temporary: option.temporary,
       name: option.name,
       format: option.format,
       is_ass: option.is_ass,
@@ -3363,6 +3368,7 @@ export default function Player(props: PlayerProps) {
                   content: selectedSubtitle!.content,
                   localArchive: Boolean(selectedSubtitle!.localArchive),
                   isCached: Boolean(selectedSubtitle!.isCached),
+                  temporary: Boolean(selectedSubtitle!.temporary),
                 }),
               }).then((response) => {
                 if (!response.ok) throw new Error(`Subtitle cache returned ${response.status}`);
@@ -3613,6 +3619,7 @@ export default function Player(props: PlayerProps) {
           name: `${s.localArchive ? `[Pi 로컬 · ${s.sourceProvider === "anissia" ? "Anissia" : s.sourceProvider === "naver" ? "Naver" : "AniAll"}]` : s.sourceProvider === "aniall" ? "[AniAll]" : "[애니시아]"} ${s.name} (${s.format})`,
           format: s.format,
           is_ass: s.is_ass,
+          temporary: Boolean(s.temporary),
           content: s.content,
           sourceCreatorWebsite: s.sourceCreatorWebsite,
           sourceMatchedTitle: s.sourceMatchedTitle,

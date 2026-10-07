@@ -7,7 +7,7 @@
     "build": "node scripts/build-subtitle-cache-tools.cjs && next build",
     "start": "next start",
     "lint": "next lint",
-    "test:subtitles": "node scripts/build-subtitle-cache-tools.cjs && node --test scripts/test-subtitle-episodes.cjs scripts/test-local-subtitle-search.cjs scripts/test-anissia-keyword-search.cjs scripts/test-reviewed-subtitles.cjs scripts/test-weekly-subtitles.cjs scripts/test-subtitle-cache.cjs scripts/test-subtitle-overrides.cjs scripts/test-subtitle-creator-preference.cjs scripts/test-tistory-winpng-web.cjs scripts/test-anime-artwork.cjs scripts/test-player-fullscreen.cjs scripts/test-iframe-resume.cjs scripts/test-anikoto-catalog.cjs"
+    "test:subtitles": "node scripts/build-subtitle-cache-tools.cjs && node --test scripts/test-subtitle-episodes.cjs scripts/test-local-subtitle-search.cjs scripts/test-anissia-keyword-search.cjs scripts/test-reviewed-subtitles.cjs scripts/test-weekly-subtitles.cjs scripts/test-subtitle-cache.cjs scripts/test-subtitle-overrides.cjs scripts/test-subtitle-creator-preference.cjs scripts/test-tistory-winpng-web.cjs scripts/test-anime-artwork.cjs scripts/test-player-fullscreen.cjs scripts/test-iframe-resume.cjs scripts/test-anikoto-catalog.cjs scripts/test-local-winpng.cjs"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
@@ -15,9 +15,10 @@
     "iconv-lite": "^0.6.3",
     "lucide-react": "^0.475.0",
     "next": "^15.1.7",
+    "postgres": "^3.4.9",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "postgres": "^3.4.9"
+    "sharp": "^0.35.4"
   },
   "devDependencies": {
     "@types/adm-zip": "^0.5.7",
@@ -29,4 +30,3 @@
     "typescript": "^5.7.3"
   }
 }
-

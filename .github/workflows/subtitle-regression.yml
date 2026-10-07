@@ -5,6 +5,7 @@ on:
     paths:
       - 'src/**'
       - 'scripts/test-*.cjs'
+      - 'scripts/winpng/**'
       - 'scripts/*subtitle-cache*.cjs'
       - 'Dockerfile'
       - 'scripts/*.py'
@@ -15,6 +16,7 @@ on:
     paths:
       - 'src/**'
       - 'scripts/test-*.cjs'
+      - 'scripts/winpng/**'
       - 'scripts/*subtitle-cache*.cjs'
       - 'Dockerfile'
       - 'scripts/*.py'

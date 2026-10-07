@@ -34,6 +34,7 @@ export interface CreatorInfo {
 }
 
 export interface SubtitleOption {
+  temporary?: boolean;
   name: string;
   format: "ASS" | "VTT";
   is_ass: boolean;
@@ -424,7 +425,8 @@ export default function SubtitleSelectModal({
       }
 
       const newSub: SubtitleOption = {
-        name: `(${creator.name}) ${data.subtitle.orig_filename || `${requestedEpisode}화 자막`}`,
+        name: `(${creator.name}) ${data.subtitle.orig_filename || `${requestedEpisode}화 자막`}${data.subtitle.temporary ? " · 임시" : ""}`,
+        temporary: Boolean(data.subtitle.temporary),
         format: data.subtitle.is_ass ? "ASS" : "VTT",
         is_ass: Boolean(data.subtitle.is_ass),
         content: data.subtitle.content,
@@ -478,6 +480,7 @@ export default function SubtitleSelectModal({
         name: s.name,
         format: s.is_ass ? "ASS" : "VTT",
         is_ass: Boolean(s.is_ass),
+        temporary: Boolean(s.temporary),
         content: s.content || "",
         url: s.url || "",
         matchScore: s.matchScore,
@@ -534,6 +537,7 @@ export default function SubtitleSelectModal({
         name: s.name,
         format: s.is_ass ? "ASS" : "VTT",
         is_ass: Boolean(s.is_ass),
+        temporary: Boolean(s.temporary),
         content: s.content || "",
         url: s.url || "",
         matchScore: s.matchScore,

@@ -91,67 +91,42 @@ test("Tistory blog extraction falls back to generated WinPNG ASS", async () => {
   assert.equal(result.sourceCreatorWebsite, "https://sample.tistory.com/3");
 });
 
-test("web WinPNG path opens original Kakao PNG and never exports raw JMK", () => {
-  const source = fs.readFileSync(path.join(__dirname, "../src/lib/tistoryWinPng.ts"), "utf8");
-  assert.match(source, /node\.getAttribute\?\.\("data-url"\)/);
-  assert.match(source, /node\.getAttribute\?\.\("data-phocus"\)/);
-  assert.match(source, /blog\.kakaocdn\.net/);
-  assert.match(source, /const response = await fetch\(url,/);
-  assert.match(source, /"Referer": referer/);
-  assert.match(source, /candidateOpenExpression\(png\.toString\("base64"\)\)/);
-  assert.match(source, /inputUrl\.value = URL\.reset\(blob\)/);
-  assert.match(source, /files = files\.filter\(\(file\) => \/\\\.\(\?:ass\|ssa\|smi\|srt\|vtt\|zip\)\$\/i\.test\(file\.path\)\)/);
-  assert.doesNotMatch(
-    source,
-    /if \(!assUrl && !smiUrl\) await add\(originalName, anchor\.getAttribute\("data-href"\), false\)/,
-  );
+test("blog WinPNG extraction marks JMK dialogue previews as temporary VTT", async () => {
+  winPng.extractTistoryWinPngFiles = async () => [{path: "03화.smi", generated: true, temporary: true,
+    data: Buffer.from('<SAMI><BODY><SYNC Start=1000><P>preview dialogue<SYNC Start=2000><P>&nbsp;</BODY></SAMI>')}];
+  const result = await subtitles.extractSubtitleFromBlogPage('<h1 class="post-title">테스트 3화</h1>',
+    'https://sample.tistory.com/3','테스트 제작자',3,null);
+  assert.equal(result.format,'VTT');assert.equal(result.temporary,true);
+  assert.match(result.name,/임시/);assert.match(result.content,/preview dialogue/);
 });
 
-test("manual online creator confirmation still uses the shared blog extractor", () => {
-  const route = fs.readFileSync(path.join(__dirname, "../src/app/api/anime/subtitles/route.ts"), "utf8");
-  assert.match(route, /fetchCreatorSubtitle\(creatorName, website, targetTitle, sourceEpisode, 5000, ep\)/);
+test("blog WinPNG chooses original SMI before ASS and complete files before JMK previews", async () => {
+  const smi = Buffer.from('<SAMI><BODY><SYNC Start=1000><P>original SMI<SYNC Start=2000><P>&nbsp;</BODY></SAMI>');
+  const ass = Buffer.from('[Script Info]\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,original ASS');
+  winPng.extractTistoryWinPngFiles = async () => [
+    {path:'03.ass',data:ass,generated:false},{path:'03.smi',data:smi,generated:false}];
+  const extract=()=>subtitles.extractSubtitleFromBlogPage('<h1 class="post-title">테스트 3화</h1>',
+    'https://sample.tistory.com/3','테스트 제작자',3,null);
+  assert.match((await extract()).content,/original SMI/);
+  winPng.extractTistoryWinPngFiles = async () => [
+    {path:'03.smi',data:smi,generated:true,temporary:true},{path:'03.ass',data:ass,generated:false}];
+  const complete=await extract();assert.equal(complete.format,'ASS');assert.equal(complete.temporary,false);
 });
 
-test("web WinPNG waits long enough for Raspberry Pi Jamaker conversion", () => {
-  const source = fs.readFileSync(path.join(__dirname, "../src/lib/tistoryWinPng.ts"), "utf8");
-  const subtitlesSource = fs.readFileSync(path.join(__dirname, "../src/lib/subtitles.ts"), "utf8");
-  assert.match(source, /Math\.min\(60000, Math\.max\(1000, deadline - Date\.now\(\)\)\)/);
-  assert.match(source, /Math\.max\(45000, Math\.min\(options\.timeoutMs \?\? 75000, 90000\)\)/);
-  assert.match(subtitlesSource, /Math\.max\(60000, Math\.min\(90000, timeoutMs \+ 70000\)\)/);
-  assert.match(source, /\[Tistory WinPNG\] conversion did not finish/);
+test("blog WinPNG has no Chromium launch or viewer fallback", () => {
+  const source = fs.readFileSync(path.join(__dirname,'../src/lib/tistoryWinPng.ts'),'utf8');
+  assert.doesNotMatch(source,/runChromiumQueued|CHROMIUM_BIN|decodeWithTistoryViewer|Runtime\.evaluate/);
+  assert.match(source,/decodeLocalWinPng/);
 });
 
-test("web WinPNG candidate scan matches downloader-style article attributes", () => {
-  const source = fs.readFileSync(path.join(__dirname, "../src/lib/tistoryWinPng.ts"), "utf8");
-  assert.match(source, /root\.querySelectorAll\("\*"\)/);
-  assert.match(source, /node\.getAttribute\?\.\("data-url"\)/);
-  assert.match(source, /node\.getAttribute\?\.\("data-phocus"\)/);
-  assert.match(source, /node\.getAttribute\?\.\("src"\)/);
-  assert.match(source, /waitFor<Array<\{ src: string \}>>/);
-});
-
-test("failed WinPNG extraction is not warm-cached", () => {
-  const source = fs.readFileSync(path.join(__dirname, "../src/lib/tistoryWinPng.ts"), "utf8");
-  assert.match(source, /if \(files\.length\) \{/);
-  assert.match(source, /resultCache\.delete\(cacheKey\)/);
-});
-
-test("web WinPNG exposes Chromium startup stderr and allows slow Pi launch", () => {
-  const source = fs.readFileSync(path.join(__dirname, "../src/lib/tistoryWinPng.ts"), "utf8");
-  assert.match(source, /stdio: \["ignore", "ignore", "pipe"\]/);
-  assert.match(source, /Math\.min\(20000, timeoutMs\)/);
-  assert.match(source, /\[Tistory WinPNG\] Chromium startup failed/);
-  assert.match(source, /stderr: detail \|\| "\(no Chromium stderr\)"/);
-});
-
-test("web WinPNG logs converted paths and episode-selection rejections", () => {
+test("web WinPNG logs local paths and episode-selection rejections", () => {
   const winpng = fs.readFileSync(path.join(__dirname, "../src/lib/tistoryWinPng.ts"), "utf8");
-  const subtitles = fs.readFileSync(path.join(__dirname, "../src/lib/subtitles.ts"), "utf8");
-  assert.match(winpng, /conversion rows collected/);
+  const source = fs.readFileSync(path.join(__dirname, "../src/lib/subtitles.ts"), "utf8");
+  assert.match(winpng, /local rows collected/);
   assert.match(winpng, /playable files collected/);
-  assert.match(winpng, /converted row rejected/);
-  assert.match(subtitles, /subtitle candidate rejected by episode evidence/);
-  assert.match(subtitles, /converted candidate not selected/);
+  assert.match(winpng, /local rows rejected/);
+  assert.match(source, /subtitle candidate rejected by episode evidence/);
+  assert.match(source, /converted candidate not selected/);
 });
 
 test("WinPNG episode selection prefers filename and falls back to nearest parent folder", () => {

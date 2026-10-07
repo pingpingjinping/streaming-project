@@ -29,6 +29,7 @@ export interface SubtitleResult {
   sourceCreatorWebsite?: string;
   sourceMatchedTitle?: string;
   sourceProvider?: "aniall" | "anissia";
+  temporary?: boolean;
 }
 
 export interface CreatorInfo {
@@ -521,23 +522,23 @@ export async function extractSubtitleFromBlogPage(
   }
 
   // Newer Tistory posts can hide JMK/ASS/SMI files inside WinPNG images instead
-  // of exposing a normal attachment link. Run the author's own viewer in the
-  // system Chromium only after the ordinary attachment path found nothing.
+  // of exposing a normal attachment link. Blog playback uses a local plain
+  // dialogue preview; full Jamaker conversion stays in the weekly downloader.
   try {
     const host = new URL(postUrl).hostname.toLowerCase();
     if (host === "tistory.com" || host.endsWith(".tistory.com")) {
       const winPngFiles = await extractTistoryWinPngFiles(postUrl, {
-        // Match the weekly downloader's proven Jamaker allowance. Self-hosted
-        // Pi requests can safely wait longer than the old short web fallback.
-        timeoutMs: Math.max(60000, Math.min(90000, timeoutMs + 70000)),
+        html,
+        timeoutMs: Math.max(10000, Math.min(30000, timeoutMs + 10000)),
       });
       const priority: Record<string, number> = {
-        ass: 1, ssa: 2, smi: 3, srt: 4, vtt: 5, zip: 6,
+        smi: 1, ass: 2, ssa: 3, srt: 4, vtt: 5, zip: 6,
       };
       winPngFiles.sort((a, b) => {
         const extA = a.path.split(".").pop()?.toLowerCase() || "";
         const extB = b.path.split(".").pop()?.toLowerCase() || "";
-        return (priority[extA] || 99) - (priority[extB] || 99)
+        return Number(Boolean(a.temporary)) - Number(Boolean(b.temporary))
+          || (priority[extA] || 99) - (priority[extB] || 99)
           || Number(b.generated) - Number(a.generated);
       });
 
@@ -579,11 +580,12 @@ export async function extractSubtitleFromBlogPage(
         );
         if (extracted) {
           return {
-            name: creatorName,
+            name: file.temporary ? `${creatorName} · 임시` : creatorName,
             episode: localEpisode,
             ...extracted,
             url: postUrl,
             sourceCreatorWebsite: postUrl,
+            temporary: Boolean(file.temporary),
           };
         }
         console.warn("[Tistory WinPNG] converted candidate not selected", {
