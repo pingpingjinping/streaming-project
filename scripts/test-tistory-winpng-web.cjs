@@ -153,3 +153,10 @@ test("web WinPNG logs converted paths and episode-selection rejections", () => {
   assert.match(subtitles, /subtitle candidate rejected by episode evidence/);
   assert.match(subtitles, /converted candidate not selected/);
 });
+
+test("WinPNG episode selection prefers filename and falls back to nearest parent folder", () => {
+  const source = fs.readFileSync(path.join(__dirname, "../src/lib/subtitles.ts"), "utf8");
+  assert.match(source, /pathParts\.slice\(0, -1\)\.reverse\(\)/);
+  assert.match(source, /!fileEvidence\.episodes\.length && nearestFolderEvidence/);
+  assert.match(source, /const outer = \[postEvidence, \.\.\.folderEvidence, fileEvidence\]/);
+});
