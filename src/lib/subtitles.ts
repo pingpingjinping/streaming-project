@@ -547,9 +547,16 @@ export async function extractSubtitleFromBlogPage(
       for (const file of winPngFiles) {
         const pathParts = file.path.split(/[\\/]/).filter(Boolean);
         const fileEvidence = readEpisodeEvidence(file.path, true);
-        const folderEvidence = pathParts.slice(0, -1)
+        // A numbered subtitle filename is stronger than its containing folder.
+        // Example: "1화/02.ass" is episode 2, not episode 1. Only when the
+        // filename itself has no episode evidence do we fall back to the
+        // nearest parent folder such as "1화/main.ass".
+        const nearestFolderEvidence = pathParts.slice(0, -1).reverse()
           .map((part) => readEpisodeEvidence(part))
-          .filter((evidence) => evidence.episodes.length || evidence.season);
+          .find((evidence) => evidence.episodes.length || evidence.season);
+        const folderEvidence = !fileEvidence.episodes.length && nearestFolderEvidence
+          ? [nearestFolderEvidence]
+          : [];
         const outer = [postEvidence, ...folderEvidence, fileEvidence];
         if (outer.some((e) => !evidenceAgrees(e, request))) {
           console.warn("[Tistory WinPNG] subtitle candidate rejected by episode evidence", {
