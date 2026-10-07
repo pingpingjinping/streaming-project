@@ -135,3 +135,11 @@ test("failed WinPNG extraction is not warm-cached", () => {
   assert.match(source, /if \(files\.length\) \{/);
   assert.match(source, /resultCache\.delete\(cacheKey\)/);
 });
+
+test("web WinPNG exposes Chromium startup stderr and allows slow Pi launch", () => {
+  const source = fs.readFileSync(path.join(__dirname, "../src/lib/tistoryWinPng.ts"), "utf8");
+  assert.match(source, /stdio: \["ignore", "ignore", "pipe"\]/);
+  assert.match(source, /Math\.min\(20000, timeoutMs\)/);
+  assert.match(source, /\[Tistory WinPNG\] Chromium startup failed/);
+  assert.match(source, /stderr: detail \|\| "\(no Chromium stderr\)"/);
+});
