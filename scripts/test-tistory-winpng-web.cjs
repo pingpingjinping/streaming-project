@@ -96,9 +96,12 @@ test("web WinPNG path opens original Kakao PNG and never exports raw JMK", () =>
   assert.match(source, /img\.getAttribute\("data-url"\)/);
   assert.match(source, /img\.getAttribute\("data-phocus"\)/);
   assert.match(source, /blog\.kakaocdn\.net/);
-  assert.match(source, /const response = await fetch\(\$\{JSON\.stringify\(src\)\}/);
+  assert.match(source, /const response = await fetch\(url,/);
+  assert.match(source, /"Referer": referer/);
+  assert.match(source, /candidateOpenExpression\(png\.toString\("base64"\)\)/);
   assert.match(source, /inputUrl\.value = URL\.reset\(blob\)/);
-  assert.doesNotMatch(source, /await add\(originalName, anchor\.getAttribute\("data-href"\), false\);\n\s*continue;\n\s*}\n\n\s*if \(\["ass"/);
+  assert.match(source, /files = files\.filter\(\(file\) => \/\\\.\(\?:ass\|ssa\|smi\|srt\|vtt\|zip\)\$\/i\.test\(file\.path\)\)/);
+  assert.doesNotMatch(source, /await add\(originalName, anchor\.getAttribute\("data-href"\), false\)/);
 });
 
 test("manual online creator confirmation still uses the shared blog extractor", () => {
