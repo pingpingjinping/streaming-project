@@ -186,36 +186,14 @@ export async function GET(request: NextRequest) {
 
     if (creatorPreference && !bundleAssignment &&
         !isRejected(creatorPreference.sourceProvider, creatorPreference.website)) {
+      let preferredSubtitle = null;
       try {
-        const preferredSubtitle = await fetchPreferredBlogSubtitle(
+        preferredSubtitle = await fetchPreferredBlogSubtitle(
           creatorPreference,
           searchTarget,
           ep,
           sourceEpisodeStart,
         );
-        if (preferredSubtitle) {
-          return NextResponse.json({
-            success: true,
-            anime_title: title,
-            resolved_title: resolvedTitle,
-            episode: ep,
-            count: 1,
-            subtitles: [preferredSubtitle],
-            creators: [{
-              name: creatorPreference.creatorName,
-              episode: creatorPreference.creatorEpisode || String(sourceEpisode),
-              update_date: "",
-              website: creatorPreference.website,
-              is_current_ep: true,
-              matchedTitle: creatorPreference.matchedTitle || searchTarget,
-              verifiedMatch: true,
-              sourceProvider: creatorPreference.sourceProvider,
-              localArchive: false,
-            }],
-            preferred_creator: true,
-            needs_manual_subtitle_choice: false,
-          }, { headers: { "Cache-Control": "no-store" } });
-        }
       } catch (error) {
         console.warn("[Preferred subtitle creator unavailable]", {
           animeId: animeIdParam,
@@ -224,6 +202,48 @@ export async function GET(request: NextRequest) {
           error: error instanceof Error ? error.message : String(error),
         });
       }
+
+      const preferredCreator = {
+        name: creatorPreference.creatorName,
+        episode: creatorPreference.creatorEpisode || String(sourceEpisode),
+        update_date: "",
+        website: creatorPreference.website,
+        is_current_ep: Boolean(preferredSubtitle),
+        matchedTitle: creatorPreference.matchedTitle || searchTarget,
+        verifiedMatch: true,
+        sourceProvider: creatorPreference.sourceProvider,
+        localArchive: false,
+      };
+      if (preferredSubtitle) {
+        return NextResponse.json({
+          success: true,
+          anime_title: title,
+          resolved_title: resolvedTitle,
+          episode: ep,
+          count: 1,
+          subtitles: [preferredSubtitle],
+          creators: [preferredCreator],
+          preferred_creator: true,
+          needs_manual_subtitle_choice: false,
+        }, { headers: { "Cache-Control": "no-store" } });
+      }
+
+      // Do not silently jump to a different DB/blog after an explicit creator
+      // choice. Only reopen the picker when that creator genuinely has no
+      // usable subtitle for this episode.
+      return NextResponse.json({
+        success: true,
+        anime_title: title,
+        resolved_title: resolvedTitle,
+        episode: ep,
+        count: 0,
+        subtitles: [],
+        creators: [preferredCreator],
+        preferred_creator: true,
+        preferred_creator_missing: true,
+        needs_manual_subtitle_choice: true,
+        subtitle_notice: `선택한 제작자 '${creatorPreference.creatorName}'의 ${ep}화 자막을 찾지 못했어요. 다른 자막을 선택해 주세요.`,
+      }, { headers: { "Cache-Control": "no-store" } });
     }
 
     const findReviewedLocal = async (source: "aniall" | "naver", includeUnknown = true) => {
