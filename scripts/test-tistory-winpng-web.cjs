@@ -135,3 +135,55 @@ test("WinPNG episode selection prefers filename and falls back to nearest parent
   assert.match(source, /!fileEvidence\.episodes\.length && nearestFolderEvidence/);
   assert.match(source, /const outer = \[postEvidence, \.\.\.folderEvidence, fileEvidence\]/);
 });
+
+const movieWork = {titles: ['파리에 피는 에투알', 'パリに咲くエトワール', 'Paris ni Saku Étoile'], format: 'MOVIE'};
+const movieSmi = Buffer.from('<SAMI><BODY><SYNC Start=1000><P>movie dialogue<SYNC Start=2000><P>&nbsp;</BODY></SAMI>');
+function movieExtract(work = movieWork, title = '파리에 피는 에투알', sourceEpisode = 1, localEpisode = 1) {
+  return subtitles.extractSubtitleFromBlogPage('<h1 class="post-title">' + title + '</h1>',
+    'https://sample.tistory.com/763', '제작자', sourceEpisode, null, 1000, localEpisode, work);
+}
+test('confirmed movie selects one root preview without episode or parent folder', async () => {
+  winPng.extractTistoryWinPngFiles = async () => [{
+    path:'[Doomdos] - Paris ni Saku Etoile - [1080p U-NEXT WEB-DL].smi',
+    data:movieSmi,generated:true,temporary:true,
+  }];
+  const result = await movieExtract();
+  assert.equal(result.format,'VTT');assert.equal(result.temporary,true);
+  assert.match(result.content,/movie dialogue/);
+  assert.equal(await movieExtract(null),null);
+  assert.equal(await movieExtract({...movieWork,format:'TV'}),null);
+  assert.equal(await movieExtract(movieWork,'다른 영화'),null);
+  assert.equal(await movieExtract(movieWork,'파리에 피는 에투알',13,1),null);
+  assert.equal(await movieExtract(movieWork,'파리에 피는 에투알',2,2),null);
+});
+test('movie exception cannot override filename, nearest folder, range or multiple-file ambiguity', async () => {
+  for (const paths of [['02.smi'],['2화/main.smi'],['1-2화/main.smi'],['first.smi','second.smi']]) {
+    winPng.extractTistoryWinPngFiles = async () => paths.map(path => ({path,data:movieSmi,generated:false}));
+    assert.equal(await movieExtract(),null, paths.join(','));
+  }
+  winPng.extractTistoryWinPngFiles = async () => [{path:'1화/main.smi',data:movieSmi,generated:false}];
+  assert.ok(await movieExtract(null));
+});
+test('filename remains stronger than folder and nearest numbered parent supplies missing episode', async () => {
+  winPng.extractTistoryWinPngFiles = async () => [{path:'1화/02.smi',data:movieSmi,generated:false}];
+  assert.equal(await movieExtract(null),null);
+  assert.ok(await movieExtract(null,'테스트 작품 2화',2,2));
+  winPng.extractTistoryWinPngFiles = async () => [{path:'9화/1화/main.smi',data:movieSmi,generated:false}];
+  assert.ok(await movieExtract(null));
+});
+test('movie exception supports a sole ordinary attachment and single-file ZIP but not multi-file ZIP', async () => {
+  const originalFetch = global.fetch;
+  const Zip = require('adm-zip');
+  const html = '<h1 class="post-title">파리에 피는 에투알</h1><div class="entry-content"><a href="/movie.zip">movie.zip</a></div>';
+  const extract = () => subtitles.extractSubtitleFromBlogPage(html,'https://sample.tistory.com/763','제작자',1,null,1000,1,movieWork);
+  winPng.extractTistoryWinPngFiles = async () => [];
+  try {
+    global.fetch = async () => new Response(movieSmi, {headers:{'content-disposition':'attachment; filename="movie.smi"'}});
+    assert.match((await extract()).content,/movie dialogue/);
+    const zip = new Zip();zip.addFile('movie.smi',movieSmi);
+    global.fetch = async () => new Response(zip.toBuffer());
+    assert.match((await extract()).content,/movie dialogue/);
+    zip.addFile('another.smi',movieSmi);
+    assert.equal(await extract(),null);
+  } finally { global.fetch = originalFetch; }
+});

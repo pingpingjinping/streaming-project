@@ -1,6 +1,7 @@
 export interface AnimeListItem {
   id: string;
   title: string;
+  original_title?: string;
   poster: string;
   detail_url: string;
   remarks: string;

@@ -6,6 +6,7 @@ import { anikotoProvider } from "../providers/anikoto";
 import { getAnissiaStreamCache, setAnissiaStreamCache } from "../db";
 import { fetchAniListMeta } from "../providers/anissia";
 import { getAnikotoPlaybackCandidates } from "../anikotoLinks";
+import { getAnimeWorkIdentity, matchesIdentityTitle } from "../animeWorkIdentity";
 
 const HEADERS: Record<string, string> = {
   "User-Agent":
@@ -163,6 +164,7 @@ export async function resolveAnissiaStream(
 
   // 과거 작품은 Anissia 원제가 비어 있는 경우가 많다. 같은 한국어 제목의
   // OVA/후속 항목에서 공통 일본어 원제를 복구해 ReAnime 매칭에 사용한다.
+  const requestedWorkTitles = [korTitle, jpTitle].filter(Boolean);
   const relatedJapaneseTitles = jpTitle || anissiaId === null ? [] : await findRelatedJapaneseTitles(anissiaId, korTitle);
   if (!jpTitle && relatedJapaneseTitles.length > 0) jpTitle = relatedJapaneseTitles[0];
 
@@ -306,42 +308,48 @@ export async function resolveAnissiaStream(
         }
       }
 
-      const meta = await fetchAniListMeta(jpTitle || korTitle).catch(() => null);
-      const searchQueries = [
-        jpTitle,
-        meta?.romajiTitle || "",
-        korTitle,
-      ].filter((q, index, arr): q is string => Boolean(q && q.length >= 2) && arr.indexOf(q) === index);
-
+      const work = await getAnimeWorkIdentity(animeId || (anissiaId ? `ani_${anissiaId}` : ""));
+      const aliases = [...new Set([...(work?.titles || []), ...requestedWorkTitles])];
+      // AniList search is fuzzy. Only a full existing alias match lets its
+      // romaji/native names become identity evidence for the requested work.
+      const meta = await fetchAniListMeta(requestedWorkTitles[1] || korTitle).catch(() => null);
+      if (meta && [meta.nativeTitle, meta.romajiTitle].some(value => matchesIdentityTitle(value || "", aliases))) {
+        aliases.push(...[meta.nativeTitle, meta.romajiTitle].filter(Boolean));
+      }
+      const searchQueries = [...new Set(aliases)].filter(q => q.length >= 2).slice(0, 6);
+      const candidates = new Set<string>();
       for (const query of searchQueries) {
         const searchRes = await anikotoProvider.searchAnime(query, 1);
-        if (!searchRes.items.length) continue;
-
-        const candidates = targetSeason
-          ? [
-              ...searchRes.items.filter((item) => parseSeason(item.title) === targetSeason),
-              ...searchRes.items.filter((item) => parseSeason(item.title) !== targetSeason),
-            ]
-          : searchRes.items;
-
-        for (const candidate of candidates.slice(0, 5)) {
-          const detail = await anikotoProvider.getAnimeDetail(candidate.id);
-          if (!detail?.sub_episodes?.length) continue;
-
-          const epItem = detail.sub_episodes.find((episode) => episode.number === episodeNumber);
-          if (!epItem?.watch_url) continue;
-
-          const stream = await anikotoProvider.getEpisodeStream(epItem.watch_url);
-          if (stream && (stream.embed_url || stream.player_url || stream.m3u8_url)) {
-            return {
-              ...stream,
-              server_sources: stream.server_sources?.length
-                ? stream.server_sources
-                : [{ label: "Anikoto", player_url: epItem.watch_url, id: "anikoto" }],
-            };
+        for (const candidate of searchRes.items.slice(0, 5)) {
+          if ([candidate.title, candidate.original_title || ""].some(value => matchesIdentityTitle(value, aliases))) {
+            candidates.add(candidate.id);
           }
         }
       }
+
+      const playable = [];
+      for (const id of candidates) {
+        const detail = await anikotoProvider.getAnimeDetail(id);
+        // Recheck the detail page: a search label must not disguise a different
+        // work. Complete titles preserve sequel, season, OVA and movie suffixes.
+        if (!detail || ![detail.title, detail.original_title || ""].some(value => matchesIdentityTitle(value, aliases))) continue;
+        const epItem = detail.sub_episodes.find(episode => episode.number === episodeNumber);
+        if (epItem?.watch_url) playable.push(epItem);
+      }
+      // Duplicate title matches need a reviewed DB link, not result-order luck.
+      if (playable.length === 1) {
+        const epItem = playable[0];
+        const stream = await anikotoProvider.getEpisodeStream(epItem.watch_url);
+        if (stream && (stream.embed_url || stream.player_url || stream.m3u8_url)) {
+          return {
+            ...stream,
+            server_sources: stream.server_sources?.length
+              ? stream.server_sources
+              : [{ label: "Anikoto", player_url: epItem.watch_url, id: "anikoto" }],
+          };
+        }
+      }
+
     }
   } catch (err) {
     console.warn("[videoResolver] Anikoto stream attempt failed:", err);

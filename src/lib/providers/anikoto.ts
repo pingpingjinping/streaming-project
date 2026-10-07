@@ -75,6 +75,7 @@ function parseCards(html: string, baseUrl: string): AnimeListItem[] {
     items.set(slug, {
       id,
       title,
+      original_title: anchor.attr("data-jp")?.trim() || undefined,
       poster: absoluteUrl(rawPoster, baseUrl),
       detail_url: `/anime/${id}`,
       remarks: "",
@@ -300,8 +301,8 @@ export async function getAnimeDetail(animeId: string): Promise<AnimeDetail | nul
     episodes.sort((a, b) => a.number - b.number);
 
     const title =
-      $('meta[property="og:title"]').attr("content")?.trim() ||
       $("h1").first().text().trim() ||
+      $('meta[property="og:title"]').attr("content")?.trim() ||
       $(".name,.d-title").first().text().trim() ||
       slug.replace(/[-_]+/g, " ");
 
@@ -321,6 +322,7 @@ export async function getAnimeDetail(animeId: string): Promise<AnimeDetail | nul
     return {
       id: toAnikotoId(slug),
       title,
+      original_title: $("h1[data-jp],.name[data-jp],.d-title[data-jp]").first().attr("data-jp")?.trim() || undefined,
       poster,
       description,
       genres: [],

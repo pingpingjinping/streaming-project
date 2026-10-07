@@ -6,6 +6,7 @@ import { EpisodeEvidence, EpisodeRequest, readEpisodeEvidence, evidenceAgrees, s
 import { getCachedKoreanAnimeTitle, saveKoreanAnimeTitleMapping, getAniAllMatches, getAniAllCandidates, getSubtitleSourcePriority, getSubtitleRejections } from "@/lib/db";
 import { getMonthlyAnissiaCandidates } from "@/lib/reanimeMatches";
 import { extractTistoryWinPngFiles } from "@/lib/tistoryWinPng";
+import { getAnimeWorkIdentity, canSelectUnnumberedMovie, type AnimeWorkIdentity } from "@/lib/animeWorkIdentity";
 
 export const HEADERS: Record<string, string> = {
   "User-Agent":
@@ -355,6 +356,7 @@ export function mapProviderEpisodeNumber(episodeLabel: string, episodeNumber: nu
 export interface SubtitleExtractionContext {
   localEpisode?: number;
   evidence?: EpisodeEvidence[];
+  allowUnnumberedMovie?: boolean;
 }
 
 export function extractSubtitleFromBuffer(
@@ -370,7 +372,7 @@ export function extractSubtitleFromBuffer(
   if (isZip) {
     try {
       const { zip, entries } = inspectSubtitleArchive(buffer);
-      const selected = selectEpisodeEntries(entries, request, evidence, !strictEpisode);
+      const selected = selectEpisodeEntries(entries, request, evidence, !strictEpisode || Boolean(context.allowUnnumberedMovie));
       const priority: Record<string, number> = { ass: 1, ssa: 2, smi: 3, srt: 4, vtt: 5 };
       selected.sort((a, b) => (priority[a.filename.split('.').pop()!.toLowerCase()] || 9)
         - (priority[b.filename.split('.').pop()!.toLowerCase()] || 9));
@@ -385,7 +387,7 @@ export function extractSubtitleFromBuffer(
     } catch (error) { console.warn("[Zip Extractor error]", error); }
     return null;
   }
-  const selected = selectEpisodeEntries([{ filename }], request, evidence, !strictEpisode);
+  const selected = selectEpisodeEntries([{ filename }], request, evidence, !strictEpisode || Boolean(context.allowUnnumberedMovie));
   return selected.length ? decodeSubtitleFile(buffer, filename || urlPath) : null;
 }
 
@@ -473,10 +475,13 @@ function subtitlePostTitle($: cheerio.CheerioAPI): string {
 export async function extractSubtitleFromBlogPage(
   html: string, postUrl: string, creatorName: string, episodeNumber: number,
   targetSeason: number | null, timeoutMs = 5000, localEpisode = episodeNumber,
+  work: AnimeWorkIdentity | null = null,
 ): Promise<SubtitleResult | null> {
   const $ = cheerio.load(html);
   const request = { episode: localEpisode, sourceEpisode: episodeNumber, season: targetSeason ?? 1 };
-  const postEvidence = readEpisodeEvidence(subtitlePostTitle($));
+  const postTitle = subtitlePostTitle($);
+  const postEvidence = readEpisodeEvidence(postTitle);
+  const movie = canSelectUnnumberedMovie(work, postTitle, localEpisode, episodeNumber, targetSeason);
   if (!evidenceAgrees(postEvidence, request)) return null;
   const content = $(".tt_article_useless_p_margin, .post-body, .entry-content, .se-main-container, #postViewArea").first();
   const scope = content.length ? content : $("body");
@@ -516,7 +521,7 @@ export async function extractSubtitleFromBlogPage(
     if (!downloaded) continue;
     const extracted = extractSubtitleFromBuffer(downloaded.buffer, episodeNumber,
       downloaded.filename || item.filename || item.url, true, targetSeason,
-      { localEpisode, evidence: outer });
+      { localEpisode, evidence: outer, allowUnnumberedMovie: movie && links.size === 1 && outer.every(e => !e.episodes.length && !e.range && !e.conflict && !e.multipleSeasons) });
     if (extracted) return { name: creatorName, episode: localEpisode, ...extracted,
       url: postUrl, sourceCreatorWebsite: postUrl };
   }
@@ -576,7 +581,7 @@ export async function extractSubtitleFromBlogPage(
           file.path,
           true,
           targetSeason,
-          { localEpisode, evidence: outer },
+          { localEpisode, evidence: outer, allowUnnumberedMovie: movie && winPngFiles.length === 1 && outer.every(e => !e.episodes.length && !e.range && !e.conflict && !e.multipleSeasons) },
         );
         if (extracted) {
           return {
@@ -864,7 +869,8 @@ export async function fetchCreatorSubtitle(
   animeTitle: string,
   episodeNumber: number,
   timeoutMs = 5000,
-  localEpisode = episodeNumber
+  localEpisode = episodeNumber,
+  animeId = ""
 ): Promise<SubtitleResult | null> {
   if (!website) return null;
   try {
@@ -874,7 +880,9 @@ export async function fetchCreatorSubtitle(
       return null;
     }
 
-    const resolvedTitle = await resolveKoreanTitle(animeTitle);
+    const [resolvedTitle, work] = await Promise.all([
+      resolveKoreanTitle(animeTitle), getAnimeWorkIdentity(animeId),
+    ]);
     const targetSeason = parseSeason(resolvedTitle) || parseSeason(animeTitle);
 
     // 단일 페이지에서 자막 파일(첨부파일/구글드라이브/다운로드링크) 추출 헬퍼 함수
@@ -892,7 +900,7 @@ export async function fetchCreatorSubtitle(
           html = await response.text();
         }
         return await extractSubtitleFromBlogPage(html, postUrl, creatorName, episodeNumber,
-          targetSeason, timeoutMs, localEpisode);
+          targetSeason, timeoutMs, localEpisode, work);
       } catch (error) { console.warn("[tryExtractFromPage error]", error); return null; }
     };
 
@@ -1369,7 +1377,7 @@ export async function searchAllSubtitlesParallel(
       const sourceEpisode = sourceEpisodeStart && sourceEpisodeStart > 0
         ? sourceEpisodeStart + episodeNumber - 1
         : mapProviderEpisodeNumber(c.episode, episodeNumber, targetSeason);
-      const subtitle = await fetchCreatorSubtitle(c.name, c.website, c.matchedTitle || targetTitle, sourceEpisode, 10000, episodeNumber);
+      const subtitle = await fetchCreatorSubtitle(c.name, c.website, c.matchedTitle || targetTitle, sourceEpisode, 10000, episodeNumber, animeId);
       return subtitle ? { ...subtitle, matchScore: c.matchScore,
         matchedTitle: c.matchedTitle, verifiedMatch: c.verifiedMatch,
         sourceCreatorWebsite: c.website, sourceMatchedTitle: c.matchedTitle,
