@@ -172,6 +172,12 @@ export default function IframePlayer({
   const lastHistorySaveTime = useRef(0);
   const lastCurrentTimeRef = useRef(0);
   const lastDurationRef = useRef(0);
+  const pendingResumeRef = useRef<{
+    episode: number;
+    seconds: number;
+    attempts: number;
+    lastAttemptAt: number;
+  } | null>(null);
 
   // Show temporary toast notice
   const showNotice = useCallback((msg: string, duration = 3000) => {
@@ -181,13 +187,41 @@ export default function IframePlayer({
     }, duration);
   }, []);
 
+  const isPlaybackCompleted = useCallback((seconds: number, duration: number) => {
+    if (!Number.isFinite(seconds) || !Number.isFinite(duration) || duration <= 0) return false;
+    return seconds >= duration - 15 || (duration > 60 && seconds / duration >= 0.95);
+  }, []);
+
+  const tryResumeIframe = useCallback((observedTime?: number, force = false) => {
+    const pending = pendingResumeRef.current;
+    if (!pending || pending.episode !== episodeNumber || pending.seconds <= 10) return;
+
+    if (typeof observedTime === "number" && Number.isFinite(observedTime)) {
+      if (Math.abs(observedTime - pending.seconds) <= 4 || observedTime > pending.seconds + 5) {
+        pendingResumeRef.current = null;
+        return;
+      }
+    }
+
+    const now = Date.now();
+    if (!force && now - pending.lastAttemptAt < 650) return;
+    if (pending.attempts >= 12) return;
+    const target = iframeRef.current?.contentWindow;
+    if (!target) return;
+
+    pending.attempts += 1;
+    pending.lastAttemptAt = now;
+    target.postMessage({ command: "seek", time: pending.seconds }, "*");
+    target.postMessage({ command: "setCurrentTime", time: pending.seconds }, "*");
+  }, [episodeNumber]);
+
   const syncHistory = useCallback(
     (isEnded = false) => {
       const curTime = lastCurrentTimeRef.current;
       const dur = lastDurationRef.current;
       if (curTime <= 2 && !isEnded) return;
 
-      const isCompleted = isEnded || (dur > 0 && curTime / dur > 0.85);
+      const isCompleted = isEnded || isPlaybackCompleted(curTime, dur);
 
       fetch("/api/anime/history", {
         method: "POST",
@@ -214,7 +248,7 @@ export default function IframePlayer({
         keepalive: true,
       }).catch(() => {});
     },
-    [animeId, animeTitle, animePoster, episodeNumber, initialEpTitle]
+    [animeId, animeTitle, animePoster, episodeNumber, initialEpTitle, isPlaybackCompleted]
   );
 
   // Helper: Strip HTML tags, ASS tags, and HTML entities
@@ -689,6 +723,21 @@ export default function IframePlayer({
           lastDurationRef.current = event.data.duration;
         }
 
+        const duration = lastDurationRef.current;
+        const progressKey = `anime_progress_${animeId}_ep${episodeNumber}`;
+        if (time > 2) {
+          if (isPlaybackCompleted(time, duration)) {
+            localStorage.removeItem(progressKey);
+          } else {
+            localStorage.setItem(progressKey, String(time));
+          }
+        }
+
+        // The iframe can ignore seek messages sent before its player is ready.
+        // Retry only after it starts answering getTime, then stop as soon as
+        // the reported time confirms the resume seek (or the user moved ahead).
+        tryResumeIframe(time);
+
         // Drive SubtitlesOctopus if ASS (safely isolated from HUD rendering)
         if (octopusRef.current && typeof octopusRef.current.setCurrentTime === "function") {
           try {
@@ -854,37 +903,76 @@ export default function IframePlayer({
     subtitles,
     currentSubIndex,
     playerSettings.subtitleSharpness,
+    animeId,
+    episodeNumber,
+    isPlaybackCompleted,
+    tryResumeIframe,
   ]);
 
   // 9. 이전 시청 기록 조회 및 이어보기 안내 / 복원 시도
   useEffect(() => {
     let isCancelled = false;
+    const retryTimers: Array<ReturnType<typeof setTimeout>> = [];
+    pendingResumeRef.current = null;
+
     async function checkSavedHistory() {
       try {
+        const localKey = `anime_progress_${animeId}_ep${episodeNumber}`;
+        const localTime = parseFloat(localStorage.getItem(localKey) || "0") || 0;
+
         const res = await fetch(`/api/anime/history?anime_id=${encodeURIComponent(animeId)}`);
         const data = await res.json();
-        if (isCancelled || !data.success || !Array.isArray(data.items)) return;
+        if (isCancelled) return;
 
-        const epItem = data.items.find((item: any) => Number(item.episode_number) === Number(episodeNumber));
-        if (epItem) {
-          const savedTime = parseFloat(epItem.watch_time || epItem.current_time || "0");
-          if (savedTime > 10 && !epItem.is_completed) {
-            showNotice(`이어보기: ${formatTime(savedTime)}부터 시청 기록이 있습니다.`);
-            if (iframeRef.current?.contentWindow) {
-              iframeRef.current.contentWindow.postMessage({ command: "seek", time: savedTime }, "*");
-              iframeRef.current.contentWindow.postMessage({ command: "setCurrentTime", time: savedTime }, "*");
-            }
-          }
+        const epItem = data.success && Array.isArray(data.items)
+          ? data.items.find((item: any) => Number(item.episode_number) === Number(episodeNumber))
+          : null;
+        const cloudTime = epItem
+          ? parseFloat(epItem.watch_time || epItem.current_time || "0") || 0
+          : 0;
+        const cloudDuration = epItem ? parseFloat(epItem.duration || "0") || 0 : 0;
+
+        // Older iframe code marked 85% as completed. Do not let that stale flag
+        // suppress resume unless the saved position is actually at our current
+        // completion threshold (95% or within the final 15 seconds).
+        const trulyCompleted = Boolean(epItem?.is_completed)
+          && (cloudDuration <= 0 || isPlaybackCompleted(cloudTime, cloudDuration));
+        if (trulyCompleted) {
+          localStorage.removeItem(localKey);
+          return;
+        }
+
+        const savedTime = Math.max(localTime, cloudTime);
+        if (savedTime <= 10) return;
+
+        pendingResumeRef.current = {
+          episode: episodeNumber,
+          seconds: savedTime,
+          attempts: 0,
+          lastAttemptAt: 0,
+        };
+        showNotice(`이어보기: ${formatTime(savedTime)}부터 재생합니다.`, 5000);
+
+        // Try immediately, after iframe load, and again while getTime replies.
+        // Multiple attempts are intentional because FlixCloud may ignore an
+        // early seek before its internal player has finished initializing.
+        for (const delay of [0, 400, 1000, 2000, 3500, 5500]) {
+          retryTimers.push(setTimeout(() => {
+            if (!isCancelled) tryResumeIframe(undefined, true);
+          }, delay));
         }
       } catch (err) {
         console.error("Failed to fetch anime history for resume:", err);
       }
     }
+
     checkSavedHistory();
     return () => {
       isCancelled = true;
+      retryTimers.forEach(clearTimeout);
+      pendingResumeRef.current = null;
     };
-  }, [animeId, episodeNumber, showNotice]);
+  }, [animeId, episodeNumber, showNotice, isPlaybackCompleted, tryResumeIframe]);
 
   // Adjust Sync Offset
   const adjustSync = (delta: number) => {
@@ -1037,7 +1125,9 @@ export default function IframePlayer({
               href={`/watch/${animeId}/${linkNextEp}`}
               onClick={() => {
                 setNavigatingTarget("next");
-                syncHistory(true);
+                // Manual navigation is not proof that the current episode ended.
+                // Save the real position and let the completion threshold decide.
+                syncHistory(false);
               }}
               className={`flex items-center justify-center gap-1 rounded-xl px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-white transition shrink-0 ${
                 navigatingTarget === "next"
@@ -1073,6 +1163,7 @@ export default function IframePlayer({
             <iframe
               ref={iframeRef}
               src={embedUrl}
+              onLoad={() => tryResumeIframe(undefined, true)}
               title="Anime Player"
               className="absolute inset-0 h-full w-full border-0 z-0"
               allow="autoplay; fullscreen; encrypted-media; picture-in-picture"

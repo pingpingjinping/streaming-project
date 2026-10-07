@@ -8,6 +8,7 @@ const CHROMIUM_BIN = process.env.CHROMIUM_BIN || "/usr/bin/chromium";
 const MAX_CANDIDATES = 6;
 const MAX_FILE_BYTES = 8388608;
 const MAX_TOTAL_BYTES = 20971520;
+const MAX_SOURCE_PNG_BYTES = 32 * 1024 * 1024;
 const CACHE_TTL_MS = 10 * 60 * 1000;
 
 export interface TistoryWinPngFile {
@@ -218,31 +219,88 @@ const CANDIDATES = `(() => {
   const nodes = document.querySelectorAll(
     "#content img, .tt_article_useless_p_margin img, .contents_style img"
   );
-  nodes.forEach((img, index) => {
+  nodes.forEach((img) => {
     const sources = [
       img.getAttribute("data-url") || "",
       img.getAttribute("data-phocus") || "",
       img.currentSrc || "",
       img.src || "",
     ].filter(Boolean);
-    const src = sources.find((value) => value.split("?")[0].toLowerCase().endsWith(".png")) || "";
-    if (!src || seen.has(src)) return;
-    seen.add(src);
-    const key = "anime-wp-" + index;
-    img.setAttribute("data-anime-wp-key", key);
-    out.push({ key, src });
+    for (const raw of sources) {
+      let url;
+      try { url = new URL(raw, location.href); } catch { continue; }
+      const host = url.hostname.toLowerCase();
+      if (host !== "blog.kakaocdn.net" && !host.endsWith(".kakaocdn.net")) continue;
+      if (!url.pathname.toLowerCase().endsWith(".png")) continue;
+      const src = url.toString();
+      if (seen.has(src)) continue;
+      seen.add(src);
+      out.push({ src });
+      break;
+    }
   });
   return out.slice(0, 6);
 })()`;
 
-function candidateClickExpression(key: string) {
-  return "(() => {"
-    + "window.__animeWinPng={failed:false};"
-    + "const list=document.getElementById('viewFileList');if(list)list.innerHTML='';"
-    + "const key=" + JSON.stringify(key) + ";"
-    + "const image=[...document.querySelectorAll('img[data-anime-wp-key]')].find((img)=>img.getAttribute('data-anime-wp-key')===key);"
-    + "if(!image)return false;image.click();return true;"
-    + "})()";
+async function downloadOriginalKakaoPng(
+  rawUrl: string,
+  referer: string,
+  timeoutMs: number,
+): Promise<Buffer | null> {
+  let url: URL;
+  try {
+    url = new URL(rawUrl, referer);
+  } catch {
+    return null;
+  }
+  const host = url.hostname.toLowerCase();
+  if ((url.protocol !== "https:" && url.protocol !== "http:")
+      || (host !== "blog.kakaocdn.net" && !host.endsWith(".kakaocdn.net"))
+      || !url.pathname.toLowerCase().endsWith(".png")) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125 Safari/537.36",
+        "Accept": "image/png,image/*;q=0.9,*/*;q=0.5",
+        "Referer": referer,
+      },
+      signal: AbortSignal.timeout(Math.max(4000, Math.min(timeoutMs, 15000))),
+      redirect: "follow",
+    });
+    if (!response.ok) return null;
+    const declared = Number(response.headers.get("content-length") || "0");
+    if (declared > MAX_SOURCE_PNG_BYTES) return null;
+    const data = Buffer.from(await response.arrayBuffer());
+    if (!data.length || data.length > MAX_SOURCE_PNG_BYTES) return null;
+    if (!data.subarray(0, 8).equals(Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]))) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function candidateOpenExpression(base64: string) {
+  return `(() => {
+    window.__animeWinPng = { failed: false };
+    const list = document.getElementById("viewFileList");
+    if (list) list.innerHTML = "";
+    try {
+      const binary = atob(${JSON.stringify(base64)});
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: "image/png" });
+      const inputUrl = document.getElementById("inputUrl");
+      if (!inputUrl || typeof window.parse !== "function" || typeof URL.reset !== "function") return false;
+      inputUrl.value = URL.reset(blob);
+      window.parse();
+      return true;
+    } catch {
+      return false;
+    }
+  })()`;
 }
 
 const VIEWER_STATE = `(() => {
@@ -297,7 +355,8 @@ const COLLECT = `(async () => {
       const smiUrl = anchor.getAttribute("data-smi");
       if (assUrl) await add(assLink?.download || stem + "ass", assUrl, true);
       if (smiUrl) await add(smiLink?.download || stem + "smi", smiUrl, true);
-      if (!assUrl && !smiUrl) await add(originalName, anchor.getAttribute("data-href"), false);
+      // Raw JMK is intentionally never returned or cached. Once conversion
+      // finishes, only playable ASS/SMI output may leave the temporary browser.
       continue;
     }
 
@@ -355,7 +414,7 @@ async function decodeWithTistoryViewer(pageUrl: string, timeoutMs: number): Prom
     if (!ready) return [];
 
     await client.evaluate(SETUP);
-    const candidates = await client.evaluate<Array<{ key: string; src: string }>>(CANDIDATES);
+    const candidates = await client.evaluate<Array<{ src: string }>>(CANDIDATES);
     if (!Array.isArray(candidates) || !candidates.length) return [];
 
     const collected: TistoryWinPngFile[] = [];
@@ -365,8 +424,20 @@ async function decodeWithTistoryViewer(pageUrl: string, timeoutMs: number): Prom
 
     for (const candidate of candidates) {
       if (Date.now() >= deadline) break;
-      const clicked = await client.evaluate<boolean>(candidateClickExpression(candidate.key));
-      if (!clicked) continue;
+      // Fetch the original Kakao PNG in Node, not inside the Tistory page.
+      // This avoids the browser CORS failure that made manual "online search"
+      // creator confirmation fail even though the weekly downloader succeeded.
+      const png = await downloadOriginalKakaoPng(
+        candidate.src,
+        pageUrl,
+        Math.min(15000, Math.max(4000, deadline - Date.now())),
+      );
+      if (!png) continue;
+      const opened = await client.evaluate<boolean>(
+        candidateOpenExpression(png.toString("base64")),
+        Math.min(12000, Math.max(1000, deadline - Date.now())),
+      );
+      if (!opened) continue;
 
       const state = await waitFor<string>(
         client,
@@ -440,6 +511,9 @@ export async function extractTistoryWinPngFiles(
       });
     }
 
+    // PNG and JMK are transient decode inputs only. Never persist or cache them;
+    // keep only playable subtitle output after extraction/conversion.
+    files = files.filter((file) => /\.(?:ass|ssa|smi|srt|vtt|zip)$/i.test(file.path));
     resultCache.set(cacheKey, { timestamp: Date.now(), files: cloneFiles(files) });
     if (resultCache.size > 50) {
       const oldest = resultCache.keys().next().value;

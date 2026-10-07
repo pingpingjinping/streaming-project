@@ -90,3 +90,24 @@ test("Tistory blog extraction falls back to generated WinPNG ASS", async () => {
   assert.match(result.content, /WinPNG web subtitle/);
   assert.equal(result.sourceCreatorWebsite, "https://sample.tistory.com/3");
 });
+
+test("web WinPNG path opens original Kakao PNG and never exports raw JMK", () => {
+  const source = fs.readFileSync(path.join(__dirname, "../src/lib/tistoryWinPng.ts"), "utf8");
+  assert.match(source, /img\.getAttribute\("data-url"\)/);
+  assert.match(source, /img\.getAttribute\("data-phocus"\)/);
+  assert.match(source, /blog\.kakaocdn\.net/);
+  assert.match(source, /const response = await fetch\(url,/);
+  assert.match(source, /"Referer": referer/);
+  assert.match(source, /candidateOpenExpression\(png\.toString\("base64"\)\)/);
+  assert.match(source, /inputUrl\.value = URL\.reset\(blob\)/);
+  assert.match(source, /files = files\.filter\(\(file\) => \/\\\.\(\?:ass\|ssa\|smi\|srt\|vtt\|zip\)\$\/i\.test\(file\.path\)\)/);
+  assert.doesNotMatch(
+    source,
+    /if \(!assUrl && !smiUrl\) await add\(originalName, anchor\.getAttribute\("data-href"\), false\)/,
+  );
+});
+
+test("manual online creator confirmation still uses the shared blog extractor", () => {
+  const route = fs.readFileSync(path.join(__dirname, "../src/app/api/anime/subtitles/route.ts"), "utf8");
+  assert.match(route, /fetchCreatorSubtitle\(creatorName, website, targetTitle, sourceEpisode, 5000, ep\)/);
+});

@@ -530,7 +530,7 @@ export async function extractSubtitleFromBlogPage(
         timeoutMs: Math.max(12000, Math.min(30000, timeoutMs + 18000)),
       });
       const priority: Record<string, number> = {
-        ass: 1, ssa: 2, smi: 3, srt: 4, vtt: 5, jmk: 6, zip: 7,
+        ass: 1, ssa: 2, smi: 3, srt: 4, vtt: 5, zip: 6,
       };
       winPngFiles.sort((a, b) => {
         const extA = a.path.split(".").pop()?.toLowerCase() || "";
