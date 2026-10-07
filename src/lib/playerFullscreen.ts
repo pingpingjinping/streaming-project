@@ -1,5 +1,46 @@
 export type PlayerFullscreenMode = "inline" | "native" | "web";
 
+// iOS Safari only retracts its browser chrome in response to a real page scroll.
+// Web fullscreen itself is fixed, so keep the background locked while exposing a
+// small, invisible root-scroll range for an upward swipe. The fixed player does
+// not move; only Safari's browser chrome reacts to the gesture.
+export const WEB_FULLSCREEN_SCROLL_ROOM_PX = 96;
+
+export function enableWebFullscreenScrollRoom(doc: Document, win: Window): () => void {
+  const root = doc.documentElement;
+  const body = doc.body;
+  if (!root || !body) return () => {};
+
+  const rootProperties = ["overflowX", "overflowY", "height", "minHeight"] as const;
+  const bodyProperties = ["overflow", "height", "minHeight", "maxHeight"] as const;
+  const previousRoot = rootProperties.map(property => root.style[property]);
+  const previousBody = bodyProperties.map(property => body.style[property]);
+  const previousScrollX = win.scrollX;
+  const previousScrollY = win.scrollY;
+
+  root.style.overflowX = "hidden";
+  root.style.overflowY = "auto";
+  root.style.height = `calc(100dvh + ${WEB_FULLSCREEN_SCROLL_ROOM_PX}px)`;
+  root.style.minHeight = `calc(100dvh + ${WEB_FULLSCREEN_SCROLL_ROOM_PX}px)`;
+  body.style.overflow = "hidden";
+  body.style.height = "100dvh";
+  body.style.minHeight = "100dvh";
+  body.style.maxHeight = "100dvh";
+
+  // Start at the top so the next upward swipe always has room to scroll. A
+  // rotation commonly reveals Safari's address bar again, so re-arm then too.
+  const rearm = () => win.scrollTo({ left: 0, top: 0, behavior: "auto" });
+  win.addEventListener("orientationchange", rearm);
+  rearm();
+
+  return () => {
+    win.removeEventListener("orientationchange", rearm);
+    rootProperties.forEach((property, index) => { root.style[property] = previousRoot[index]; });
+    bodyProperties.forEach((property, index) => { body.style[property] = previousBody[index]; });
+    win.scrollTo({ left: previousScrollX, top: previousScrollY, behavior: "auto" });
+  };
+}
+
 // Fit the complete picture inside the available viewport, with no crop or stretch.
 export function containedPlayerSize(width: number, height: number, ratio = 16 / 9) {
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
