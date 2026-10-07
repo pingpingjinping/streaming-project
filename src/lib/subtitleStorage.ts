@@ -297,7 +297,10 @@ export async function searchLocalSubtitleFolders(query:string) {
 }
 
 function normalizeAnissiaTrackFilename(filename: string, episode: number): string {
-  const base = path.basename(filename).replace(/\.(ass|ssa|smi|srt|vtt|zip)$/i, "")
+  const filenameBase = path.basename(filename).replace(/\.(ass|ssa|smi|srt|vtt|zip)$/i, "");
+  // Completion status does not identify a release variant. Keep the real filename
+  // and episode evidence intact; only normalize the name used for track grouping.
+  const base = (filenameBase.replace(/(?:\s*\[\s*미완성\s*\]|\s*\(\s*미완성\s*\)|[\s_-]*미완성)\s*$/, "") || filenameBase)
     .replace(/\b(s\s*0*\d{1,2}\s*e\s*)0*\d{1,4}(?!\d)/gi,'$1{ep}');
   const patterns = [
     new RegExp("(^|[\\s_-])0*" + episode + "(?=__\\d+$)"),
