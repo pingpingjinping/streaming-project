@@ -10,7 +10,7 @@ const htmlCache = new Map<string, { html: string; timestamp: number }>();
 
 let chromiumQueue: Promise<void> = Promise.resolve();
 
-async function runQueued<T>(task: () => Promise<T>): Promise<T> {
+export async function runChromiumQueued<T>(task: () => Promise<T>): Promise<T> {
   const previous = chromiumQueue;
   let release!: () => void;
   chromiumQueue = new Promise<void>((resolve) => {
@@ -35,7 +35,7 @@ export async function fetchHtmlWithChromium(
     return cached.html;
   }
 
-  return await runQueued(async () => {
+  return await runChromiumQueued(async () => {
     const secondCached = htmlCache.get(url);
     if (secondCached && Date.now() - secondCached.timestamp < cacheTtlMs) {
       return secondCached.html;
