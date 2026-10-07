@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import {
+  enableWebFullscreenScrollRoom,
   exitPlayerFullscreen,
   getPlayerFullscreenElement,
   requestPlayerFullscreen,
@@ -63,9 +64,7 @@ export function usePlayerFullscreen(containerRef: RefObject<HTMLDivElement | nul
 
   useEffect(() => {
     if (mode !== "web") return;
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = previous; };
+    return enableWebFullscreenScrollRoom(document, window);
   }, [mode]);
 
   return { mode, isFullscreen: mode !== "inline", toggleFullscreen };
