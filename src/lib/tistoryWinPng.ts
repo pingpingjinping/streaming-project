@@ -218,31 +218,48 @@ const CANDIDATES = `(() => {
   const nodes = document.querySelectorAll(
     "#content img, .tt_article_useless_p_margin img, .contents_style img"
   );
-  nodes.forEach((img, index) => {
+  nodes.forEach((img) => {
     const sources = [
       img.getAttribute("data-url") || "",
       img.getAttribute("data-phocus") || "",
       img.currentSrc || "",
       img.src || "",
     ].filter(Boolean);
-    const src = sources.find((value) => value.split("?")[0].toLowerCase().endsWith(".png")) || "";
-    if (!src || seen.has(src)) return;
-    seen.add(src);
-    const key = "anime-wp-" + index;
-    img.setAttribute("data-anime-wp-key", key);
-    out.push({ key, src });
+    for (const raw of sources) {
+      let url;
+      try { url = new URL(raw, location.href); } catch { continue; }
+      const host = url.hostname.toLowerCase();
+      if (host !== "blog.kakaocdn.net" && !host.endsWith(".kakaocdn.net")) continue;
+      if (!url.pathname.toLowerCase().endsWith(".png")) continue;
+      const src = url.toString();
+      if (seen.has(src)) continue;
+      seen.add(src);
+      out.push({ src });
+      break;
+    }
   });
   return out.slice(0, 6);
 })()`;
 
-function candidateClickExpression(key: string) {
-  return "(() => {"
-    + "window.__animeWinPng={failed:false};"
-    + "const list=document.getElementById('viewFileList');if(list)list.innerHTML='';"
-    + "const key=" + JSON.stringify(key) + ";"
-    + "const image=[...document.querySelectorAll('img[data-anime-wp-key]')].find((img)=>img.getAttribute('data-anime-wp-key')===key);"
-    + "if(!image)return false;image.click();return true;"
-    + "})()";
+function candidateOpenExpression(src: string) {
+  return `(async () => {
+    window.__animeWinPng = { failed: false };
+    const list = document.getElementById("viewFileList");
+    if (list) list.innerHTML = "";
+    try {
+      const response = await fetch(${JSON.stringify(src)}, { credentials: "omit" });
+      if (!response.ok) return false;
+      const blob = await response.blob();
+      if (!blob.size) return false;
+      const inputUrl = document.getElementById("inputUrl");
+      if (!inputUrl || typeof window.parse !== "function" || typeof URL.reset !== "function") return false;
+      inputUrl.value = URL.reset(blob);
+      window.parse();
+      return true;
+    } catch {
+      return false;
+    }
+  })()`;
 }
 
 const VIEWER_STATE = `(() => {
@@ -297,7 +314,8 @@ const COLLECT = `(async () => {
       const smiUrl = anchor.getAttribute("data-smi");
       if (assUrl) await add(assLink?.download || stem + "ass", assUrl, true);
       if (smiUrl) await add(smiLink?.download || stem + "smi", smiUrl, true);
-      if (!assUrl && !smiUrl) await add(originalName, anchor.getAttribute("data-href"), false);
+      // Raw JMK is intentionally never returned or cached. Once conversion
+      // finishes, only playable ASS/SMI output may leave the temporary browser.
       continue;
     }
 
@@ -355,7 +373,7 @@ async function decodeWithTistoryViewer(pageUrl: string, timeoutMs: number): Prom
     if (!ready) return [];
 
     await client.evaluate(SETUP);
-    const candidates = await client.evaluate<Array<{ key: string; src: string }>>(CANDIDATES);
+    const candidates = await client.evaluate<Array<{ src: string }>>(CANDIDATES);
     if (!Array.isArray(candidates) || !candidates.length) return [];
 
     const collected: TistoryWinPngFile[] = [];
@@ -365,8 +383,8 @@ async function decodeWithTistoryViewer(pageUrl: string, timeoutMs: number): Prom
 
     for (const candidate of candidates) {
       if (Date.now() >= deadline) break;
-      const clicked = await client.evaluate<boolean>(candidateClickExpression(candidate.key));
-      if (!clicked) continue;
+      const opened = await client.evaluate<boolean>(candidateOpenExpression(candidate.src));
+      if (!opened) continue;
 
       const state = await waitFor<string>(
         client,
