@@ -91,6 +91,101 @@ test('cache reader falls back from a missing newest file to an older valid cache
   }
   assert.ok((await cache.getVerifiedSubtitleCache('re_missing',1)).content.includes('available'));
 });
+test('preferred cache skips newer files from another creator, provider or matched work',async()=>{
+  const source={sourceProvider:'anissia',sourceUrl:'https://author.tistory.com/1',matchedTitle:'작품'};
+  await save('re_creator_cache',subtitle('chosen creator'),source);
+  for(const extra of [
+    {sourceUrl:'https://other.tistory.com/1'},
+    {sourceProvider:'aniall'},
+    {matchedTitle:'다른 작품'},
+  ]) await save('re_creator_cache',subtitle('wrong source'),{...source,...extra});
+  for(const name of fs.readdirSync(dir('re_creator_cache')).filter(n=>n.endsWith('.json'))) {
+    const file=path.join(dir('re_creator_cache'),name),meta=JSON.parse(fs.readFileSync(file));
+    meta.verifiedAt=meta.sourceUrl===source.sourceUrl && meta.sourceProvider===source.sourceProvider && meta.matchedTitle===source.matchedTitle
+      ? '2020-01-01T00:00:00Z' : '2099-01-01T00:00:00Z';
+    fs.writeFileSync(file,JSON.stringify(meta));
+  }
+  assert.ok((await cache.getVerifiedSubtitleCache('re_creator_cache',1,source)).content.includes('chosen creator'));
+  assert.equal(await cache.getVerifiedSubtitleCache('re_creator_cache',2,source),null);
+  assert.equal(await cache.getVerifiedSubtitleCache('re_other_cache',1,source),null);
+  assert.equal(await cache.getVerifiedSubtitleCache('re_creator_cache',1,{...source,matchedTitle:'없는 작품'}),null);
+});
+
+async function preferredResponse(id, options={}) {
+  const auth=require('../src/lib/auth.ts'), db=require('../src/lib/db.ts');
+  const storage=require('../src/lib/subtitleStorage.ts'), online=require('../src/lib/subtitles.ts');
+  const preference={creatorName:'Anissia · 제작자',website:'https://author.tistory.com/1',
+    sourceProvider:'anissia',matchedTitle:'작품',creatorEpisode:'1',...options.preference};
+  const patches=[],calls={online:0};
+  const patch=(o,k,v)=>{patches.push([o,k,o[k]]);o[k]=v;};
+  patch(auth,'getSessionUser',async()=>({username:'test'}));
+  patch(db,'getSubtitleEpisodeStart',async()=>options.offset||null);
+  patch(db,'getSubtitleRejections',async()=>options.rejections||[]);
+  patch(db,'getSubtitleBundleAssignment',async()=>null);
+  patch(db,'getSubtitleBundleAssignments',async()=>options.assignments||[]);
+  patch(db,'getSubtitleCreatorPreference',async()=>preference);
+  patch(db,'getSubtitleEpisodeOverrides',async()=>[]);
+  patch(db,'getSubtitleSourcePriority',async()=>[]);
+  patch(storage,'getUploadedSubtitles',async()=>[]);
+  patch(storage,'getAnissiaArchiveSubtitles',async(...args)=>{calls.local=args;return options.local||[];});
+  patch(storage,'getAniAllArchiveSubtitles',async(...args)=>{calls.aniall=args;return options.local||[];});
+  patch(online,'resolveKoreanTitle',async title=>title);
+  patch(online,'fetchCreatorSubtitle',async()=>{calls.online++;throw new Error('offline');});
+  patch(online,'searchAllSubtitlesParallel',async()=>{throw new Error('must not switch creators');});
+  const guard=require('../src/lib/proxyGuard.ts');
+  patch(guard,'assertSafeProxyUrl',async()=>{});
+  try {
+    const {GET}=require('../src/app/api/anime/subtitles/route.ts'),{NextRequest}=require('next/server');
+    const response=await GET(new NextRequest('http://localhost/api/anime/subtitles?animeId='+id+'&title=작품&ep=1'));
+    assert.equal(response.status,200);
+    return {data:await response.json(),calls};
+  } finally {for(const[o,k,v]of patches.reverse())o[k]=v;}
+}
+const archive=(extra={})=>({...subtitle('local'),name:'01.srt',orig_filename:'01.srt',
+  creator:'제작자',website:'https://author.tistory.com/99',matchedTitle:'작품',
+  episodeConfirmed:true,localArchiveTrackLabel:'기본',archiveFilename:'all.zip',...extra});
+
+test('remembered creator uses confirmed Pi files before contacting the web',async()=>{
+  const result=await preferredResponse('ani_901',{local:[archive(),
+    archive({creator:'다른 제작자'}),archive({website:'https://other.tistory.com/99'}),
+    archive({episodeConfirmed:false})]});
+  assert.equal(result.data.preferred_creator,true);assert.equal(result.data.local_archive,true);
+  assert.equal(result.data.count,1);assert.equal(result.calls.online,0);
+  assert.equal(result.calls.local[2],901);
+});
+test('remembered creator uses its verified cache offline, without a Pi copy',async()=>{
+  await save('ani_902',subtitle('offline cache'),{sourceUrl:'https://author.tistory.com/1'});
+  const result=await preferredResponse('ani_902');
+  assert.equal(result.data.verified_cache,true);assert.equal(result.data.preferred_creator,true);
+  assert.ok(result.data.subtitles[0].content.includes('offline cache'));
+  assert.equal(result.calls.online,0);
+});
+test('manual source offset reaches local lookup and bypasses an old unmapped cache',async()=>{
+  await save('ani_903',subtitle('old episode'),{sourceUrl:'https://author.tistory.com/1'});
+  const result=await preferredResponse('ani_903',{offset:13,preference:{matchedTitle:'작품 2기'}});
+  assert.equal(result.calls.local[1],13);assert.equal(result.calls.local[4].localEpisode,1);
+  assert.equal(result.calls.local[0][0],'작품 2기');
+  assert.equal(result.data.count,0);assert.equal(result.data.preferred_creator_missing,true);
+  assert.equal(result.calls.online,1);
+});
+test('remembered creator retains choice between distinct local variants',async()=>{
+  const result=await preferredResponse('ani_904',{local:[archive(),archive({...subtitle('different sponsor')})]});
+  assert.equal(result.data.count,2);assert.equal(result.data.needs_manual_subtitle_choice,true);
+  assert.equal(result.calls.online,0);
+});
+test('rejected local tracks and exclusively assigned bundles are excluded',async()=>{
+  const local=[archive(),archive({sourceBundleKey:'claimed',name:'claimed.srt'})];
+  const result=await preferredResponse('ani_905',{local,
+    rejections:[{provider:'anissia',sourceKey:'[로컬 Anissia · 제작자] 기본 · all.zip · 01.srt'}],
+    assignments:[{exclusive:true,provider:'anissia',bundleKey:'claimed',animeId:'ani_other'}]});
+  assert.equal(result.data.count,0);assert.equal(result.calls.online,1);
+});
+test('remembered AniAll creator also uses local files before the web',async()=>{
+  const result=await preferredResponse('ani_906',{local:[archive()],preference:{
+    sourceProvider:'aniall',creatorName:'AniAll · 작품',website:'https://aniall.tistory.com/77'}});
+  assert.equal(result.data.local_archive,true);assert.equal(result.calls.online,0);
+  assert.equal(result.calls.aniall[0],'작품');assert.equal(result.calls.aniall[4],'https://aniall.tistory.com/77');
+});
 test('cache HTTP endpoint skips local flags and records validated source episode context',async()=>{
   const auth=require('../src/lib/auth.ts'),db=require('../src/lib/db.ts');
   const matches=require('../src/lib/reanimeMatches.ts'),guard=require('../src/lib/proxyGuard.ts');

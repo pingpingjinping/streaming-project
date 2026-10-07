@@ -58,26 +58,14 @@ async function fetchPreferredBlogSubtitle(
   if (preference.creatorName.includes("카이란") || preference.website.toLowerCase().includes("kairan")) {
     subtitle = await findKairanSubtitle(targetTitle, sourceEpisode, 5000, episode);
   } else {
-    if (preference.sourceProvider === "aniall") {
-      const blogTitle = preference.creatorName.replace(/^AniAll\s*[·|]\s*/i, "").trim();
-      subtitle = await getAniAllArchiveSubtitle(
-        blogTitle,
-        episode,
-        targetSeason,
-        sourceEpisodeStart,
-        preference.website,
-      );
-    }
-    if (!subtitle) {
-      subtitle = await fetchCreatorSubtitle(
-        preference.creatorName,
-        preference.website,
-        targetTitle,
-        sourceEpisode,
-        5000,
-        episode,
-      );
-    }
+    subtitle = await fetchCreatorSubtitle(
+      preference.creatorName,
+      preference.website,
+      targetTitle,
+      sourceEpisode,
+      5000,
+      episode,
+    );
   }
 
   if (!subtitle?.content) return null;
@@ -91,6 +79,48 @@ async function fetchPreferredBlogSubtitle(
     sourceProvider: preference.sourceProvider,
     localArchive: false,
   };
+}
+
+function creatorBlogKey(website: string): string {
+  try {
+    const url = new URL(website);
+    const host = url.hostname.toLowerCase();
+    if (host.endsWith(".tistory.com") || host.endsWith(".blogspot.com")) return host;
+    if (host === "blog.naver.com" || host === "m.blog.naver.com") {
+      const id = url.searchParams.get("blogId") || url.pathname.split("/")[1];
+      return id && !id.endsWith(".naver") ? `naver:${id}` : "";
+    }
+    return url.toString();
+  } catch { return ""; }
+}
+
+async function fetchPreferredLocalSubtitles(
+  preference: SubtitleCreatorPreference,
+  titles: string[], episode: number,
+  sourceEpisodeStart: number | null, animeNo: number | null,
+) {
+  const requestedTitle = preference.matchedTitle || titles[0];
+  const matchedTitle = await resolveKoreanTitle(requestedTitle) || requestedTitle;
+  const season = parseSeason(matchedTitle) || parseSeason(requestedTitle);
+  const sourceEpisode = sourceEpisodeStart && sourceEpisodeStart > 0
+    ? sourceEpisodeStart + episode - 1
+    : mapProviderEpisodeNumber(preference.creatorEpisode, episode, season);
+  if (preference.sourceProvider === "aniall") {
+    const blogTitle = preference.creatorName.replace(/^AniAll\s*[·|]\s*/i, "").trim();
+    const subtitles = await getAniAllArchiveSubtitles(blogTitle, episode, season,
+      sourceEpisodeStart, preference.website);
+    return subtitles.filter(s => s.episodeConfirmed).map(s => ({...s,
+      sourceProvider: "aniall", sourceCreatorWebsite: preference.website,
+      sourceMatchedTitle: matchedTitle, localArchive: true}));
+  }
+  const creator = preference.creatorName.replace(/^Anissia\s*[·|]\s*/i, "").trim();
+  const key = creatorBlogKey(preference.website);
+  const subtitles = await getAnissiaArchiveSubtitles([matchedTitle, requestedTitle, ...titles], sourceEpisode, animeNo, season,
+    {localEpisode: episode});
+  return subtitles.filter(s => s.episodeConfirmed && key && creatorBlogKey(s.website) === key
+    && s.creator.trim().toLocaleLowerCase("ko-KR") === creator.toLocaleLowerCase("ko-KR"))
+    .map(s => ({...s, sourceProvider: "anissia", sourceCreatorWebsite: s.website,
+      sourceMatchedTitle: s.matchedTitle, localArchive: true}));
 }
 
 export async function GET(request: NextRequest) {
@@ -186,6 +216,45 @@ export async function GET(request: NextRequest) {
 
     if (creatorPreference && !bundleAssignment &&
         !isRejected(creatorPreference.sourceProvider, creatorPreference.website)) {
+      // Remember the creator without forcing a fresh web extraction. Keep all
+      // candidates in the requested work/episode and creator scope.
+      try {
+        const local = distinctLocalSubtitles((await fetchPreferredLocalSubtitles(
+          creatorPreference, [searchTarget, comparisonTitle, title, referenceTitle || ""],
+          ep, sourceEpisodeStart, directAnimeNo,
+        )).filter(s => !claimedByOtherAnime(creatorPreference.sourceProvider, s.sourceBundleKey)
+          && !isRejected("local", s.name)
+          && !isRejected(creatorPreference.sourceProvider, s.name)
+          && !(s.sourceProvider === "anissia" && "creator" in s && isRejected("anissia",
+            `[로컬 Anissia · ${s.creator}] ${s.localArchiveTrackLabel} · ${s.archiveFilename} · ${s.orig_filename}`))
+          && !isRejected(creatorPreference.sourceProvider, s.sourceCreatorWebsite)));
+        if (local.length) {
+          await pruneLocalCache(animeIdParam, ep, local);
+          return NextResponse.json({success: true, anime_title: title, episode: ep,
+            count: local.length, subtitles: local, creators: [], local_archive: true,
+            preferred_creator: true, needs_manual_subtitle_choice: local.length > 1},
+            {headers: {"Cache-Control": "no-store"}});
+        }
+      } catch (error) {
+        console.warn("[Preferred local subtitle unavailable]", error);
+      }
+      if (!sourceEpisodeStart) {
+        try {
+          const cached = await getVerifiedSubtitleCache(animeIdParam, ep, {
+            sourceProvider: creatorPreference.sourceProvider,
+            sourceUrl: creatorPreference.website,
+            matchedTitle: creatorPreference.matchedTitle || searchTarget,
+          });
+          if (cached && !isRejected("local", cached.name)) {
+            return NextResponse.json({success: true, anime_title: title, episode: ep,
+              count: 1, subtitles: [cached], creators: [], verified_cache: true,
+              preferred_creator: true, needs_manual_subtitle_choice: false},
+              {headers: {"Cache-Control": "no-store"}});
+          }
+        } catch (error) {
+          console.warn("[Preferred subtitle cache unavailable]", error);
+        }
+      }
       let preferredSubtitle = null;
       try {
         preferredSubtitle = await fetchPreferredBlogSubtitle(

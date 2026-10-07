@@ -920,11 +920,17 @@ export default function IframePlayer({
         const localKey = `anime_progress_${animeId}_ep${episodeNumber}`;
         const localTime = parseFloat(localStorage.getItem(localKey) || "0") || 0;
 
-        const res = await fetch(`/api/anime/history?anime_id=${encodeURIComponent(animeId)}`);
-        const data = await res.json();
+        let data: any = null;
+        try {
+          const res = await fetch(`/api/anime/history?anime_id=${encodeURIComponent(animeId)}`);
+          if (res.ok) data = await res.json();
+        } catch (err) {
+          // A failed cloud lookup must not discard the saved local position.
+          console.warn("Failed to fetch cloud history; using local progress:", err);
+        }
         if (isCancelled) return;
 
-        const epItem = data.success && Array.isArray(data.items)
+        const epItem = data?.success && Array.isArray(data.items)
           ? data.items.find((item: any) => Number(item.episode_number) === Number(episodeNumber))
           : null;
         const cloudTime = epItem
