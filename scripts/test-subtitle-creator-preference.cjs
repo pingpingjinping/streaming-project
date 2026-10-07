@@ -30,7 +30,7 @@ test("explicit blog selection replaces a local bundle preference and vice versa"
 });
 
 test("subtitle GET tries the remembered creator before ambiguous automatic matching", () => {
-  const preferenceIndex = route.indexOf("fetchPreferredBlogSubtitle(");
+  const preferenceIndex = route.indexOf("preferredSubtitle = await fetchPreferredBlogSubtitle(");
   const automaticIndex = route.indexOf(
     "searchAllSubtitlesParallel(searchTarget, ep, 45000"
   );
@@ -41,7 +41,10 @@ test("subtitle GET tries the remembered creator before ambiguous automatic match
     "remembered creator must be tried before ambiguous automatic matching"
   );
   assert.match(route, /preferred_creator:\s*true/);
+  assert.match(route, /preferred_creator:\s*true/);
   assert.match(route, /needs_manual_subtitle_choice:\s*false/);
+  assert.match(route, /preferred_creator_missing:\s*true/);
+  assert.match(route, /needs_manual_subtitle_choice:\s*true/);
 });
 
 test("successful explicit online creator selection saves the preference", () => {
