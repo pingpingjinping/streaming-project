@@ -216,17 +216,24 @@ const SETUP = `(() => {
 const CANDIDATES = `(() => {
   const seen = new Set();
   const out = [];
-  const nodes = document.querySelectorAll(
-    "#content img, .tt_article_useless_p_margin img, .contents_style img"
-  );
-  nodes.forEach((img) => {
-    const sources = [
-      img.getAttribute("data-url") || "",
-      img.getAttribute("data-phocus") || "",
-      img.currentSrc || "",
-      img.src || "",
+  const roots = [
+    document.querySelector("#content"),
+    document.querySelector(".tt_article_useless_p_margin"),
+    document.querySelector(".contents_style"),
+  ].filter(Boolean);
+  const nodes = roots.length
+    ? roots.flatMap((root) => [root, ...root.querySelectorAll("*")])
+    : [...document.querySelectorAll("body *")];
+
+  for (const node of nodes) {
+    const values = [
+      node.getAttribute?.("data-url") || "",
+      node.getAttribute?.("data-phocus") || "",
+      node.getAttribute?.("src") || "",
+      node.currentSrc || "",
     ].filter(Boolean);
-    for (const raw of sources) {
+
+    for (const raw of values) {
       let url;
       try { url = new URL(raw, location.href); } catch { continue; }
       const host = url.hostname.toLowerCase();
@@ -238,8 +245,9 @@ const CANDIDATES = `(() => {
       out.push({ src });
       break;
     }
-  });
-  return out.slice(0, 6);
+    if (out.length >= 6) break;
+  }
+  return out;
 })()`;
 
 async function downloadOriginalKakaoPng(
@@ -417,7 +425,13 @@ async function decodeWithTistoryViewer(pageUrl: string, timeoutMs: number): Prom
     }
 
     await client.evaluate(SETUP);
-    const candidates = await client.evaluate<Array<{ src: string }>>(CANDIDATES);
+    const candidates = await waitFor<Array<{ src: string }>>(
+      client,
+      CANDIDATES,
+      (value) => Array.isArray(value) && value.length > 0,
+      Math.min(8000, Math.max(1500, timeoutMs)),
+      250,
+    );
     if (!Array.isArray(candidates) || !candidates.length) {
       console.warn("[Tistory WinPNG] no original Kakao PNG candidates", { pageUrl });
       return [];
@@ -551,10 +565,17 @@ export async function extractTistoryWinPngFiles(
     // PNG and JMK are transient decode inputs only. Never persist or cache them;
     // keep only playable subtitle output after extraction/conversion.
     files = files.filter((file) => /\.(?:ass|ssa|smi|srt|vtt|zip)$/i.test(file.path));
-    resultCache.set(cacheKey, { timestamp: Date.now(), files: cloneFiles(files) });
-    if (resultCache.size > 50) {
-      const oldest = resultCache.keys().next().value;
-      if (oldest) resultCache.delete(oldest);
+    // Never cache an empty/failed decode. A transient Tistory/Chromium load
+    // issue must be allowed to retry immediately; only successful conversions
+    // get the 10-minute warm cache.
+    if (files.length) {
+      resultCache.set(cacheKey, { timestamp: Date.now(), files: cloneFiles(files) });
+      if (resultCache.size > 50) {
+        const oldest = resultCache.keys().next().value;
+        if (oldest) resultCache.delete(oldest);
+      }
+    } else {
+      resultCache.delete(cacheKey);
     }
     return cloneFiles(files);
   });
