@@ -7,6 +7,9 @@ const ts = require('typescript');
 const root = path.join(__dirname, '..');
 const plain = value => JSON.parse(JSON.stringify(value));
 function load(file, deps = {}, globals = {}) {
+  deps = {'@/lib/koreanSubtitleCatalog': {getKoreanSubtitleCatalog: async () => {
+    throw Error('Anikoto tests must not request the Korean subtitle catalog');
+  }}, ...deps};
   const exports = {};
   const code = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {
     compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true},
@@ -158,3 +161,4 @@ test('Anikoto detail keeps the full work heading and native title for resolver v
   assert.equal(detail.original_title,'パリに咲くエトワール');
   assert.equal(detail.sub_episodes[0].number,1);
 });
+
