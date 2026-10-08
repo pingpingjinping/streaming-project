@@ -71,7 +71,7 @@ export async function GET(request: NextRequest) {
 
   const noCache = searchParams.get("nocache") === "1";
   const cacheControl =
-    noCache || q || result.error || searchParams.get("linked")==="1"
+    noCache || q || result.error || searchParams.get("linked")==="1" || (source === "anissia" && tab === "list")
       ? "no-store"
       : "public, s-maxage=300, stale-while-revalidate=600";
 
