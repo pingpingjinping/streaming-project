@@ -53,7 +53,9 @@ export async function GET(request: NextRequest) {
     ) as "airing" | "top" | "upcoming" | "finished" | "trending";
     result = await provider.getAnimeList({ category, page, genre });
   } else if (tab === "list") {
-    result = await provider.getAnimeListFiltered({ section, genre, year, typeLang, page });
+    result = await provider.getAnimeListFiltered({ section, genre, year, typeLang, page,
+      ...(source === "anissia" ? { catalog: true, captionsOnly: searchParams.get("captions") === "1" } : {}),
+    });
   } else if (tab === "top") {
     result = await provider.getAnimeList({ category: "top", page, period });
   } else {
