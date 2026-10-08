@@ -1,3 +1,5 @@
+import { getProvisionalWorkMatches } from './provisionalWorkMatches';
+import { getWorkMatchOverrides, importedLinkIsOverridden } from './workMatchOverrides';
 import matches from "@/data/reanime-matches.json";
 import { getDb } from "@/lib/db";
 
@@ -5,6 +7,8 @@ export interface ReanimeMatch {
   koreanTitle: string;
   anissiaNo: number | null;
   searchTitle?: string;
+  matchStatus?: "confirmed" | "candidate";
+  candidateReason?: string;
 }
 
 export interface ReanimeSubtitleCandidate {
@@ -43,6 +47,7 @@ const bundled = matches as unknown as Record<string, [string, number | null, str
 /** Reverse only confirmed IDs; multiple ReAnime works never become an arbitrary poster. */
 export async function getConfirmedReanimeIdsForAnissia(animeNos: number[]): Promise<Map<number,string>> {
   const ids=[...new Set(animeNos.filter(n=>Number.isSafeInteger(n) && n>0))];
+  const overrides=await getWorkMatchOverrides();
   const candidates=new Map<number,Set<string>>();
   const add=(n:number,id:string)=>{
     if(!ids.includes(n) || !id)return;
@@ -53,10 +58,22 @@ export async function getConfirmedReanimeIdsForAnissia(animeNos: number[]): Prom
   if(sql)try {
     const rows=await sql`SELECT anissia_no,reanime_id FROM anime_reanime_matches
       WHERE anissia_no=ANY(${ids}::integer[]) AND review_status IN ('검토된 사항','자동확정')`;
-    rows.forEach(row=>add(Number(row.anissia_no),String(row.reanime_id)));loaded=true;
+    rows.forEach(row=>{
+      if(!importedLinkIsOverridden(overrides,String(row.reanime_id),Number(row.anissia_no)))
+        add(Number(row.anissia_no),String(row.reanime_id));
+    });loaded=true;
   }catch { /* A Pi without the imported table can use the bundled reviewed IDs. */ }
-  if(!loaded)for(const [slug,row] of Object.entries(bundled))if(row[1])add(row[1],slug);
+  if(!loaded)for(const [slug,row] of Object.entries(bundled))if(row[1] && !importedLinkIsOverridden(overrides,slug,row[1]))add(row[1],slug);
+  overrides.forEach(row=>add(row.anissiaNo,row.reanimeId));
   return new Map([...candidates].flatMap(([n,values])=>values.size===1 ? [[n,[...values][0]] as const] : []));
+}
+
+/** Effective reverse links retain a distinct provisional state. */
+export async function getEffectiveReanimeIdsForAnissia(animeNos:number[]):Promise<Map<number,string>> {
+  const result=await getConfirmedReanimeIdsForAnissia(animeNos);
+  for(const c of await getProvisionalWorkMatches())if(animeNos.includes(c.anissiaNo) && !result.has(c.anissiaNo))
+    result.set(c.anissiaNo,c.reanimeId);
+  return result;
 }
 
 export function getBundledReanimeMatch(animeId: string): ReanimeMatch | null {
@@ -115,14 +132,33 @@ export async function findReanimeSearchTitlesFromDb(koreanQuery: string): Promis
 export async function getReanimeMatch(animeId: string): Promise<ReanimeMatch | null> {
   if (!animeId.startsWith("re_")) return null;
   const slug = animeId.slice(3);
+  const overrides = await getWorkMatchOverrides();
+  const manual = overrides.find(r => r.reanimeId === slug);
   const sql = getDb();
+  if (manual) {
+    const titles = sql ? await sql`SELECT payload->>'title_ko' AS title FROM anime_catalog_entries
+      WHERE source='Anissia' AND source_record_id=${String(manual.anissiaNo)} LIMIT 1` : [];
+    return { koreanTitle: String(titles[0]?.title || ''), anissiaNo: manual.anissiaNo };
+  }
+  let importedTitle:string|null=null;
   if (sql) {
     try {
       const rows = await sql`SELECT korean_title,anissia_no
         FROM anime_reanime_matches WHERE reanime_id=${slug} LIMIT 1`;
-      if (rows.length) return { koreanTitle: String(rows[0].korean_title),
-        anissiaNo: rows[0].anissia_no === null ? null : Number(rows[0].anissia_no) };
+      if(rows.length)importedTitle=String(rows[0].korean_title);
+      if (rows.length && rows[0].anissia_no !== null && !importedLinkIsOverridden(overrides,slug,Number(rows[0].anissia_no))) return { koreanTitle: String(rows[0].korean_title),
+        anissiaNo: rows[0].anissia_no === null || importedLinkIsOverridden(overrides,slug,Number(rows[0].anissia_no)) ? null : Number(rows[0].anissia_no) };
     } catch { /* The import may not have run yet. */ }
   }
-  return getBundledReanimeMatch(animeId);
+  const candidate=(await getProvisionalWorkMatches()).find(c=>c.reanimeId===slug);
+  if(candidate) {
+    const titles=sql ? await sql`SELECT payload->>'title_ko' AS title FROM anime_catalog_entries
+      WHERE source='Anissia' AND source_record_id=${String(candidate.anissiaNo)} LIMIT 1` : [];
+    return {koreanTitle:String(titles[0]?.title || ''),anissiaNo:candidate.anissiaNo,
+      matchStatus:'candidate',candidateReason:candidate.reason};
+  }
+  if(importedTitle!==null)return {koreanTitle:importedTitle,anissiaNo:null};
+  const bundledMatch = getBundledReanimeMatch(animeId);
+  return bundledMatch && importedLinkIsOverridden(overrides,slug,bundledMatch.anissiaNo)
+    ? { ...bundledMatch, anissiaNo: null } : bundledMatch;
 }

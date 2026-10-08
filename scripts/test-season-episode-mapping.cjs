@@ -5,8 +5,10 @@ const assert = require('node:assert/strict');
 const {test} = require('node:test');
 const ts = require('typescript');
 const root = path.join(__dirname, '..');
+const matchOverrides = {getWorkMatchOverrides:async()=>[], importedLinkIsOverridden:()=>false};
 const plain = value => JSON.parse(JSON.stringify(value));
 function load(file, deps = {}, globals = {}) {
+  deps={'../provisionalWorkMatches':{getReservedReanimeIdsForOtherWorks:async()=>new Set(),hasWorkMatchCandidates:async()=>false},'../workMatchOverrides':matchOverrides,'./workMatchOverrides':matchOverrides,'../reanimeMatches':{getConfirmedReanimeIdsForAnissia:async()=>new Map(),getEffectiveReanimeIdsForAnissia:async()=>new Map()},...deps};
   const exports = {};
   const code = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {
     compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
@@ -27,7 +29,7 @@ const native = '正反対な君と僕 第2期';
 const romaji = 'Seihantai na Kimi to Boku Season 2';
 function anissia(captionNumbers = range(13,25), metaCount = 13) {
   return load('src/lib/providers/anissia.ts', {
-    '../reanimeMatches': {getConfirmedReanimeIdsForAnissia: async () => new Map()},
+    '../reanimeMatches': {getConfirmedReanimeIdsForAnissia: async () => new Map(),getEffectiveReanimeIdsForAnissia:async()=>new Map()},
     './reanime': {getReanimeArtwork: async () => null},
     '../resolvers/videoResolver': {},
   }, {fetch: async url => {
@@ -210,6 +212,7 @@ function elements(tree) {
 function pageDeps() {
   const calls = [], subtitles = [];
   const deps = {
+    '@/components/WorkMatchSetting':'WorkMatchSetting','@/components/WorkMatchBadge':'WorkMatchBadge',
     'lucide-react': {Play:'Play',Film:'Film',Calendar:'Calendar',CheckCircle2:'CheckCircle2',ArrowLeft:'ArrowLeft'},
     'react/jsx-runtime': {jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})},
     'next/link': 'Link', 'next/navigation': {notFound:()=>{throw Error('not found');}},

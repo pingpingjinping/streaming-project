@@ -1,7 +1,9 @@
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),ts=require('typescript');
 const assert=require('node:assert/strict'),{test}=require('node:test');
 const root=path.join(__dirname,'..');
+const matchOverrides = {getWorkMatchOverrides:async()=>[], importedLinkIsOverridden:()=>false};
 function load(file,deps={},globals={}) {
+  deps={'./provisionalWorkMatches':{getProvisionalWorkMatches:async()=>[]},'./workMatchOverrides':matchOverrides,...deps};
   const exports={};
   const code=ts.transpileModule(fs.readFileSync(path.join(root,file),'utf8'),{
     compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText;
