@@ -9,6 +9,7 @@ import {
 } from "@/lib/providers";
 import { OHLI24_GENRES } from "@/lib/providers/ohli24";
 import { getSessionUser } from "@/lib/auth";
+import { getAnissiaCatalogCaptionsOnly } from "@/lib/db";
 import { ANIKOTO_GENRES, ANIKOTO_YEARS, ANIKOTO_TYPES, ANIKOTO_STATUSES, ANIKOTO_SORTS } from "@/lib/anikotoCatalog";
 
 export async function GET(request: NextRequest) {
@@ -53,8 +54,13 @@ export async function GET(request: NextRequest) {
     ) as "airing" | "top" | "upcoming" | "finished" | "trending";
     result = await provider.getAnimeList({ category, page, genre });
   } else if (tab === "list") {
+    const captionsOnly = source === "anissia"
+      ? searchParams.has("captions")
+        ? searchParams.get("captions") === "1"
+        : await getAnissiaCatalogCaptionsOnly(user.username)
+      : false;
     result = await provider.getAnimeListFiltered({ section, genre, year, typeLang, page,
-      ...(source === "anissia" ? { catalog: true, captionsOnly: searchParams.get("captions") === "1" } : {}),
+      ...(source === "anissia" ? { catalog: true, captionsOnly } : {}),
     });
   } else if (tab === "top") {
     result = await provider.getAnimeList({ category: "top", page, period });
