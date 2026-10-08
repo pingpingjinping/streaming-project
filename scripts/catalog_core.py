@@ -5,6 +5,20 @@ import unicodedata
 def key(title):
     return ' '.join(unicodedata.normalize('NFKC', title).strip().lower().split())
 
+def validated_auto_ids(auto):
+    """V2 links carry their verified references; legacy links keep their behavior."""
+    try:
+        evidence=json.loads(auto['evidence_json'])
+    except (ValueError,TypeError):
+        return []
+    if not isinstance(evidence,dict):return []
+    version=evidence.get('rule_version',1)
+    if not isinstance(version,int):return []
+    if version<2:return None
+    ids=evidence.get('validated_anilist_ids',[])
+    if not isinstance(ids,list):return []
+    return list(dict.fromkeys(str(aid) for aid in ids if str(aid).isdigit() and int(aid)>0))
+
 def build_catalog(db):
     db.row_factory = __import__('sqlite3').Row
     matches = {r['anime_no']: dict(r) for r in db.execute('SELECT * FROM anissia_year_match')}
@@ -34,7 +48,13 @@ def build_catalog(db):
             '자동확정' if auto else '미매칭')
         anilist_ids=ids.get('anilist_ids',[])
         reanime_ids=ids.get('reanime_ids',[])
-        if auto and auto['reanime_id'] not in reanime_ids:
+        verified_ids=validated_auto_ids(auto) if auto else None
+        if auto and verified_ids is not None:
+            # Unreviewed/stale source declarations cannot override the new
+            # matcher or lend another work's titles to an automatic Korean row.
+            anilist_ids=[aid for aid in verified_ids if ('AniList',aid) in by_source]
+            reanime_ids=[auto['reanime_id']]
+        elif auto and auto['reanime_id'] not in reanime_ids:
             reanime_ids.append(auto['reanime_id'])
             source=by_source.get(('ReAnime',auto['reanime_id']))
             if source:
@@ -121,10 +141,11 @@ def build_reanime_matches(db,catalog):
         for row in db.execute('SELECT * FROM monthly_auto_matches'):
             slug=row['reanime_id']
             # A previously reviewed link or disputed title always wins.
-            if slug in candidates or any(item['reanimeId']==slug for item in result):continue
+            if row['anissia_no'] in year_status or slug in candidates or any(item['reanimeId']==slug for item in result):continue
             target=original_titles.get(slug)
             search_title=(target['title_english'] or target['title_romaji'] or target['title_native']) if target else ''
             result.append({'reanimeId':slug,'koreanTitle':row['korean_title'],
                            'anissiaNo':row['anissia_no'],'searchTitle':search_title,
                            'reviewStatus':'자동확정'})
     return result
+
