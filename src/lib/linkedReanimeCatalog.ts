@@ -25,7 +25,7 @@ export async function getLinkedReanimeCatalog(options:{page?:number;q?:string;ye
           ON a.source='Anissia' AND a.source_record_id=o.anissia_no::text)` : 'anime_reanime_matches';
   const effective=provisional.length ? `(${confirmed==='anime_reanime_matches'?'SELECT * FROM anime_reanime_matches':`SELECT * FROM ${confirmed} confirmed`}
     UNION ALL SELECT p.reanime_id,COALESCE(a.payload->>'title_ko',p.reanime_id),p.anissia_no,'후보 연결'
-      FROM jsonb_to_recordset($4::jsonb) AS p(reanime_id text,anissia_no integer)
+      FROM jsonb_to_recordset($4::text::jsonb) AS p(reanime_id text,anissia_no integer)
       LEFT JOIN anime_catalog_entries a ON a.source='Anissia' AND a.source_record_id=p.anissia_no::text)` : confirmed;
   const from=`FROM ${effective} m
     JOIN anime_catalog_entries r ON r.source='ReAnime' AND r.source_record_id=m.reanime_id
