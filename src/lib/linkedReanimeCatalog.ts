@@ -1,4 +1,5 @@
 import {getDb} from './db';
+import {getWorkMatchOverrides} from './workMatchOverrides';
 import {getReanimeArtwork} from './providers/reanime';
 import {fetchAniListMeta} from './providers/anissia';
 import type {AnimeListResponse} from './providers/types';
@@ -13,7 +14,14 @@ export async function getLinkedReanimeCatalog(options:{page?:number;q?:string;ye
   const year=/^\d{4}$/.test(options.year || '')?options.year!:'';
   const sort=options.sort==='year_asc'?'ASC':'DESC';
   const yearExpression="CASE WHEN r.payload->>'year' ~ '^[0-9]{4}$' THEN (r.payload->>'year')::integer END";
-  const from=`FROM anime_reanime_matches m
+  const manual = await getWorkMatchOverrides();
+  const effective = manual.length ? `(SELECT m.reanime_id,m.korean_title,m.anissia_no,m.review_status FROM anime_reanime_matches m
+      WHERE NOT EXISTS (SELECT 1 FROM anime_work_match_overrides o
+        WHERE o.reanime_id=m.reanime_id OR o.anissia_no=m.anissia_no)
+      UNION ALL SELECT o.reanime_id,COALESCE(a.payload->>'title_ko',o.reanime_id),o.anissia_no,'검토된 사항'
+        FROM anime_work_match_overrides o LEFT JOIN anime_catalog_entries a
+          ON a.source='Anissia' AND a.source_record_id=o.anissia_no::text)` : 'anime_reanime_matches';
+  const from=`FROM ${effective} m
     JOIN anime_catalog_entries r ON r.source='ReAnime' AND r.source_record_id=m.reanime_id
     WHERE m.review_status IN ('검토된 사항','자동확정')
       AND ($1='' OR regexp_replace(lower(concat_ws(' ',m.korean_title,r.payload->>'title_native',

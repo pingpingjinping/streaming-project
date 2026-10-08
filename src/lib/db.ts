@@ -428,6 +428,14 @@ async function initializeDb() {
     if (error?.code !== '23505' && error?.code !== '42P07') throw error;
   }
 
+  // Shared manual work links survive catalog refreshes and imported review data.
+  await sql`CREATE TABLE IF NOT EXISTS anime_work_match_overrides (
+    reanime_id VARCHAR(200) PRIMARY KEY,
+    anissia_no INTEGER NOT NULL UNIQUE CHECK (anissia_no > 0),
+    updated_by VARCHAR(100) NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`;
+
   isInitialized = true;
 }
 
@@ -2157,3 +2165,4 @@ export async function deleteManualSubtitleLink(userId: string, animeId: string, 
   await initDb();
   await sql`DELETE FROM manual_subtitle_links WHERE user_id = ${userId} AND anime_id = ${animeId} AND episode_number = ${episodeNumber}`;
 }
+

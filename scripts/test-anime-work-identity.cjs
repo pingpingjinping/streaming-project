@@ -4,7 +4,9 @@ const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const {test} = require('node:test');
 const ts = require('typescript');
+const matchOverrides = {getWorkMatchOverrides:async()=>[],importedLinkIsOverridden:()=>false};
 function load(file, deps) {
+  deps={'../workMatchOverrides':matchOverrides,'./workMatchOverrides':matchOverrides,'../reanimeMatches':{getConfirmedReanimeIdsForAnissia:async()=>new Map()},...deps};
   const exports = {};
   const code = ts.transpileModule(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), {
     compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true},

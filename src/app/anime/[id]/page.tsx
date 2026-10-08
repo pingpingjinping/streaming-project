@@ -1,3 +1,4 @@
+import WorkMatchSetting from "@/components/WorkMatchSetting";
 import Navbar from "@/components/Navbar";
 import FavoriteButton from "@/components/FavoriteButton";
 import EpisodeListSection from "@/components/EpisodeListSection";
@@ -36,6 +37,7 @@ export default async function AnimeDetailPage({
           <Navbar />
           <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
             <ReanimeDetailFallback id={id} initialIsDub={isDub} />
+            <WorkMatchSetting animeId={id} />
           </main>
         </div>
       );
@@ -133,6 +135,7 @@ export default async function AnimeDetailPage({
           </div>
         </div>
 
+        <WorkMatchSetting animeId={anime.id} />
         <SubtitleEpisodeStartSetting animeId={anime.id} />
         <SubtitleBundleAssignmentSetting animeId={anime.id} animeTitle={anime.title} />
 

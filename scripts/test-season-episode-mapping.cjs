@@ -5,8 +5,10 @@ const assert = require('node:assert/strict');
 const {test} = require('node:test');
 const ts = require('typescript');
 const root = path.join(__dirname, '..');
+const matchOverrides = {getWorkMatchOverrides:async()=>[], importedLinkIsOverridden:()=>false};
 const plain = value => JSON.parse(JSON.stringify(value));
 function load(file, deps = {}, globals = {}) {
+  deps={'../workMatchOverrides':matchOverrides,'./workMatchOverrides':matchOverrides,'../reanimeMatches':{getConfirmedReanimeIdsForAnissia:async()=>new Map()},...deps};
   const exports = {};
   const code = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {
     compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
@@ -210,6 +212,7 @@ function elements(tree) {
 function pageDeps() {
   const calls = [], subtitles = [];
   const deps = {
+    '@/components/WorkMatchSetting':'WorkMatchSetting',
     'lucide-react': {Play:'Play',Film:'Film',Calendar:'Calendar',CheckCircle2:'CheckCircle2',ArrowLeft:'ArrowLeft'},
     'react/jsx-runtime': {jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})},
     'next/link': 'Link', 'next/navigation': {notFound:()=>{throw Error('not found');}},

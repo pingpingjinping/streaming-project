@@ -1,3 +1,5 @@
+import { getWorkMatchOverrides } from "../workMatchOverrides";
+import { getConfirmedReanimeIdsForAnissia } from "../reanimeMatches";
 import { mapVideoEpisode, toLocalEpisode, videoEpisodeStart } from "../episodeMapping";
 import { AnimeDetail, EpisodeStreamInfo, ServerSource } from "../providers/types";
 import { reanimeProvider } from "../providers/reanime";
@@ -148,6 +150,14 @@ export async function resolveAnissiaStream(
     console.warn("[videoResolver] DB cache lookup error:", e);
   }
 
+  const workOverrides = await getWorkMatchOverrides();
+  const reservedForAnotherWork = (id: string) => workOverrides.some(row =>
+    row.reanimeId === id.replace(/^re_/, "") && row.anissiaNo !== anissiaId);
+  if (cachedReanimeId && reservedForAnotherWork(cachedReanimeId)) cachedReanimeId = null;
+  const confirmedReanimeId = anissiaId === null ? null
+    : (await getConfirmedReanimeIdsForAnissia([anissiaId])).get(anissiaId) || null;
+  if (confirmedReanimeId) cachedReanimeId = confirmedReanimeId;
+
   // 제목/원제 메타데이터가 없는 경우 애니시아 상세 API로 보강
   let korTitle = title || "";
   let jpTitle = originalTitle || "";
@@ -213,7 +223,7 @@ export async function resolveAnissiaStream(
       }
     }
 
-    if (!reanimeId) {
+    if (!reanimeId && !confirmedReanimeId) {
       const cleanJp = jpTitle ? jpTitle.replace(SUBTITLE_DELIMITERS, "").trim() : "";
       const baseJp = cleanJp
         ? cleanJp
@@ -243,6 +253,7 @@ export async function resolveAnissiaStream(
           const best = selectBestReanimeItem(searchRes.items, targetSeason);
           const candidates = [best, ...searchRes.items.filter(item => item !== best)].filter(Boolean);
           for (const best of candidates) {
+            if (reservedForAnotherWork(best.id)) continue;
             // 해당 후보가 요청한 회차를 가지고 있는지 검증
             const candidateDetail = await reanimeProvider.getAnimeDetail(best.id);
             recordLatestReanimeEpisode(candidateDetail);
