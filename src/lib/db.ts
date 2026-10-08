@@ -1799,12 +1799,52 @@ export async function saveUserSettings(
       INSERT INTO user_settings (user_id, settings, updated_at)
       VALUES (${userId}, ${jsonStr}, CURRENT_TIMESTAMP)
       ON CONFLICT (user_id) DO UPDATE SET
-        settings = EXCLUDED.settings,
+        -- Keep the Anissia catalog preference when player settings are saved.
+        -- This avoids a settings-panel save accidentally resetting the toggle.
+        settings = (
+          EXCLUDED.settings::jsonb ||
+          CASE WHEN user_settings.settings::jsonb ? 'anissiaCatalogCaptionsOnly'
+            THEN jsonb_build_object(
+              'anissiaCatalogCaptionsOnly',
+              user_settings.settings::jsonb -> 'anissiaCatalogCaptionsOnly'
+            )
+            ELSE '{}'::jsonb
+          END
+        )::text,
         updated_at = CURRENT_TIMESTAMP;
     `;
     return true;
   } catch (e) {
     console.error("[db.saveUserSettings error]:", e);
+    return false;
+  }
+}
+
+/** Persist this catalog toggle in the signed-in account's settings JSON.
+ * The toggle updates only its own key and preserves all player preferences.
+ */
+export async function getAnissiaCatalogCaptionsOnly(userId: string): Promise<boolean> {
+  if (!userId) return false;
+  const settings = await getUserSettings(userId);
+  return settings?.anissiaCatalogCaptionsOnly === true;
+}
+
+export async function setAnissiaCatalogCaptionsOnly(userId: string, enabled: boolean): Promise<boolean> {
+  const sql = getDb();
+  if (!sql || !userId || typeof enabled !== "boolean") return false;
+  await initDb();
+  try {
+    const patch = JSON.stringify({ anissiaCatalogCaptionsOnly: enabled });
+    await sql`
+      INSERT INTO user_settings (user_id, settings, updated_at)
+      VALUES (${userId}, ${patch}, CURRENT_TIMESTAMP)
+      ON CONFLICT (user_id) DO UPDATE SET
+        settings = (user_settings.settings::jsonb || EXCLUDED.settings::jsonb)::text,
+        updated_at = CURRENT_TIMESTAMP
+    `;
+    return true;
+  } catch (e) {
+    console.error("[db.setAnissiaCatalogCaptionsOnly error]:", e);
     return false;
   }
 }
