@@ -1,4 +1,5 @@
 import {getLinkedReanimeCatalog} from "@/lib/linkedReanimeCatalog";
+import { getKoreanSubtitleCatalog } from '@/lib/koreanSubtitleCatalog';
 import { NextRequest, NextResponse } from "next/server";
 import {
   getProvider,
@@ -35,6 +36,10 @@ export async function GET(request: NextRequest) {
   let result;
   if(source==="reanime" && searchParams.get("linked")==="1") {
     result=await getLinkedReanimeCatalog({q,page,year,sort:searchParams.get("sort") || "year_desc"});
+  } else if (source === 'anissia' && (q || tab === 'list')) {
+    const captionsOnly = q ? true : searchParams.has('captions')
+      ? searchParams.get('captions') === '1' : await getAnissiaCatalogCaptionsOnly(user.username);
+    result = await getKoreanSubtitleCatalog({ q, page, genre, year, captionsOnly, sort: searchParams.get('sort') || 'year_desc' });
   } else if (source === "anikoto") {
     const filters = { genre, year, typeLang, status: searchParams.get("status") || "", sort: searchParams.get("sort") || "default" };
     result = q ? await provider.searchAnime(q, page, filters) : await provider.getAnimeListFiltered({ ...filters, page });
@@ -97,3 +102,4 @@ export async function GET(request: NextRequest) {
     }
   );
 }
+

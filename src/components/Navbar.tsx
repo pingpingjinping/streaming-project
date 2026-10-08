@@ -240,7 +240,7 @@ export default function Navbar() {
                 : "border-purple-500/20 focus:border-purple-500"
             }`}
           >
-            <option value="current">현재 사이트</option>
+            <option value="current">{activeSource === 'anissia' ? '한글 자막 DB' : '현재 사이트'}</option>
             <option value="all">전체 사이트</option>
           </select>
           <div className="relative min-w-0 flex-1">
