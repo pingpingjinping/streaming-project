@@ -131,6 +131,7 @@ test('authenticated list API uses the same filters and returns Anikoto metadata'
     const {GET} = load('src/app/api/anime/list/route.ts', {
       '@/lib/linkedReanimeCatalog': {}, '@/lib/anikotoCatalog': catalog,
       '@/lib/providers/ohli24': {}, '@/lib/auth': {getSessionUser: async () => ({})},
+      '@/lib/db': {getAnissiaCatalogCaptionsOnly: async () => false},
       'next/server': {NextResponse: {json: value => value}},
       '@/lib/providers': {getProvider: () => ({getAnimeListFiltered: async params => {calls.push(params); return {items: []};}, searchAnime: async (keyword, page, params) => {calls.push({...params, keyword, page}); return {items: []};}})},
     });

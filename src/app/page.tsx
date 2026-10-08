@@ -17,7 +17,7 @@ import {
   AnimeListResponse,
 } from "@/lib/providers";
 import { OHLI24_GENRES } from "@/lib/providers/ohli24";
-import { getDb, initDb, getEnabledStreamingProviders } from "@/lib/db";
+import { getDb, initDb, getEnabledStreamingProviders, getAnissiaCatalogCaptionsOnly, setAnissiaCatalogCaptionsOnly } from "@/lib/db";
 import { checkAndPromoteNewEpisodes } from "@/lib/historyPromotion";
 import { resolveKoreanTitle } from "@/lib/subtitles";
 import { getCurrentUserId, requireAuth } from "@/lib/auth";
@@ -54,6 +54,19 @@ interface SearchParams {
   status?: string;
 }
 
+async function toggleAnissiaCatalogCaptions(formData: FormData) {
+  "use server";
+  const user = await requireAuth();
+  const requested = formData.get("enabled");
+  if (requested !== "1" && requested !== "0") return;
+  const saved = await setAnissiaCatalogCaptionsOnly(user.username, requested === "1");
+  if (!saved) throw new Error("애니시아 자막 필터 설정을 저장하지 못했습니다.");
+  const genre = String(formData.get("genre") || "").slice(0, 100);
+  const params = new URLSearchParams({ tab: "list", page: "1" });
+  if (genre) params.set("genre", genre);
+  redirect(`/?${params.toString()}`);
+}
+
 function anissiaIdFromUrl(query: string): number | null {
   try {
     const url = new URL(query);
@@ -74,7 +87,7 @@ export default async function HomePage({
   searchParams: Promise<SearchParams>;
 }) {
   // 인증 검사: 관리자 없으면 /setup 강제 이동, 미로그인이면 /login 강제 이동
-  await requireAuth();
+  const authenticatedUser = await requireAuth();
 
   const cookieStore = await cookies();
   const enabledSources = await getEnabledStreamingProviders();
@@ -97,6 +110,9 @@ export default async function HomePage({
   const year = params.year || "";
   const sort = params.sort || (activeSource === "anikoto" ? "default" : "year_desc");
   const statusFilter = params.status || "";
+  const captionsOnly = activeSource === "anissia" && tab === "list" && !q
+    ? await getAnissiaCatalogCaptionsOnly(authenticatedUser.username)
+    : false;
   const typeLang = params.type || "";
   const period = params.period || "day";
   const day = params.day !== undefined ? parseInt(params.day, 10) : new Date().getDay();
@@ -232,10 +248,11 @@ export default async function HomePage({
       has_next = res.has_next;
       total_pages = res.total_pages;
     } else if (tab === "list") {
-      const res = await provider.getAnimeListFiltered({ catalog: true, genre: genre || undefined, page });
+      const res = await provider.getAnimeListFiltered({ catalog: true, genre: genre || undefined, page, captionsOnly });
       items = res.items;
       has_next = res.has_next;
       total_pages = res.total_pages;
+      catalogError = res.error;
     } else {
       // Default: recent_caption (최근 등록 자막 실시간 피드)
       const res = await provider.getAnimeList({ category: "recent_caption", page });
@@ -374,7 +391,9 @@ export default async function HomePage({
       sectionSubtitle = "글로벌 평점이 가장 높은 검증된 역대 명작 컬렉션";
     } else if (tab === "list") {
       sectionTitle = genre ? `🎭 ${genre} 장르 작품` : "📚 애니시아 전체 작품 카탈로그";
-      sectionSubtitle = genre
+      sectionSubtitle = captionsOnly
+        ? "애니시아에 자막 제작자가 1명 이상 등록된 작품만 표시합니다."
+        : genre
         ? "애니시아 작품 카탈로그에서 선택한 장르를 검색합니다."
         : "최근 자막 피드와 별도로 애니시아에 등록된 작품을 둘러봅니다. 작품 상세에서 회차별 자막 링크를 확인할 수 있습니다.";
     }
@@ -776,6 +795,35 @@ export default async function HomePage({
                   )}
                 </div>
 
+                <div className="flex flex-wrap items-center gap-3 text-xs">
+                  <span className="font-bold text-emerald-400">자막 필터:</span>
+                  <form action={toggleAnissiaCatalogCaptions}>
+                    <input type="hidden" name="enabled" value={captionsOnly ? "0" : "1"} />
+                    <input type="hidden" name="genre" value={genre} />
+                    <button
+                      type="submit"
+                      role="switch"
+                      aria-checked={captionsOnly}
+                      aria-label={`자막 있는 작품만 보기 ${captionsOnly ? "끄기" : "켜기"}`}
+                      className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 font-semibold transition ${
+                        captionsOnly
+                          ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-200"
+                          : "border-white/15 bg-slate-800/80 text-slate-300 hover:border-emerald-500/50"
+                      }`}
+                    >
+                      자막 있는 작품만
+                      <span aria-hidden="true" className={`relative inline-flex h-5 w-9 rounded-full transition ${
+                        captionsOnly ? "bg-emerald-500" : "bg-slate-600"
+                      }`}>
+                        <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                          captionsOnly ? "translate-x-[18px]" : "translate-x-0.5"
+                        }`} />
+                      </span>
+                      <span className="min-w-7 text-right">{captionsOnly ? "ON" : "OFF"}</span>
+                    </button>
+                  </form>
+                </div>
+
                 {/* 12대 대표 장르 칩 */}
                 <div className="flex items-start gap-2 text-xs pt-1">
                   <span className="font-bold text-emerald-400 mr-1 min-w-[55px] pt-1">인기 장르:</span>
@@ -1153,7 +1201,7 @@ export default async function HomePage({
             )}
 
             <span className="px-4 py-2 text-sm font-semibold text-purple-300">
-              {page} / {total_pages || 1} 페이지
+              {captionsOnly && has_next ? `${page} 페이지` : `${page} / ${total_pages || 1} 페이지`}
             </span>
 
             {has_next && (

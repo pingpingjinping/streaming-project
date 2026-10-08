@@ -9,6 +9,7 @@ import {
 } from "@/lib/providers";
 import { OHLI24_GENRES } from "@/lib/providers/ohli24";
 import { getSessionUser } from "@/lib/auth";
+import { getAnissiaCatalogCaptionsOnly } from "@/lib/db";
 import { ANIKOTO_GENRES, ANIKOTO_YEARS, ANIKOTO_TYPES, ANIKOTO_STATUSES, ANIKOTO_SORTS } from "@/lib/anikotoCatalog";
 
 export async function GET(request: NextRequest) {
@@ -53,7 +54,14 @@ export async function GET(request: NextRequest) {
     ) as "airing" | "top" | "upcoming" | "finished" | "trending";
     result = await provider.getAnimeList({ category, page, genre });
   } else if (tab === "list") {
-    result = await provider.getAnimeListFiltered({ section, genre, year, typeLang, page });
+    const captionsOnly = source === "anissia"
+      ? searchParams.has("captions")
+        ? searchParams.get("captions") === "1"
+        : await getAnissiaCatalogCaptionsOnly(user.username)
+      : false;
+    result = await provider.getAnimeListFiltered({ section, genre, year, typeLang, page,
+      ...(source === "anissia" ? { catalog: true, captionsOnly } : {}),
+    });
   } else if (tab === "top") {
     result = await provider.getAnimeList({ category: "top", page, period });
   } else {
@@ -63,7 +71,7 @@ export async function GET(request: NextRequest) {
 
   const noCache = searchParams.get("nocache") === "1";
   const cacheControl =
-    noCache || q || result.error || searchParams.get("linked")==="1"
+    noCache || q || result.error || searchParams.get("linked")==="1" || (source === "anissia" && tab === "list")
       ? "no-store"
       : "public, s-maxage=300, stale-while-revalidate=600";
 

@@ -84,6 +84,18 @@ interface AniListMeta {
 const aniListMetaCache = new Map<string, { meta: AniListMeta | null; timestamp: number }>();
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
+// Lazily index captioned works without fetching artwork for filtered-out entries.
+interface CaptionCatalogIndex {
+  rows: any[];
+  nextApiPage: number;
+  pageSize: number;
+  finished: boolean;
+  expiresAt: number;
+  pending?: Promise<void>;
+}
+const captionCatalogIndexes = new Map<string, CaptionCatalogIndex>();
+const CAPTION_CATALOG_TTL_MS = 5 * 60 * 1000;
+
 // In-memory cache for Anissia schedules
 let scheduleCache: { [day: number]: { data: any[]; timestamp: number } } = {};
 const SCHEDULE_TTL_MS = 15 * 60 * 1000; // 15 minutes
@@ -245,6 +257,7 @@ class AnissiaProvider implements AnimeProvider {
 
     // Anissia 전체 작품 카탈로그 (최근 자막 피드와 별도)
     if (params.catalog) {
+      if (params.captionsOnly) return await this.getCaptionedAnimeCatalog(page, genre);
       return genre ? await this.searchByGenre(genre, page) : await this.getAnimeCatalog(page);
     }
 
@@ -647,6 +660,93 @@ class AnissiaProvider implements AnimeProvider {
    */
   private async searchByGenre(genre: string, page = 1): Promise<AnimeListResponse> {
     return await this.searchAnime(genre, page);
+  }
+
+
+  /**
+   * Filter before paginating: filtered pages contain consecutive captioned
+   * works, rather than gaps where an unfiltered page had no subtitles.
+   * Rows are cached for five minutes and only the visible page gets artwork.
+   */
+  private async getCaptionedAnimeCatalog(page = 1, genre = ""): Promise<AnimeListResponse> {
+    const targetPage = Math.max(1, Math.trunc(page));
+    const key = genre.trim().toLowerCase();
+    const now = Date.now();
+    let index = captionCatalogIndexes.get(key);
+    if (!index || now >= index.expiresAt) {
+      index = { rows: [], nextApiPage: 0, pageSize: 0, finished: false, expiresAt: now + CAPTION_CATALOG_TTL_MS };
+      captionCatalogIndexes.set(key, index);
+    }
+
+    try {
+      // One look-ahead result tells us whether a subsequent page exists.
+      while (!index.finished && (!index.pageSize || index.rows.length <= targetPage * index.pageSize)) {
+        if (index.pending) {
+          await index.pending;
+          continue;
+        }
+        const currentIndex = index;
+        const job = (async () => {
+          const url = `${ANISSIA_BASE_URL}/anime/list/${currentIndex.nextApiPage}` +
+            (genre ? `?q=${encodeURIComponent(genre)}` : "");
+          const response = await fetch(url, {
+            headers: HEADERS,
+            signal: AbortSignal.timeout(5000),
+          });
+          if (!response.ok) throw new Error(`Anissia Catalog Error: ${response.status}`);
+          const payload = await response.json();
+          const data = payload?.data;
+          const rows: any[] = Array.isArray(data?.content) ? data.content : Array.isArray(data) ? data : [];
+          if (!currentIndex.pageSize) currentIndex.pageSize = Math.max(1, rows.length);
+          currentIndex.rows.push(...rows.filter((item) => Number(item.captionCount || 0) > 0));
+          currentIndex.nextApiPage += 1;
+          const totalPages = Number(data?.totalPages);
+          currentIndex.finished = rows.length === 0 || data?.last === true ||
+            (Number.isFinite(totalPages) && totalPages > 0 && currentIndex.nextApiPage >= totalPages) ||
+            currentIndex.nextApiPage >= 500;
+        })();
+        index.pending = job;
+        try {
+          await job;
+        } finally {
+          if (index.pending === job) index.pending = undefined;
+        }
+      }
+
+      const pageSize = index.pageSize || 1;
+      const start = (targetPage - 1) * pageSize;
+      const selected = index.rows.slice(start, start + pageSize);
+      const metaMap = await enrichWithArtwork(selected.map((item) => ({
+        titleToSearch: item.originalSubject || item.subject || "",
+        animeNo: item.animeNo,
+      })));
+      const items: AnimeListItem[] = selected.map((item) => {
+        const searchKey = item.originalSubject || item.subject || "";
+        const meta = metaMap.get(metaKey(item.animeNo, searchKey));
+        const captionCount = Number(item.captionCount || 0);
+        return {
+          id: toAnissiaId(item.animeNo),
+          title: item.subject || searchKey,
+          poster: meta?.poster || DEFAULT_POSTER,
+          detail_url: `/anime/${toAnissiaId(item.animeNo)}`,
+          remarks: `자막 ${captionCount}명 · ${item.status === "ON" ? "방영중" : "완결"}`,
+          rating: meta?.rating ?? null,
+          caption_count: captionCount,
+          genres: item.genres ? item.genres.split(",").map((g: string) => g.trim()) : [],
+          status: item.status,
+        };
+      });
+      const hasNext = index.rows.length > start + pageSize;
+      // Total filtered count becomes exact when upstream pagination ends.
+      const totalPages = index.finished
+        ? Math.max(1, Math.ceil(index.rows.length / pageSize))
+        : targetPage + (hasNext ? 1 : 0);
+      return { items, page: targetPage, has_next: hasNext, total_pages: totalPages };
+    } catch (error) {
+      console.error("[AnissiaProvider] getCaptionedAnimeCatalog error:", error);
+      return { items: [], page: targetPage, has_next: false, total_pages: 1,
+        error: "애니시아 자막 작품 목록을 불러오지 못했습니다." };
+    }
   }
 
   /** 전체 작품 카탈로그 (/anime/list/{page}) */

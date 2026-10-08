@@ -82,6 +82,7 @@ export interface AnimeListFilterParams {
   period?: "day" | "week" | "month" | "all";
   category?: "recent_caption" | "airing" | "top" | "movie" | "finished" | "trending" | "upcoming";
   catalog?: boolean;
+  captionsOnly?: boolean;
   sort?: string;
   status?: string;
   day?: number | string;
