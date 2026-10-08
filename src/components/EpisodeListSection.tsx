@@ -11,6 +11,7 @@ import {
   Volume2,
   Loader2,
 } from "lucide-react";
+import WorkMatchBadge from "./WorkMatchBadge";
 import { EpisodeItem } from "@/lib/linkkf";
 
 interface EpisodeListSectionProps {
@@ -208,6 +209,7 @@ export default function EpisodeListSection({
 
   return (
     <div ref={containerRef} className="mt-10">
+      <WorkMatchBadge animeId={animeId} />
       {/* 툴바 상단: 타이틀 & 판본 선택 & 정렬 & 회차 검색 점프 */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-purple-500/20 pb-4">
         {/* 타이틀 및 에피소드 수 */}

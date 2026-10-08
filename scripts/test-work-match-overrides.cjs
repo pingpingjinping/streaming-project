@@ -13,7 +13,7 @@ const overrideApi=(sql)=>load('src/lib/workMatchOverrides.ts',{'./db':{getDb:()=
 function matches(sql,overrides=manual,bundled={}) {
   const helpers=overrideApi(null);
   return load('src/lib/reanimeMatches.ts',{'@/data/reanime-matches.json':bundled,'@/lib/db':{getDb:()=>sql},
-    './workMatchOverrides':{...helpers,getWorkMatchOverrides:async()=>overrides}});
+    './provisionalWorkMatches':{getProvisionalWorkMatches:async()=>[]},'./workMatchOverrides':{...helpers,getWorkMatchOverrides:async()=>overrides}});
 }
 test('manual reverse link displaces old imported links in both directions',async()=>{
   const api=matches(async()=>[
@@ -57,7 +57,7 @@ function route(user,sql) {
   const response={json:(data,options={})=>({data,status:options.status||200})};
   const api=load('src/app/api/anime/work-match/route.ts',{
     'next/server':{NextResponse:response},'@/lib/auth':{getSessionUser:async()=>user},'@/lib/db':{getDb:()=>sql},
-    '@/lib/reanimeMatches':{getReanimeMatch:async()=>null,getConfirmedReanimeIdsForAnissia:async()=>new Map()},
+    '@/lib/provisionalWorkMatches':{getProvisionalWorkMatches:async()=>[],candidateReason:x=>x},'@/lib/reanimeMatches':{getReanimeMatch:async()=>null,getEffectiveReanimeIdsForAnissia:async()=>new Map()},
     '@/lib/workMatchOverrides':{...overrideApi(null),getWorkMatchOverrides:async()=>[],
       saveWorkMatchOverride:async(...values)=>{calls.push(values);},resetWorkMatchOverride:async(...values)=>calls.push(values)},
   });return {...api,calls};
@@ -77,14 +77,14 @@ test('API validates both imported works before accepting either direction',async
   const absent=route({isAdmin:true},async()=>[{source:'Anissia'}]);
   assert.equal((await absent.PUT(request({animeId:'ani_42',targetId:'missing'}))).status,404);assert.equal(absent.calls.length,0);
 });
-function resolver(hasEpisode=true,confirmed=true) {
+function resolver(hasEpisode=true,confirmed=true,held=false) {
   const searches=[],streams=[],details=[];
   const mapping=load('src/lib/episodeMapping.ts');
   const reanime={getAnimeDetail:async id=>{details.push(id);return {title:'Correct Season 2',sub_episodes:hasEpisode?[{number:1,watch_url:'correct/1'}]:[]};},
     getEpisodeStream:async url=>{streams.push(url);return {embed_url:url};},searchAnime:async q=>{searches.push(q);return {items:confirmed?[]:[{id:'fixed-season-2',title:'Correct Season 2'}]};}};
   const api=load('src/lib/resolvers/videoResolver.ts',{
-    '../workMatchOverrides':{getWorkMatchOverrides:async()=>manual},
-    '../episodeMapping':mapping,'../reanimeMatches':{getConfirmedReanimeIdsForAnissia:async()=>confirmed?new Map([[42,'fixed-season-2']]):new Map()},
+    '../provisionalWorkMatches':{getReservedReanimeIdsForOtherWorks:async()=>new Set(),hasWorkMatchCandidates:async()=>held},'../workMatchOverrides':{getWorkMatchOverrides:async()=>manual},
+    '../episodeMapping':mapping,'../reanimeMatches':{getEffectiveReanimeIdsForAnissia:async()=>confirmed?new Map([[42,'fixed-season-2']]):new Map()},
     '../providers/reanime':{reanimeProvider:reanime},'../providers/anissia':{fetchAniListMeta:async()=>null},
     '../providers/anikoto':{},'../providers/linkkf':{},'../providers/ohli24':{},'../anikotoLinks':{},'../animeWorkIdentity':{},
     '../db':{getAnissiaStreamCache:async()=>({reanime_id:confirmed?'wrong-season-1':'fixed-season-2'}),setAnissiaStreamCache:async()=>{}},
@@ -94,6 +94,10 @@ function resolver(hasEpisode=true,confirmed=true) {
 test('confirmed work wins over heuristic cache and does not run title search',async()=>{
   const api=resolver();const result=await api.resolveAnissiaStream(42,1,'Correct Season 2','Correct Season 2','rean','ani_42');
   assert.equal(result.embed_url,'correct/1');assert.equal(api.searches.length,0);assert.ok(api.details.every(id=>id==='fixed-season-2'));
+});
+test('withheld catalog candidates cannot be bypassed by title search or stale playback cache',async()=>{
+  const api=resolver(true,false,true);await api.resolveAnissiaStream(42,1,'Sequel Season 4','Original','rean','ani_42');
+  assert.equal(api.searches.length,0);assert.equal(api.streams.length,0);assert.equal(api.details.length,0);
 });
 test('missing episode on selected work cannot silently pick another ReAnime work',async()=>{
   const api=resolver(false);await api.resolveAnissiaStream(42,1,'Correct Season 2','Correct Season 2','rean','ani_42');
@@ -116,7 +120,7 @@ test('Postgres migration, collision rollback, refresh persistence and linked cat
       await db.initDb();
       await sql.unsafe(`CREATE TABLE anime_catalog_entries(source text,source_record_id text,payload jsonb);
         CREATE TABLE anime_reanime_matches(reanime_id text PRIMARY KEY,korean_title text,anissia_no integer,review_status text);
-        CREATE TABLE anime_monthly_match_candidates(reanime_id text,anissia_no integer);`);
+        CREATE TABLE anime_monthly_match_candidates(reanime_id text,anissia_no integer,score integer,reason text,evidence jsonb);`);
       await sql`INSERT INTO anime_catalog_entries VALUES
         ('Anissia','42',${sql.json({title_ko:'올바른 2기',year:2026})}),
         ('Anissia','99',${sql.json({title_ko:'다른 작품',year:2026})}),
@@ -125,7 +129,7 @@ test('Postgres migration, collision rollback, refresh persistence and linked cat
       await sql`INSERT INTO anime_reanime_matches VALUES ('wrong-season-1','이전',42,'자동확정'),('fixed-season-2','다른 작품',99,'자동확정')`;
       const search=await route({isAdmin:true},sql).GET(request({}, {animeId:'ani_42',q:'다른 작품'}));
       assert.equal(search.status,200);assert.equal(search.data.candidates[0].id,'fixed-season-2');
-      await sql`INSERT INTO anime_monthly_match_candidates VALUES ('fixed-season-2',42)`;
+      await sql`INSERT INTO anime_monthly_match_candidates VALUES ('fixed-season-2',42,80,'season_missing','{"conflicts":[],"missing":["season_missing"]}')`;
       const heldSearch=await route({isAdmin:true},sql).GET(request({}, {animeId:'ani_99',q:'올바른'}));
       assert.equal(heldSearch.data.candidates[0].id,'fixed-season-2');
       const before=JSON.stringify(await sql`SELECT * FROM anime_reanime_matches ORDER BY reanime_id`);
@@ -134,7 +138,7 @@ test('Postgres migration, collision rollback, refresh persistence and linked cat
       await sql`INSERT INTO anime_work_match_overrides(reanime_id,anissia_no,updated_by) VALUES('another-manual',99,'admin')`;
       await assert.rejects(api.saveWorkMatchOverride('ani_42','another-manual',42,'admin'),error=>error.code==='23505');
       assert.equal((await api.getWorkMatchOverrides()).find(r=>r.anissiaNo===42).reanimeId,'fixed-season-2');
-      const linked=load('src/lib/linkedReanimeCatalog.ts',{'./db':db,'./workMatchOverrides':api,
+      const linked=load('src/lib/linkedReanimeCatalog.ts',{'./db':db,'./workMatchOverrides':api,'./provisionalWorkMatches':{getProvisionalWorkMatches:async()=>[]},
         './providers/reanime':{getReanimeArtwork:async()=>({poster:'correct.jpg'})},'./providers/anissia':{}});
       const result=await linked.getLinkedReanimeCatalog();
       assert.equal(result.items.length,1);assert.equal(result.items[0].id,'re_fixed-season-2');assert.equal(result.items[0].title,'올바른 2기');
@@ -144,5 +148,39 @@ test('Postgres migration, collision rollback, refresh persistence and linked cat
       await api.resetWorkMatchOverride('ani_42');
       assert.ok(!(await api.getWorkMatchOverrides()).some(r=>r.anissiaNo===42));
       assert.equal((await sql`SELECT korean_title FROM anime_reanime_matches WHERE reanime_id='fixed-season-2'`)[0].korean_title,'갱신 결과');
+      // Candidate allocation is live, symmetric, and survives catalog storage
+      // without mutating any confirmed import row.
+      await sql`INSERT INTO anime_catalog_entries VALUES
+        ('Anissia','11',${sql.json({title_ko:'후보 작품',year:2027})}),
+        ('Anissia','12',${sql.json({title_ko:'후보 작품 2기',year:2027})}),
+        ('ReAnime','candidate-one',${sql.json({title_english:'Candidate Season 1',year:2027})}),
+        ('ReAnime','candidate-two',${sql.json({title_english:'Candidate Season 2',year:2027})})`;
+      await sql`INSERT INTO anime_reanime_matches VALUES ('candidate-two','후보 작품 2기',12,'자동확정')`;
+      await sql`INSERT INTO anime_monthly_match_candidates VALUES
+        ('candidate-one',11,80,'season_missing',${sql.json({conflicts:[],missing:['season_missing'],source_seasons:[],target_seasons:[1]})}),
+        ('candidate-two',11,90,'season_missing',${sql.json({conflicts:[],missing:['season_missing'],source_seasons:[],target_seasons:[1]})})`;
+      const provisional=load('src/lib/provisionalWorkMatches.ts',{'./db':db,'./workMatchOverrides':api});
+      const actualMatches=load('src/lib/reanimeMatches.ts',{'@/lib/db':db,'@/data/reanime-matches.json':{},
+        './workMatchOverrides':api,'./provisionalWorkMatches':provisional});
+      const candidates=await provisional.getProvisionalWorkMatches();
+      assert.equal(candidates.length,1);assert.equal(candidates[0].reanimeId,'candidate-one');
+      assert.equal((await actualMatches.getReanimeMatch('re_candidate-one')).matchStatus,'candidate');
+      assert.equal((await actualMatches.getEffectiveReanimeIdsForAnissia([11])).get(11),'candidate-one');
+      const linkedWithCandidates=load('src/lib/linkedReanimeCatalog.ts',{'./db':db,'./workMatchOverrides':api,
+        './provisionalWorkMatches':provisional,'./providers/reanime':{getReanimeArtwork:async()=>({poster:'correct.jpg'})},'./providers/anissia':{}});
+      const candidateCatalog=await linkedWithCandidates.getLinkedReanimeCatalog();
+      assert.equal(candidateCatalog.items[0].id,'re_candidate-one');assert.ok(candidateCatalog.items[0].remarks.startsWith('후보 연결'));
+      const actualRoute=load('src/app/api/anime/work-match/route.ts',{'next/server':{NextResponse:{json:(data,options={})=>({data,status:options.status||200})}},
+        '@/lib/auth':{getSessionUser:async()=>({isAdmin:true,username:'admin'})},'@/lib/db':db,
+        '@/lib/reanimeMatches':actualMatches,'@/lib/workMatchOverrides':api,'@/lib/provisionalWorkMatches':provisional});
+      const candidateDetail=await actualRoute.GET(request({}, {animeId:'ani_11'}));
+      assert.equal(candidateDetail.status,200);assert.equal(candidateDetail.data.matchStatus,'candidate');
+      assert.equal(candidateDetail.data.current.id,'candidate-one');assert.equal(candidateDetail.data.candidates[0].id,'candidate-one');
+      assert.equal((await actualRoute.GET(request({}, {animeId:'re_candidate-one'}))).data.matchStatus,'candidate');
+      assert.equal((await actualRoute.PUT(request({animeId:'ani_11',targetId:'candidate-one'}))).status,200);
+      assert.equal((await provisional.getProvisionalWorkMatches()).length,0);
+      assert.equal((await actualRoute.GET(request({}, {animeId:'ani_11'}))).data.matchStatus,'confirmed');
+      assert.equal((await sql`SELECT anissia_no FROM anime_reanime_matches WHERE reanime_id='candidate-two'`)[0].anissia_no,12);
+
     }finally{if(sql)await sql.end();await admin.unsafe(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await admin.end();}
   });

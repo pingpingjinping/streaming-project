@@ -1,5 +1,6 @@
+import { getReservedReanimeIdsForOtherWorks, hasWorkMatchCandidates } from '../provisionalWorkMatches';
 import { getWorkMatchOverrides } from "../workMatchOverrides";
-import { getConfirmedReanimeIdsForAnissia } from "../reanimeMatches";
+import { getEffectiveReanimeIdsForAnissia } from "../reanimeMatches";
 import { mapVideoEpisode, toLocalEpisode, videoEpisodeStart } from "../episodeMapping";
 import { AnimeDetail, EpisodeStreamInfo, ServerSource } from "../providers/types";
 import { reanimeProvider } from "../providers/reanime";
@@ -151,12 +152,15 @@ export async function resolveAnissiaStream(
   }
 
   const workOverrides = await getWorkMatchOverrides();
-  const reservedForAnotherWork = (id: string) => workOverrides.some(row =>
+  const reservedIds = await getReservedReanimeIdsForOtherWorks(anissiaId);
+  const reservedForAnotherWork = (id: string) => reservedIds.has(id.replace(/^re_/, "")) || workOverrides.some(row =>
     row.reanimeId === id.replace(/^re_/, "") && row.anissiaNo !== anissiaId);
   if (cachedReanimeId && reservedForAnotherWork(cachedReanimeId)) cachedReanimeId = null;
-  const confirmedReanimeId = anissiaId === null ? null
-    : (await getConfirmedReanimeIdsForAnissia([anissiaId])).get(anissiaId) || null;
-  if (confirmedReanimeId) cachedReanimeId = confirmedReanimeId;
+  const selectedReanimeId = anissiaId === null ? null
+    : (await getEffectiveReanimeIdsForAnissia([anissiaId])).get(anissiaId) || null;
+  const hasCatalogCandidates=await hasWorkMatchCandidates(anissiaId);
+  if (selectedReanimeId) cachedReanimeId = selectedReanimeId;
+  else if(hasCatalogCandidates)cachedReanimeId=null;
 
   // 제목/원제 메타데이터가 없는 경우 애니시아 상세 API로 보강
   let korTitle = title || "";
@@ -223,7 +227,7 @@ export async function resolveAnissiaStream(
       }
     }
 
-    if (!reanimeId && !confirmedReanimeId) {
+    if (!reanimeId && !selectedReanimeId && !hasCatalogCandidates) {
       const cleanJp = jpTitle ? jpTitle.replace(SUBTITLE_DELIMITERS, "").trim() : "";
       const baseJp = cleanJp
         ? cleanJp

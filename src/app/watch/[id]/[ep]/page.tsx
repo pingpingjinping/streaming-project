@@ -1,3 +1,4 @@
+import WorkMatchBadge from "@/components/WorkMatchBadge";
 import Navbar from "@/components/Navbar";
 import Player from "@/components/Player";
 import ReanimeWatchFallback from "@/components/ReanimeWatchFallback";
@@ -119,6 +120,7 @@ export default async function WatchPage({
         <div className="min-h-screen bg-[#0b0f19] pb-16">
           <Navbar />
           <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+            <WorkMatchBadge animeId={id} />
             <ManualSourcePanel
               animeId={id}
               episodeNumber={epNum}
@@ -148,6 +150,7 @@ export default async function WatchPage({
         <div className="min-h-screen bg-[#0b0f19] pb-16">
           <Navbar />
           <main className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">
+            <WorkMatchBadge animeId={id} />
             <ManualSourcePanel animeId={id} episodeNumber={epNum} />
           </main>
           <ReanimeWatchFallback id={id} ep={epNum} isDub={isDub} />
@@ -159,6 +162,7 @@ export default async function WatchPage({
       <div className="min-h-screen bg-[#0b0f19] pb-16">
         <Navbar />
         <main className="mx-auto max-w-4xl px-4 py-12">
+          <WorkMatchBadge animeId={id} />
           <ManualSourcePanel animeId={id} episodeNumber={epNum} />
           <div className="rounded-3xl border border-amber-500/20 bg-slate-900/60 p-8 text-center">
             <h2 className="text-xl font-bold text-amber-300">기본 스트리밍 사이트에 연결할 수 없습니다.</h2>
@@ -180,6 +184,7 @@ export default async function WatchPage({
       <div className="min-h-screen bg-[#0b0f19] pb-16">
         <Navbar />
         <main className="mx-auto max-w-4xl px-4 py-12">
+          <WorkMatchBadge animeId={id} />
           <ManualSourcePanel animeId={id} episodeNumber={epNum} />
           <div className="rounded-3xl border border-red-500/20 bg-slate-900/60 p-8 text-center">
             <h2 className="text-xl font-bold text-red-400">회차 스트림 주소를 찾지 못했습니다.</h2>
@@ -239,6 +244,7 @@ export default async function WatchPage({
           <Navbar />
           <main className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">
             {!activeManual && <AnissiaVideoSourceSelect animeId={id} episodeNumber={epNum} selectedSource={requestedVideoSource || currentProviderSource} creator={initialCreator} subUrl={initialSubUrl} isDub={isDub} />}
+            <WorkMatchBadge animeId={id} />
             <ManualSourcePanel animeId={id} episodeNumber={epNum} />
           </main>
           <ReanimeWatchFallback id={id} ep={epNum} isDub={isDub} />
@@ -251,6 +257,7 @@ export default async function WatchPage({
           <Navbar />
           <main className="mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">
             {!activeManual && <AnissiaVideoSourceSelect animeId={id} episodeNumber={epNum} selectedSource={requestedVideoSource || "rean"} creator={initialCreator} subUrl={initialSubUrl} isDub={isDub} />}
+            <WorkMatchBadge animeId={id} />
             <ManualSourcePanel animeId={id} episodeNumber={epNum} />
           </main>
           <AnissiaStreamFallback
@@ -275,6 +282,7 @@ export default async function WatchPage({
         <Navbar />
         <main className="mx-auto max-w-4xl px-4 py-12">
           {!activeManual && <AnissiaVideoSourceSelect animeId={id} episodeNumber={epNum} selectedSource={requestedVideoSource || currentProviderSource} creator={initialCreator} subUrl={initialSubUrl} isDub={isDub} />}
+          <WorkMatchBadge animeId={id} />
           <ManualSourcePanel animeId={id} episodeNumber={epNum} />
           <div className="rounded-3xl border border-red-500/20 bg-slate-900/60 p-8 text-center">
             <h2 className="text-xl font-bold text-red-400">스트림 주소를 불러오지 못했습니다.</h2>
@@ -341,6 +349,7 @@ export default async function WatchPage({
             isDub={isDub}
           />
         )}
+        <WorkMatchBadge animeId={id} />
         <ManualSourcePanel
           animeId={id}
           episodeNumber={epNum}
