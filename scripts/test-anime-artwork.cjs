@@ -3,7 +3,10 @@ const assert=require('node:assert/strict'),{test}=require('node:test');
 const root=path.join(__dirname,'..');
 const matchOverrides = {getWorkMatchOverrides:async()=>[], importedLinkIsOverridden:()=>false};
 function load(file,deps={},globals={}) {
-  deps={'./provisionalWorkMatches':{getProvisionalWorkMatches:async()=>[]},'./workMatchOverrides':matchOverrides,...deps};
+  deps={'./provisionalWorkMatches':{getProvisionalWorkMatches:async()=>[]},'./workMatchOverrides':matchOverrides,
+    '@/lib/koreanSubtitleCatalog':{getKoreanSubtitleCatalog:async()=>{
+      throw Error('ReAnime artwork tests must not request the Korean subtitle catalog');
+    }},...deps};
   const exports={};
   const code=ts.transpileModule(fs.readFileSync(path.join(root,file),'utf8'),{
     compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText;
@@ -167,3 +170,4 @@ test('actual Postgres pages confirmed DB works, applies titles/year, and preserv
       assert.equal(await snapshot(),before);
     }finally {if(sql)await sql.end();await admin.unsafe(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await admin.end();}
   });
+
