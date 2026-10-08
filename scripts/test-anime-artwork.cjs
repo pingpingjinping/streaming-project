@@ -125,6 +125,7 @@ test('list API routes confirmed-link search and paging to DB catalog without rem
     '@/lib/linkedReanimeCatalog':{getLinkedReanimeCatalog:async options=>{requests.push(options);return {items:[],page:options.page,has_next:false,total_pages:1};}},
     '@/lib/providers':{getProvider:()=>new Proxy({},{get:()=>()=>{throw Error('remote provider must not run');}}),REANIME_GENRES:[]},
     '@/lib/providers/ohli24':{},'@/lib/auth':{getSessionUser:async()=>({id:1})},
+    '@/lib/db':{getAnissiaCatalogCaptionsOnly:async()=>false},
     '@/lib/anikotoCatalog':{},
     'next/server':{NextResponse:{json:(data,options)=>({data,options})}},
   });
