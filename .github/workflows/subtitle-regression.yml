@@ -53,6 +53,7 @@ jobs:
       - run: python -m unittest discover -s scripts -p test_refresh_reviewed_subtitle_links.py -v
       - run: python -m unittest discover -s scripts -p test_split_registry_import.py -v
       - run: python -m unittest discover -s scripts -p test_weekly_aniall.py -v
+      - run: python -m unittest discover -s scripts -p test_catalog_core.py -v
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -60,3 +61,4 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run test:subtitles
       - run: npm run build
+
