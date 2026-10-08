@@ -27,10 +27,15 @@ export async function GET(request: NextRequest) {
       WHERE source=${source} AND source_record_id=${String(currentId)} LIMIT 1` : [];
     const query = (request.nextUrl.searchParams.get('q') || '').normalize('NFKC').trim().slice(0,200);
     const pattern = `%${query.replace(/[\\%_]/g,'\\$&')}%`;
-    const rows = query.length >= 2 ? await sql`SELECT source_record_id,payload FROM anime_catalog_entries
-      WHERE source=${source} AND (source_record_id=${query}
-        OR concat_ws(' ',payload->>'title_ko',payload->>'title_native',payload->>'title_romaji',payload->>'title_english') ILIKE ${pattern})
-      ORDER BY payload->>'year' DESC NULLS LAST,source_record_id LIMIT 20` : [];
+    const rows = query.length >= 2 ? await sql`SELECT e.source_record_id,e.payload FROM anime_catalog_entries e
+      LEFT JOIN anime_reanime_matches m ON e.source='ReAnime' AND m.reanime_id=e.source_record_id
+      WHERE e.source=${source} AND (e.source_record_id=${query}
+        OR concat_ws(' ',m.korean_title,e.payload->>'title_ko',e.payload->>'title_native',e.payload->>'title_romaji',e.payload->>'title_english') ILIKE ${pattern}
+        OR (e.source='ReAnime' AND EXISTS (
+          SELECT 1 FROM anime_monthly_match_candidates c JOIN anime_catalog_entries a
+            ON a.source='Anissia' AND a.source_record_id=c.anissia_no::text
+          WHERE c.reanime_id=e.source_record_id AND a.payload->>'title_ko' ILIKE ${pattern})))
+      ORDER BY e.payload->>'year' DESC NULLS LAST,e.source_record_id LIMIT 20` : [];
     const item = (r: any) => ({ id: String(r.source_record_id),
       title: r.payload?.title_ko || r.payload?.title_english || r.payload?.title_romaji || r.payload?.title_native || r.source_record_id,
       nativeTitle: r.payload?.title_native || '', year: r.payload?.year || null, format: r.payload?.format || '' });

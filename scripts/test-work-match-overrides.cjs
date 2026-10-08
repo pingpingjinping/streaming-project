@@ -115,13 +115,19 @@ test('Postgres migration, collision rollback, refresh persistence and linked cat
         {process:{env:{DATABASE_URL:'test'}}});
       await db.initDb();
       await sql.unsafe(`CREATE TABLE anime_catalog_entries(source text,source_record_id text,payload jsonb);
-        CREATE TABLE anime_reanime_matches(reanime_id text PRIMARY KEY,korean_title text,anissia_no integer,review_status text);`);
+        CREATE TABLE anime_reanime_matches(reanime_id text PRIMARY KEY,korean_title text,anissia_no integer,review_status text);
+        CREATE TABLE anime_monthly_match_candidates(reanime_id text,anissia_no integer);`);
       await sql`INSERT INTO anime_catalog_entries VALUES
         ('Anissia','42',${sql.json({title_ko:'올바른 2기',year:2026})}),
         ('Anissia','99',${sql.json({title_ko:'다른 작품',year:2026})}),
         ('ReAnime','fixed-season-2',${sql.json({title_english:'Correct Season 2',year:2026})}),
         ('ReAnime','wrong-season-1',${sql.json({title_english:'Wrong Season 1',year:2026})})`;
       await sql`INSERT INTO anime_reanime_matches VALUES ('wrong-season-1','이전',42,'자동확정'),('fixed-season-2','다른 작품',99,'자동확정')`;
+      const search=await route({isAdmin:true},sql).GET(request({}, {animeId:'ani_42',q:'다른 작품'}));
+      assert.equal(search.status,200);assert.equal(search.data.candidates[0].id,'fixed-season-2');
+      await sql`INSERT INTO anime_monthly_match_candidates VALUES ('fixed-season-2',42)`;
+      const heldSearch=await route({isAdmin:true},sql).GET(request({}, {animeId:'ani_99',q:'올바른'}));
+      assert.equal(heldSearch.data.candidates[0].id,'fixed-season-2');
       const before=JSON.stringify(await sql`SELECT * FROM anime_reanime_matches ORDER BY reanime_id`);
       const api=load('src/lib/workMatchOverrides.ts',{'./db':db});
       await api.saveWorkMatchOverride('ani_42','fixed-season-2',42,'admin');
