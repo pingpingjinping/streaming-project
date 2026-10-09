@@ -63,8 +63,12 @@ async function toggleAnissiaCatalogCaptions(formData: FormData) {
   const saved = await setAnissiaCatalogCaptionsOnly(user.username, requested === "1");
   if (!saved) throw new Error("애니시아 자막 필터 설정을 저장하지 못했습니다.");
   const genre = String(formData.get("genre") || "").slice(0, 100);
-  const params = new URLSearchParams({ tab: "list", page: "1" });
-  if (genre) params.set("genre", genre);
+  const query = String(formData.get("q") || "").trim().slice(0, 200);
+  const scope = formData.get("scope") === "all" ? "all" : "current";
+  const params = new URLSearchParams({ tab: query ? "search" : "list", page: "1" });
+  if (query) params.set("q", query);
+  if (query && scope === "all") params.set("scope", "all");
+  if (!query && genre) params.set("genre", genre);
   redirect(`/?${params.toString()}`);
 }
 
@@ -1157,6 +1161,38 @@ export default async function HomePage({
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* The saved Anissia caption-only preference also filters current-site
+            searches across Anissia, AniAll and Naver, not just the list tab. */}
+        {activeSource === "anissia" && q && searchScope === "current" && (
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-500/20 bg-slate-900/60 px-4 py-3 text-xs">
+            <span className="text-slate-400">현재 사이트: 애니시아 · AniAll · 네이버 자막 DB</span>
+            <form action={toggleAnissiaCatalogCaptions}>
+              <input type="hidden" name="enabled" value={captionsOnly ? "0" : "1"} />
+              <input type="hidden" name="q" value={q} />
+              <input type="hidden" name="scope" value={searchScope} />
+              <button
+                type="submit"
+                role="switch"
+                aria-checked={captionsOnly}
+                aria-label={`검색 결과에서 자막 있는 작품만 보기 ${captionsOnly ? "끄기" : "켜기"}`}
+                className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 font-semibold transition ${
+                  captionsOnly
+                    ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-200"
+                    : "border-white/15 bg-slate-800/80 text-slate-300 hover:border-emerald-500/50"
+                }`}
+              >
+                자막 있는 작품만
+                <span aria-hidden="true" className={`relative inline-flex h-5 w-9 rounded-full ${captionsOnly ? "bg-emerald-500" : "bg-slate-600"}`}>
+                  <span className={`absolute top-0.5 h-4 w-4 rounded-full shadow-sm bg-white transition-transform ${
+                    captionsOnly ? "translate-x-[18px]" : "translate-x-0.5"
+                  }`} />
+                </span>
+                <span className="min-w-7 text-right">{captionsOnly ? "ON" : "OFF"}</span>
+              </button>
+            </form>
           </div>
         )}
 
