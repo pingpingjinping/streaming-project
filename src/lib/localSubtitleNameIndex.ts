@@ -150,7 +150,7 @@ async function load(root: string, force = false): Promise<NameIndex> {
       && Array.isArray(parsed.entries) && Date.now() - parsed.scannedAt < MAX_AGE_MS) {
       saved = { root, scannedAt: parsed.scannedAt, logOffset: parsed.logOffset,
         entries: new Map(parsed.entries.filter((entry: NameEntry) =>
-          typeof entry.relativePath === 'string' && validEntry(entry.relativePath, entry.choice?.entryType))
+          Boolean(entry && entry.choice) && typeof entry.relativePath === 'string' && validEntry(entry.relativePath, entry.choice.entryType))
           .map((entry: NameEntry) => [entry.relativePath, makeEntry(entry.relativePath, entry.choice.entryType)])) };
     }
   } catch (error: any) {
