@@ -113,7 +113,14 @@ export async function loadSubtitleCatalog(): Promise<SubtitleCatalogWork[]> {
         const add = (map: Map<string, KoreanTitleRow[]>, key: string, row: KoreanTitleRow) => {
           if (key) map.set(key, [...(map.get(key) || []), row]);
         };
-        for (const row of koreanTitles as KoreanTitleRow[]) {
+        for (const raw of koreanTitles) {
+          const row: KoreanTitleRow = {
+            source: String(raw.source || ''),
+            source_record_id: String(raw.source_record_id || ''),
+            title: String(raw.title || ''),
+            anilist_id: raw.anilist_id ? String(raw.anilist_id) : undefined,
+            reanime_id: raw.reanime_id ? String(raw.reanime_id) : undefined,
+          };
           if (!row.title) continue;
           add(byWork, row.source + ':' + row.source_record_id, row);
           if (row.anilist_id) add(byAniList, String(row.anilist_id), row);
