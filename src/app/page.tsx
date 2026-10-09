@@ -4,6 +4,8 @@ import Navbar from "@/components/Navbar";
 import AnimeCard from "@/components/AnimeCard";
 import HistoryList, { HistoryItem } from "@/components/HistoryList";
 import ReanimeFeedFallback from "@/components/ReanimeFeedFallback";
+import AnissiaDbSearchFallback from "@/components/AnissiaDbSearchFallback";
+import { prepareAnissiaApiSearch } from "@/lib/anissiaSearchStages";
 import AnikotoCatalogFilters from "@/components/AnikotoCatalogFilters";
 import { cookies } from "next/headers";
 import {
@@ -142,9 +144,7 @@ export default async function HomePage({
       linkkf: "Linkkf",
     };
     const normalizedQuery = q.replace(/\s+/g, " ").trim();
-    // The unified Anissia/AniAll/Naver catalog searches the raw query
-    // directly; resolving a Korean title here can trigger unnecessary DB
-    // initialization before the actual keyword query even starts.
+    // The API-first current-site search needs no preflight title/DB lookup.
     const koreanTitle = activeSource === "anissia" && searchScope === "current"
       ? normalizedQuery
       : await resolveKoreanTitle(normalizedQuery).catch(() => normalizedQuery);
@@ -157,13 +157,10 @@ export default async function HomePage({
     const results = await Promise.allSettled(
       sources.map(async (source) => {
         if (source === 'anissia') {
-          const catalog = await getKoreanSubtitleCatalog({ q: normalizedQuery, page, captionsOnly });
-          if (!catalog.error) return { source, result: catalog };
-          // The catalog is an enhancement, not a single point of failure.
-          // Keep the former Anissia keyword search working during DB errors.
-          const fallback = await getProvider('anissia').searchAnime(normalizedQuery, page)
-            .catch(() => catalog);
-          return { source, result: { ...fallback, error: catalog.error } };
+          // Fast upstream API first. If its visible results are empty, the
+          // client searches the local multilingual subtitle DB after the page renders.
+          const fast = await getProvider('anissia').searchAnime(normalizedQuery, page);
+          return { source, result: prepareAnissiaApiSearch(fast, captionsOnly).result };
         }
         const providerForSource = getProvider(source);
         let lastResult: AnimeListResponse = { items: [], page, has_next: false, total_pages: 1 };
@@ -380,6 +377,10 @@ export default async function HomePage({
     if(newParams.tab && newParams.tab!=="list" && newParams.tab!=="search")p.delete("linked");
     return `/?${p.toString()}`;
   };
+
+  const needsAnissiaDbFallback = Boolean(
+    q && activeSource === "anissia" && searchScope === "current" && items.length === 0
+  );
 
   const genresToDisplay =
     activeSource === "anissia"
@@ -1227,6 +1228,8 @@ export default async function HomePage({
                   <AnimeCard key={`${anime.id}-${idx}`} anime={anime} />
                 ))}
               </div>
+            ) : needsAnissiaDbFallback ? (
+              <AnissiaDbSearchFallback key={q + ":" + captionsOnly} keyword={q} captionsOnly={captionsOnly} initialPage={page} />
             ) : activeSource === "reanime" && !linkedOnly && tab !== "favorites" ? (
               <ReanimeFeedFallback tab={tab} q={q} genre={genre} page={page} />
             ) : (
@@ -1242,7 +1245,7 @@ export default async function HomePage({
         )}
 
         {/* Pagination: ReAnime 모든 탭 및 애니24, Linkkf에서 페이지 이동 가능 */}
-        {tab !== "favorites" && tab !== "history" && !(activeSource === "linkkf" && tab === "top") && total_pages > 1 && (
+        {tab !== "favorites" && tab !== "history" && !(activeSource === "linkkf" && tab === "top") && !needsAnissiaDbFallback && total_pages > 1 && (
           <div className="mt-10 flex items-center justify-center gap-2">
             {page > 1 && (
               <Link
