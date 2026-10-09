@@ -142,7 +142,12 @@ export default async function HomePage({
       linkkf: "Linkkf",
     };
     const normalizedQuery = q.replace(/\s+/g, " ").trim();
-    const koreanTitle = await resolveKoreanTitle(normalizedQuery).catch(() => normalizedQuery);
+    // The unified Anissia/AniAll/Naver catalog searches the raw query
+    // directly; resolving a Korean title here can trigger unnecessary DB
+    // initialization before the actual keyword query even starts.
+    const koreanTitle = activeSource === "anissia" && searchScope === "current"
+      ? normalizedQuery
+      : await resolveKoreanTitle(normalizedQuery).catch(() => normalizedQuery);
     const withoutMiddleSubtitle = koreanTitle.replace(/~[^~]*~/g, " ").replace(/\s+/g, " ").trim();
     const leadingWords = withoutMiddleSubtitle.split(/\s+/).slice(0, 2).join(" ");
     const compactQuery = normalizedQuery.replace(/\s+/g, "");
