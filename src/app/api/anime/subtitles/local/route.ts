@@ -12,7 +12,7 @@ import {
 } from "@/lib/db";
 import { getAniAllArchiveSubtitles, getAnissiaArchiveSubtitles } from "@/lib/subtitleStorage";
 import { findReviewedFiles, getReviewedSubtitles } from "@/lib/reviewedSubtitleStorage";
-import { searchLocalSubtitleEntries, searchLocalZipSubtitles } from "@/lib/localSubtitleSearch";
+import { searchLocalSubtitleEntries, searchLocalZipSubtitles, refreshLocalSubtitleSearchIndex } from "@/lib/localSubtitleSearch";
 import {parseBundleScope,bundleScopesOverlap,bundleSelectionMatches} from "@/lib/subtitleLocalIdentity";
 import { parseSeason, resolveKoreanTitle } from "@/lib/subtitles";
 
@@ -30,6 +30,9 @@ export async function GET(request: NextRequest) {
 
   try {
     if (params.get("mode") === "folders") {
+      // Explicit refresh also handles files moved manually by File Browser,
+      // which does not write the automatic downloader change journal.
+      if (params.get("refresh") === "1") await refreshLocalSubtitleSearchIndex();
       const folders = await searchLocalSubtitleEntries(title);
       return NextResponse.json({ success: true, folders },
         { headers: { "Cache-Control": "no-store" } });

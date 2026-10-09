@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
+import { getLocalSubtitleNameEntries, refreshLocalSubtitleNameIndex } from './localSubtitleNameIndex';
 import path from 'node:path';
 import { decodeSubtitleFile } from './subtitles';
 import { inspectSubtitleArchive } from './subtitleUpload';
@@ -19,31 +20,12 @@ export interface LocalSubtitleChoice {
 export async function searchLocalSubtitleEntries(query: string): Promise<LocalSubtitleChoice[]> {
   const needle = normalize(query);
   if (needle.length < 2) return [];
-  const matches: LocalSubtitleChoice[] = [];
-  for (const provider of ['anissia', 'aniall', 'naver'] as const) {
-    const base = path.join(root(), `${provider}_subtitles`);
-    const walk = async (dir: string, depth: number) => {
-      let entries;
-      try { entries = await readdir(dir, { withFileTypes: true }); }
-      catch (error: any) { if (error.code === 'ENOENT') return; throw error; }
-      for (const entry of entries) {
-        if (entry.name.startsWith('.') || entry.name === '__MACOSX') continue;
-        const file = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          // Keep existing AniAll folder selection; Anissia folders are listed first.
-          if (depth === 0 && provider !== 'naver' && normalize(entry.name).includes(needle)) {
-            matches.push({ folderName: entry.name, provider, entryType: 'folder',
-              folderKey: bundleScopeKey({ type: 'folder', provider, work: entry.name, ...subtitleScope('', entry.name) }) });
-          }
-          if (depth < 10) await walk(file, depth + 1);
-        } else if (entry.isFile() && /\.zip$/i.test(entry.name) && normalize(entry.name).includes(needle)) {
-          matches.push({ folderName: entry.name, provider, entryType: 'zip',
-            archivePath: path.relative(root(), file).split(path.sep).join('/') });
-        }
-      }
-    };
-    await walk(base, 0);
-  }
+  const matches = (await getLocalSubtitleNameEntries(root()))
+    .filter(entry => entry.normalizedName.includes(needle))
+    .map(({ choice }) => choice.entryType === 'folder' && choice.provider !== 'naver'
+      ? { ...choice, folderKey: bundleScopeKey({ type: 'folder', provider: choice.provider,
+          work: choice.folderName, ...subtitleScope('', choice.folderName) }) }
+      : { ...choice });
   const rank = (item: LocalSubtitleChoice) => item.provider === 'anissia' && item.entryType === 'folder' ? 0 : item.entryType === 'zip' ? 1 : 2;
   return matches.sort((a, b) => rank(a) - rank(b) || a.folderName.localeCompare(b.folderName, 'ko')
     || (a.archivePath || '').localeCompare(b.archivePath || '')).slice(0, 200);
@@ -96,4 +78,9 @@ export async function searchLocalZipSubtitles(query: string, episode: number, so
     } catch { /* An unreadable archive must not hide the other search results. */ }
   }
   return results;
+}
+
+/** Refresh after manual File Browser moves that bypass the download journal. */
+export async function refreshLocalSubtitleSearchIndex() {
+  return refreshLocalSubtitleNameIndex(root());
 }
