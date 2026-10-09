@@ -10,6 +10,12 @@ function load(file, deps = {}, globals = {}) {
   deps = {'@/lib/koreanSubtitleCatalog': {getKoreanSubtitleCatalog: async () => {
     throw Error('Anikoto tests must not request the Korean subtitle catalog');
   }}, ...deps};
+  // HomePage imports its search-only modules even in unrelated catalog tests.
+  deps = {
+    '@/components/AnissiaDbSearchFallback': { default: () => null },
+    '@/lib/anissiaSearchStages': { prepareAnissiaApiSearch: (result) => ({result, needsDbFallback: result.items.length === 0}) },
+    ...deps,
+  };
   const exports = {};
   const code = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {
     compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true},
