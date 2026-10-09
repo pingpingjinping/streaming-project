@@ -147,7 +147,15 @@ export default async function HomePage({
       .filter((term) => term.length >= 2))];
     const results = await Promise.allSettled(
       sources.map(async (source) => {
-        if (source === 'anissia') return { source, result: await getKoreanSubtitleCatalog({ q: normalizedQuery, page, captionsOnly: true }) };
+        if (source === 'anissia') {
+          const catalog = await getKoreanSubtitleCatalog({ q: normalizedQuery, page, captionsOnly: false });
+          if (!catalog.error) return { source, result: catalog };
+          // The catalog is an enhancement, not a single point of failure.
+          // Keep the former Anissia keyword search working during DB errors.
+          const fallback = await getProvider('anissia').searchAnime(normalizedQuery, page)
+            .catch(() => catalog);
+          return { source, result: { ...fallback, error: catalog.error } };
+        }
         const providerForSource = getProvider(source);
         let lastResult: AnimeListResponse = { items: [], page, has_next: false, total_pages: 1 };
         for (const term of terms) {
