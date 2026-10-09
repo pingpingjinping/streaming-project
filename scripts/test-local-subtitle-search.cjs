@@ -64,6 +64,31 @@ test('manual File Browser ZIP moves can force refresh without waiting for expira
   assert.ok(after.some(entry => entry.archivePath === 'naver_subtitles/unregistered/Manually Added.zip'));
 });
 
+test('an index older than 30 minutes is reused until an explicit or weekly rebuild', async () => {
+  const oldNow = Date.now;
+  const newZip = 'naver_subtitles/direct/After Thirty Minutes.zip';
+  pack(newZip, 'manual');
+  try {
+    Date.now = () => oldNow() + 31 * 60_000;
+    const found = await storage.searchLocalSubtitleEntries('After Thirty Minutes');
+    assert.equal(found.length, 0, 'elapsed time must not trigger a recursive scan');
+  } finally { Date.now = oldNow; }
+});
+
+test('external weekly CLI rebuild is reflected in a running server index', async () => {
+  const {spawnSync} = require('node:child_process');
+  const cli = path.join(__dirname, '../.subtitle-cache-tools/refresh-local-subtitle-index.cjs');
+  const run = spawnSync(process.execPath, [cli], {
+    env: {...process.env, SUBTITLE_STORAGE_DIR: root}, encoding: 'utf8', timeout: 30_000,
+  });
+  assert.equal(run.status, 0, run.stderr || run.stdout);
+  const indexFile = path.join(root, '.local-subtitle-name-index-v1.json');
+  const modified = new Date(Date.now() + 5000);
+  fs.utimesSync(indexFile, modified, modified);
+  const found = await storage.searchLocalSubtitleEntries('After Thirty Minutes');
+  assert.ok(found.some(entry => entry.archivePath === 'naver_subtitles/direct/After Thirty Minutes.zip'));
+});
+
 test('manual ZIP selection opens the exact path even when filenames repeat', async () => {
   pack('naver_subtitles/first/Same.zip', 'first archive');
   pack('naver_subtitles/second/Same.zip', 'second archive');
