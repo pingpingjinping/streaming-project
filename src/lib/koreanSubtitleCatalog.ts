@@ -90,18 +90,45 @@ export async function loadSubtitleCatalog(): Promise<SubtitleCatalogWork[]> {
             AND f.target_id IS NOT NULL AND f.target_id<>''
           GROUP BY f.source,f.target_source,f.target_id,f.work_title_ko,f.reanime_id,f.dataset_key
         )
-        SELECT f.*,c.payload,r.payload AS remote_payload,k.payload->>'title' AS korean_title
+        SELECT f.*,c.payload,r.payload AS remote_payload
         FROM files f
         LEFT JOIN anime_catalog_entries c ON c.source=f.target_source AND c.source_record_id=f.target_id
-        LEFT JOIN anime_catalog_entries r ON r.source='ReAnime' AND r.source_record_id=f.reanime_id
-        LEFT JOIN LATERAL (
-          SELECT payload FROM anime_korean_catalog k
-          WHERE k.payload->>'status' IN ('검토된 사항','자동확정') AND (
-            (k.source=f.target_source AND k.source_record_id=f.target_id)
-            OR (f.target_source='AniList' AND k.payload->>'anilistId'=f.target_id)
-            OR (f.reanime_id IS NOT NULL AND k.payload->>'reanimeId'=f.reanime_id))
-          ORDER BY CASE WHEN k.source='Onnada' THEN 0 ELSE 1 END,k.source_record_id LIMIT 1
-        ) k ON TRUE`;
+        LEFT JOIN anime_catalog_entries r ON r.source='ReAnime' AND r.source_record_id=f.reanime_id`;
+      // The former LATERAL query scanned the Korean catalog once per file
+      // group on low-powered Pi hardware. Read verified title bridges just
+      // once and perform the exact same identity lookup using indexed maps.
+      if (subtitleRows.length) {
+        const koreanTitles = await sql`
+          SELECT k.source,k.source_record_id,k.payload->>'title' AS title,
+            k.payload->>'anilistId' AS anilist_id,
+            k.payload->>'reanimeId' AS reanime_id
+          FROM anime_korean_catalog k
+          WHERE k.payload->>'status' IN ('검토된 사항','자동확정')`;
+        type KoreanTitleRow = { source: string; source_record_id: string; title: string; anilist_id?: string; reanime_id?: string };
+        const byWork = new Map<string, KoreanTitleRow[]>();
+        const byAniList = new Map<string, KoreanTitleRow[]>();
+        const byReanime = new Map<string, KoreanTitleRow[]>();
+        const add = (map: Map<string, KoreanTitleRow[]>, key: string, row: KoreanTitleRow) => {
+          if (key) map.set(key, [...(map.get(key) || []), row]);
+        };
+        for (const row of koreanTitles as KoreanTitleRow[]) {
+          if (!row.title) continue;
+          add(byWork, row.source + ':' + row.source_record_id, row);
+          if (row.anilist_id) add(byAniList, String(row.anilist_id), row);
+          if (row.reanime_id) add(byReanime, String(row.reanime_id), row);
+        }
+        const sortTitles = (a: KoreanTitleRow, b: KoreanTitleRow) =>
+          Number(b.source === 'Onnada') - Number(a.source === 'Onnada')
+          || String(a.source_record_id).localeCompare(String(b.source_record_id));
+        subtitleRows = subtitleRows.map(row => {
+          const titles = [
+            ...(byWork.get(String(row.target_source) + ':' + String(row.target_id)) || []),
+            ...(row.target_source === 'AniList' ? byAniList.get(String(row.target_id)) || [] : []),
+            ...(row.reanime_id ? byReanime.get(String(row.reanime_id)) || [] : []),
+          ].sort(sortTitles);
+          return { ...row, korean_title: titles[0]?.title || null };
+        });
+      }
     } catch (error: any) {
       // A stale or partially imported subtitle registry must not disable
       // the entire Anissia title search.
