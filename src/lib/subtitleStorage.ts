@@ -11,6 +11,7 @@ import { bundleScopeKey, parseBundleScope, localFileKey, parseLocalFileKey, subt
 
 import {readSubtitleSourceManifest,sourceDigestMatches,sourceTrackIdentity} from './subtitleSourceManifest';
 import type {DownloadRecord} from './subtitleSourceManifest';
+import { excludeRegisteredLooseFiles } from './reviewedLooseSubtitles';
 
 const root = process.env.SUBTITLE_STORAGE_DIR || path.join(process.cwd(), "data", "subtitles");
 const safeSegment = (value: string) => {
@@ -494,7 +495,7 @@ export async function getAnissiaArchiveSubtitles(
     }
     if (results.length >= resultLimit) break;
   }
-  return results;
+  return options.bundleKey ? results : excludeRegisteredLooseFiles(results);
 }
 
 async function folderSubtitleFiles(directory:string) {
@@ -622,4 +623,5 @@ export async function getLocalSubtitleFile(fileId: string) {
       ...rawBundleIdentity(provider,reference.relative,reference.member,creator,workTitle,sourceRecord)};
   } catch(error:any) { if(error?.code!=='ENOENT' && error?.code!=='ENOTDIR') console.warn('[Local subtitle override unreadable]',error.message); return null; }
 }
+
 

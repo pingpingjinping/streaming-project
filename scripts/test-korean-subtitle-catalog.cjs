@@ -125,3 +125,17 @@ test('verified alias and catalog titles remain eligible, but entries without any
   assert.equal((await api.getKoreanSubtitleCatalog({captionsOnly:true})).items.length,2);
   assert.ok(api.calls.some(x=>x.includes('f.work_confirmed')), 'Only reviewed registry files are queried');
 });
+test('new reviewed loose Anissia works contribute file availability to the title catalog',async()=>{
+  const api=setup([], [{source:'anissia',target_source:'Anissia',target_id:'490',work_title_ko:'ISUCA (이스카)',
+    reanime_id:'isuca-tv',file_count:10,payload:{year:2015,format:'TV'}}]);
+  const result=await api.getKoreanSubtitleCatalog({q:'ISUCA',captionsOnly:true});
+  assert.equal(result.items.length,1);
+  assert.equal(result.items[0].id,'ani_490');
+  assert.equal(result.items[0].caption_count,10);
+  assert.match(result.items[0].source_name,/애니시아/);
+  const query=api.calls.find(q=>q.includes('WITH files AS'));
+  assert.ok(query.includes("f.source='anissia'"));
+  assert.ok(query.includes('f.work_confirmed'));
+  assert.ok(!api.calls.some(q=>/INSERT|UPDATE|DELETE/.test(q)));
+});
+

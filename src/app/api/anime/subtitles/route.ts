@@ -322,7 +322,7 @@ export async function GET(request: NextRequest) {
       }, { headers: { "Cache-Control": "no-store" } });
     }
 
-    const findReviewedLocal = async (source: "aniall" | "naver", includeUnknown = true) => {
+    const findReviewedLocal = async (source: "aniall" | "naver" | "anissia", includeUnknown = true) => {
       if (bundleAssignment && bundleAssignment.provider !== source) return null;
       const reviewed = await getReviewedSubtitles({ animeId: animeIdParam, episode: ep, sourceEpisode,
         season: parseSeason(comparisonTitle) || parseSeason(searchTarget), source,
@@ -393,6 +393,7 @@ export async function GET(request: NextRequest) {
     };
     const findAnissiaLocal = async () => {
       if(bundleAssignment && bundleAssignment.provider!=='anissia') return null;
+      const reviewed=await findReviewedLocal('anissia',false);if(reviewed) return reviewed;
       const localSubtitles=await getAnissiaArchiveSubtitles([searchTarget,comparisonTitle,title,referenceTitle || ''],sourceEpisode,directAnimeNo,
         parseSeason(comparisonTitle) || parseSeason(searchTarget),{localEpisode:ep,bundleKey:bundleAssignment?.bundleKey});
       let available=localSubtitles.filter(s=>!claimedByOtherAnime('anissia',s.sourceBundleKey))
@@ -435,7 +436,9 @@ export async function GET(request: NextRequest) {
       const reviewedNaver = await findReviewedLocal("naver", false);
       if (reviewedNaver) return reviewedNaver;
       // Unknown historical episodes must not hide a known weekly file from either local source.
-      const reviewedManual = await findReviewedLocal("aniall") || await findReviewedLocal("naver");
+      const reviewedManual = sourcePriority === 'aniall'
+        ? await findReviewedLocal('aniall') || await findReviewedLocal('anissia') || await findReviewedLocal('naver')
+        : await findReviewedLocal('anissia') || await findReviewedLocal('aniall') || await findReviewedLocal('naver');
       if (reviewedManual) return reviewedManual;
     }
 
@@ -690,3 +693,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
