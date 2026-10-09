@@ -85,3 +85,43 @@ test('weekly AniAll post matches remain discoverable independently of the v6 reg
   assert.ok(api.calls.find(x=>x.includes('WITH files AS')).includes('f.work_confirmed'));
   assert.ok(!api.calls.some(x=>/INSERT|UPDATE|DELETE/.test(x)),'Browsing never writes catalog data');
 });
+test('reviewed Latin/numeric-only R-15, 86 and K are searchable as subtitle works', async () => {
+  const files = [
+    {source:'naver',target_source:'Onnada',target_id:'2262',work_title_ko:'R-15',
+      reanime_id:'r-15-jmprhw',file_count:13,payload:{year:2011,title_native:'R-15',format:'TV'}},
+    {...subtitle('aniall',2021,'86 -Eighty Six-','eighty-six'),file_count:23},
+    {...subtitle('naver',2012,'K','k-project'),file_count:13},
+  ];
+  const api = setup([],files);
+  for (const keyword of ['R-15','r 15','R15']) {
+    const response = await api.getKoreanSubtitleCatalog({q:keyword,captionsOnly:true});
+    assert.equal(response.items.length,1,keyword);
+    assert.equal(response.items[0].id,'re_r-15-jmprhw');
+    assert.equal(response.items[0].title,'R-15');
+    assert.equal(response.items[0].caption_count,13);
+    assert.match(response.items[0].source_name,/네이버/);
+  }
+  assert.equal((await api.getKoreanSubtitleCatalog({q:'86',captionsOnly:true})).items[0].title,'86 -Eighty Six-');
+  assert.ok((await api.getKoreanSubtitleCatalog({q:'K',captionsOnly:true})).items.some(item => item.title === 'K'),
+    'Short Latin titles must remain discoverable alongside substring matches');
+  assert.equal(api.artwork.length,0);
+});
+test('verified alias and catalog titles remain eligible, but entries without any title remain hidden', async () => {
+  const files = [
+    {...subtitle('naver',10611,'','r-15-jmprhw'),work_title_ko:null,payload:{}},
+    {...subtitle('naver',88,'Original Title'),payload:{title_ko:'한글 제목',title_english:'Original Title'}},
+    {source:'naver',target_source:'AniList',target_id:'99999',work_title_ko:null,
+      reanime_id:'',file_count:1,payload:{},remote_payload:{}},
+  ];
+  const verified = [{source:'Onnada',source_record_id:'2262',title:'R-15',
+    anilist_id:'10611',reanime_id:'r-15-jmprhw'}];
+  const api = setup([],files,[],verified);
+  const r15 = await api.getKoreanSubtitleCatalog({q:'R-15'});
+  assert.equal(r15.items.length,1);
+  assert.equal(r15.items[0].id,'re_r-15-jmprhw');
+  const translated = await api.getKoreanSubtitleCatalog({q:'Original Title'});
+  assert.equal(translated.items.length,1);
+  assert.equal(translated.items[0].title,'한글 제목','Korean titles still take precedence');
+  assert.equal((await api.getKoreanSubtitleCatalog({captionsOnly:true})).items.length,2);
+  assert.ok(api.calls.some(x=>x.includes('f.work_confirmed')), 'Only reviewed registry files are queried');
+});

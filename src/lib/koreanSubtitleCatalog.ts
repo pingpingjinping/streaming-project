@@ -41,16 +41,22 @@ export function buildSubtitleCatalog(anissiaRows: any[], subtitleRows: any[]): S
     const aliases = rid ? reanimeAnissia.get(rid) || [] : [];
     const id = source === 'Anissia' ? 'ani_' + sourceId : aliases.length === 1 ? aliases[0]
       : rid ? 're_' + rid : 'db_' + source + '_' + sourceId;
-    const title = [row.work_title_ko, row.korean_title, payload.title_ko].find(t => /[가-힣]/.test(String(t || '')));
-    // Unlinked/held files never reach the query; non-Korean titles stay out of this Korean hub.
+    // Keep reviewed works even when their canonical title is Latin/numeric only
+    // (for example R-15, K, 86). Prefer a Korean alias when one exists.
+    const candidateTitles = [
+      row.work_title_ko, row.korean_title, payload.title_ko, remote.title_ko,
+      payload.title_native, payload.title_english, payload.title_romaji,
+      remote.title_native, remote.title_english, remote.title_romaji,
+    ].map(value => String(value || '').trim()).filter(Boolean);
+    const title = candidateTitles.find(value => /[가-힣]/.test(value)) || candidateTitles[0];
+    // Unlinked/held files never reach the reviewed-file query; untitled works stay out.
     if (!sourceId || !title) continue;
     const entry = works.get(id) || { id, source, sourceId, title: String(title), titles: [],
       year: String(payload.year || remote.year || ''), format: String(payload.format || remote.format || ''),
       genres: genreList(payload.genres || remote.genres), providers: [], captionCount: 0, fileCount: 0, postCount: 0,
       reanimeId: rid, detailUrl: id.startsWith('db_')
         ? '/catalog/' + encodeURIComponent(source) + '/' + encodeURIComponent(sourceId) : '/anime/' + id };
-    entry.titles = [...new Set([...entry.titles, String(title), ...[payload, remote].flatMap(p =>
-      [p.title_ko, p.title_native, p.title_romaji, p.title_english].filter(Boolean))])];
+    entry.titles = [...new Set([...entry.titles, ...candidateTitles])];
     entry.providers = [...new Set([...entry.providers, String(row.source)])];
     entry.fileCount += Number(row.file_count) || 0;
     entry.postCount += Number(row.post_count) || 0;
