@@ -38,6 +38,32 @@ test('Anissia folders precede ZIPs; root double-extension and nested ZIP names a
   assert.ok(rows.every(r => !r.folderName.endsWith('.srt')));
   assert.deepEqual(await storage.searchLocalSubtitleEntries('h'), []);
 });
+test('new downloader ZIP paths appear through the incremental journal and survive index persistence', async () => {
+  // The initial scan already occurred in the first test. A later download
+  // must not require a full 50k-file rescan to become searchable.
+  pack('anissia_subtitles/새 애니/3화/제작자/New Local 03.zip', 'fresh download');
+  const journal = path.join(root, '.local-subtitle-search-updates.jsonl');
+  fs.appendFileSync(journal, JSON.stringify({
+    path: 'anissia_subtitles/새 애니/3화/제작자/New Local 03.zip',
+  }) + '\n');
+  const found = await storage.searchLocalSubtitleEntries('New Local');
+  assert.ok(found.some(entry => entry.archivePath === 'anissia_subtitles/새 애니/3화/제작자/New Local 03.zip'));
+  const folder = await storage.searchLocalSubtitleEntries('새 애니');
+  assert.ok(folder.some(entry => entry.entryType === 'folder' && entry.folderKey));
+  const snapshot = JSON.parse(fs.readFileSync(path.join(root, '.local-subtitle-name-index-v1.json'), 'utf8'));
+  assert.ok(snapshot.entries.some(entry => entry.choice.archivePath === 'anissia_subtitles/새 애니/3화/제작자/New Local 03.zip'));
+  assert.ok(snapshot.logOffset > 0);
+});
+
+test('manual File Browser ZIP moves can force refresh without waiting for expiration', async () => {
+  pack('naver_subtitles/unregistered/Manually Added.zip', 'manual move');
+  const before = await storage.searchLocalSubtitleEntries('Manually Added');
+  assert.equal(before.length, 0);
+  await storage.refreshLocalSubtitleSearchIndex();
+  const after = await storage.searchLocalSubtitleEntries('Manually Added');
+  assert.ok(after.some(entry => entry.archivePath === 'naver_subtitles/unregistered/Manually Added.zip'));
+});
+
 test('manual ZIP selection opens the exact path even when filenames repeat', async () => {
   pack('naver_subtitles/first/Same.zip', 'first archive');
   pack('naver_subtitles/second/Same.zip', 'second archive');
