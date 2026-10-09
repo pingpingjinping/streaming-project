@@ -6,10 +6,9 @@ import type { LocalSubtitleChoice } from './localSubtitleSearch';
  * assignments are ever cached here; subtitle selection still verifies originals.
  */
 interface NameEntry { relativePath: string; normalizedName: string; choice: LocalSubtitleChoice }
-interface NameIndex { root: string; scannedAt: number; logOffset: number; entries: Map<string, NameEntry> }
+interface NameIndex { root: string; scannedAt: number; logOffset: number; entries: Map<string, NameEntry>; diskMtimeMs: number }
 const INDEX_FILE = '.local-subtitle-name-index-v1.json';
 const CHANGES_FILE = '.local-subtitle-search-updates.jsonl';
-const MAX_AGE_MS = 30 * 60_000; // Catch File Browser/manual moves that did not record a download.
 const SOURCES = ['anissia', 'aniall', 'naver'] as const;
 const normalize = (s: string) => s.normalize('NFKC').toLocaleLowerCase('ko-KR').replace(/[^\p{L}\p{N}]+/gu, '');
 
@@ -136,6 +135,7 @@ async function save(value: NameIndex) {
   try {
     await writeFile(temporary, payload);
     await rename(temporary, filename);
+    value.diskMtimeMs = (await stat(filename)).mtimeMs;
   } catch (error) {
     console.warn('[Local subtitle name index: persist]', error);
   }
@@ -147,8 +147,9 @@ async function load(root: string, force = false): Promise<NameIndex> {
     const parsed = JSON.parse(await readFile(path.join(root, INDEX_FILE), 'utf8'));
     if (!force && parsed?.version === 1 && typeof parsed.scannedAt === 'number'
       && Number.isSafeInteger(parsed.logOffset) && parsed.logOffset >= 0
-      && Array.isArray(parsed.entries) && Date.now() - parsed.scannedAt < MAX_AGE_MS) {
+      && Array.isArray(parsed.entries)) {
       saved = { root, scannedAt: parsed.scannedAt, logOffset: parsed.logOffset,
+        diskMtimeMs: (await stat(path.join(root, INDEX_FILE))).mtimeMs,
         entries: new Map(parsed.entries.filter((entry: NameEntry) =>
           Boolean(entry && entry.choice) && typeof entry.relativePath === 'string' && validEntry(entry.relativePath, entry.choice.entryType))
           .map((entry: NameEntry) => [entry.relativePath, makeEntry(entry.relativePath, entry.choice.entryType)])) };
@@ -162,7 +163,7 @@ async function load(root: string, force = false): Promise<NameIndex> {
     let initialOffset = 0;
     try { initialOffset = (await stat(path.join(root, CHANGES_FILE))).size; }
     catch (error: any) { if (error?.code !== 'ENOENT') throw error; }
-    saved = { root, scannedAt: Date.now(), logOffset: initialOffset, entries: await scan(root) };
+    saved = { root, scannedAt: Date.now(), logOffset: initialOffset, diskMtimeMs: 0, entries: await scan(root) };
     const changed = await replayChanges(saved);
     await save(saved);
     console.info('[Local subtitle name index: rebuilt]', { names: saved.entries.size, changed });
@@ -182,9 +183,22 @@ export async function getLocalSubtitleNameEntries(root: string): Promise<NameEnt
   // scans on slow Pi storage.
   if (!loading) {
     loading = (async () => {
-      const value = index && index.root === root && Date.now() - index.scannedAt < MAX_AGE_MS
-        ? index : await load(root);
-      if (value === index && await replayChanges(value)) await save(value);
+      let current = false;
+      if (index?.root === root) {
+        try {
+          current = (await stat(path.join(root, INDEX_FILE))).mtimeMs === index.diskMtimeMs;
+        } catch { /* Removed index => rebuild or load again. */ }
+      }
+      const value = index && current ? index : await load(root);
+      if (value === index) {
+        try {
+          if (await replayChanges(value)) await save(value);
+        } catch (error) {
+          console.warn('[Local subtitle name index: journal recovery]', error);
+          index = await load(root, true);
+          return index;
+        }
+      }
       index = value;
       return value;
     })().finally(() => { loading = null; });
