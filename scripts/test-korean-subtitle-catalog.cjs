@@ -5,11 +5,12 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const ts = require('typescript');
 const source = fs.readFileSync(path.join(__dirname,'../src/lib/koreanSubtitleCatalog.ts'),'utf8');
-function setup(base, files, posts = []) {
+function setup(base, files, posts = [], verified = []) {
   const calls = [], artwork = [];
   const sql = async strings => {
     const text = strings.join('?'); calls.push(text);
     if (text.includes('WITH files AS')) return files;
+    if (text.includes('FROM anime_korean_catalog k')) return verified;
     if (text.includes('FROM anime_aniall_matches')) return posts;
     return base;
   };
@@ -56,6 +57,20 @@ test('keyword search includes captionless works, without loading 20 remote poste
   assert.equal(api.artwork.length,0);
   const filtered = await api.getKoreanSubtitleCatalog({q:'검색가능한',captionsOnly:true});
   assert.deepEqual(Array.from(filtered.items,item=>item.id),['ani_2']);
+});
+test('Korean alias joins are performed in memory rather than one correlated SQL query per file', async () => {
+  const file = { ...subtitle('naver',99131,'', ''), work_title_ko: null };
+  const verified = [
+    {source:'AniList',source_record_id:'99131',title:'코믹 걸즈 다른 별칭',anilist_id:'99131'},
+    {source:'Onnada',source_record_id:'3946',title:'코믹 걸즈',anilist_id:'99131'},
+  ];
+  const api = setup([], [file], [], verified);
+  const result = await api.getKoreanSubtitleCatalog({q:'코믹'});
+  assert.equal(result.items.length,1);
+  assert.equal(result.items[0].title,'코믹 걸즈');
+  assert.equal(result.items[0].id,'db_AniList_99131');
+  assert.equal(api.calls.filter(x=>x.includes('FROM anime_korean_catalog k')).length,1);
+  assert.ok(!api.calls.some(x=>x.includes('LEFT JOIN LATERAL')));
 });
 test('caption toggle includes registry-only subtitles and excludes captionless Anissia works', async () => {
   const api = setup([anissia(1,'자막 없음',0),anissia(2,'자막 있음',1)],[subtitle('naver',3,'네이버 전용 작품')]);
