@@ -39,7 +39,11 @@ export async function GET(request: NextRequest) {
   } else if (source === 'anissia' && (q || tab === 'list')) {
     const captionsOnly = q ? true : searchParams.has('captions')
       ? searchParams.get('captions') === '1' : await getAnissiaCatalogCaptionsOnly(user.username);
-    result = await getKoreanSubtitleCatalog({ q, page, genre, year, captionsOnly, sort: searchParams.get('sort') || 'year_desc' });
+    result = await getKoreanSubtitleCatalog({ q, page, genre, year, captionsOnly: q ? false : captionsOnly, sort: searchParams.get('sort') || 'year_desc' });
+    if (q && result.error) {
+      const fallback = await provider.searchAnime(q, page).catch(() => result);
+      result = { ...fallback, error: result.error };
+    }
   } else if (source === "anikoto") {
     const filters = { genre, year, typeLang, status: searchParams.get("status") || "", sort: searchParams.get("sort") || "default" };
     result = q ? await provider.searchAnime(q, page, filters) : await provider.getAnimeListFiltered({ ...filters, page });
