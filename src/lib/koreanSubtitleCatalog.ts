@@ -65,6 +65,7 @@ export async function loadSubtitleCatalog(): Promise<SubtitleCatalogWork[]> {
   if (!sql) throw new Error('DB unavailable');
   if (cache?.sql === sql && cache.expires > Date.now()) return cache.pending;
   const pending = (async () => {
+    const startedAt = Date.now();
     const anissiaRows = await sql`
       SELECT a.source_record_id,a.payload,m.reanime_id,
         (SELECT count(*)=1 FROM anime_reanime_matches n WHERE n.anissia_no=m.anissia_no
@@ -75,6 +76,7 @@ export async function loadSubtitleCatalog(): Promise<SubtitleCatalogWork[]> {
       WHERE a.source='Anissia'`;
     // Multiple video links for one Anissia registration must not duplicate its base card.
     const baseRows = [...new Map(anissiaRows.map(row => [String(row.source_record_id), row])).values()];
+    const baseFinishedAt = Date.now();
     let subtitleRows: any[] = [];
     try {
       subtitleRows = await sql`
@@ -134,6 +136,7 @@ export async function loadSubtitleCatalog(): Promise<SubtitleCatalogWork[]> {
       // the entire Anissia title search.
       console.warn('[Korean subtitle catalog: reviewed files]', error);
     }
+    const filesFinishedAt = Date.now();
     // Weekly AniAll matches are stored separately from the frozen v6 file registry.
     try {
       const posts = await sql`
@@ -152,7 +155,15 @@ export async function loadSubtitleCatalog(): Promise<SubtitleCatalogWork[]> {
       // all titles or the successfully imported reviewed subtitle rows.
       console.warn('[Korean subtitle catalog: weekly posts]', error);
     }
-    return buildSubtitleCatalog(baseRows, subtitleRows);
+    const works = buildSubtitleCatalog(baseRows, subtitleRows);
+    const elapsed = Date.now() - startedAt;
+    if (elapsed >= 2000) console.info('[Korean subtitle catalog: performance]', {
+      total_ms: elapsed, anissia_ms: baseFinishedAt - startedAt,
+      subtitles_ms: filesFinishedAt - baseFinishedAt,
+      weekly_ms: Date.now() - filesFinishedAt,
+      works: works.length,
+    });
+    return works;
   })();
   cache = { sql, expires: Date.now() + 60_000, pending };
   try { return await pending; } catch (error) { cache = undefined; throw error; }
