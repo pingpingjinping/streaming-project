@@ -258,11 +258,14 @@ export default async function HomePage({
       has_next = res.has_next;
       total_pages = res.total_pages;
     } else if (tab === "list") {
-      const res = await getKoreanSubtitleCatalog({ genre, page, captionsOnly, year, sort });
+      const catalog = await getKoreanSubtitleCatalog({ genre, page, captionsOnly, year, sort });
+      const res = catalog.error
+        ? await provider.getAnimeListFiltered({ catalog: true, genre: genre || undefined, page, captionsOnly }).catch(() => catalog)
+        : catalog;
       items = res.items;
       has_next = res.has_next;
       total_pages = res.total_pages;
-      catalogError = res.error;
+      catalogError = catalog.error;
     } else {
       // Default: recent_caption (최근 등록 자막 실시간 피드)
       const res = await provider.getAnimeList({ category: "recent_caption", page });
