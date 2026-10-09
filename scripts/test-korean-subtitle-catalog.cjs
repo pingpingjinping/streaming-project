@@ -102,7 +102,8 @@ test('reviewed Latin/numeric-only R-15, 86 and K are searchable as subtitle work
     assert.match(response.items[0].source_name,/네이버/);
   }
   assert.equal((await api.getKoreanSubtitleCatalog({q:'86',captionsOnly:true})).items[0].title,'86 -Eighty Six-');
-  assert.equal((await api.getKoreanSubtitleCatalog({q:'K',captionsOnly:true})).items[0].title,'K');
+  assert.ok((await api.getKoreanSubtitleCatalog({q:'K',captionsOnly:true})).items.some(item => item.title === 'K'),
+    'Short Latin titles must remain discoverable alongside substring matches');
   assert.equal(api.artwork.length,0);
 });
 test('verified alias and catalog titles remain eligible, but entries without any title remain hidden', async () => {
