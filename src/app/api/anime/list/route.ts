@@ -38,9 +38,9 @@ export async function GET(request: NextRequest) {
   if(source==="reanime" && searchParams.get("linked")==="1") {
     result=await getLinkedReanimeCatalog({q,page,year,sort:searchParams.get("sort") || "year_desc"});
   } else if (source === 'anissia' && (q || tab === 'list')) {
-    const captionsOnly = q ? true : searchParams.has('captions')
+    const captionsOnly = searchParams.has('captions')
       ? searchParams.get('captions') === '1' : await getAnissiaCatalogCaptionsOnly(user.username);
-    result = await getKoreanSubtitleCatalog({ q, page, genre, year, captionsOnly: q ? false : captionsOnly, sort: searchParams.get('sort') || 'year_desc' });
+    result = await getKoreanSubtitleCatalog({ q, page, genre, year, captionsOnly, sort: searchParams.get('sort') || 'year_desc' });
     if (result.error) {
       const fallback = q
         ? await provider.searchAnime(q, page).catch(() => result)
