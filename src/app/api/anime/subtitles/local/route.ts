@@ -32,7 +32,10 @@ export async function GET(request: NextRequest) {
     if (params.get("mode") === "folders") {
       // Explicit refresh also handles files moved manually by File Browser,
       // which does not write the automatic downloader change journal.
-      if (params.get("refresh") === "1") await refreshLocalSubtitleSearchIndex();
+      if (params.get("refresh") === "1") {
+        if (!user.isAdmin) return NextResponse.json({ success: false, message: "관리자만 인덱스를 갱신할 수 있습니다." }, { status: 403 });
+        await refreshLocalSubtitleSearchIndex();
+      }
       const folders = await searchLocalSubtitleEntries(title);
       return NextResponse.json({ success: true, folders },
         { headers: { "Cache-Control": "no-store" } });

@@ -23,6 +23,42 @@ export default function AdminDashboard({
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   
+  // Index state: status lookup never triggers a costly full filesystem walk.
+  const [subtitleIndex, setSubtitleIndex] = useState<{ count: number; refreshedAt: string } | null>(null);
+  const [indexLoading, setIndexLoading] = useState(true);
+  const [indexRefreshing, setIndexRefreshing] = useState(false);
+  const [indexError, setIndexError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    fetch("/api/admin/subtitle-index", { cache: "no-store" })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok || !data.success) throw Error(data.message || "인덱스 상태를 불러오지 못했습니다.");
+        if (mounted) setSubtitleIndex(data.index);
+      })
+      .catch(error => { if (mounted) setIndexError(String(error.message || error)); })
+      .finally(() => { if (mounted) setIndexLoading(false); });
+    return () => { mounted = false; };
+  }, []);
+
+  const handleRefreshSubtitleIndex = async () => {
+    if (indexRefreshing) return;
+    setIndexRefreshing(true);
+    setIndexError(null);
+    try {
+      const response = await fetch("/api/admin/subtitle-index", { method: "POST", cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw Error(data.message || "인덱스 갱신에 실패했습니다.");
+      setSubtitleIndex(data.index);
+      showSuccess(`로컬 자막 인덱스 갱신 완료 · ${data.index.count.toLocaleString("ko-KR")}개 등록`);
+    } catch (error) {
+      setIndexError(error instanceof Error ? error.message : "인덱스 갱신 중 오류가 발생했습니다.");
+    } finally {
+      setIndexRefreshing(false);
+    }
+  };
+
   // Create Form State
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [createUsername, setCreateUsername] = useState("");
@@ -201,6 +237,28 @@ export default function AdminDashboard({
             <p>{successMsg}</p>
           </div>
         )}
+
+        <section className="mb-8 rounded-3xl border border-white/10 bg-[#0d1426]/70 p-6 shadow-2xl backdrop-blur-xl">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-200">로컬 자막 검색 인덱스</h2>
+              <p className="mt-1 text-xs text-slate-400">애니시아 · AniAll · 네이버 자막의 폴더명 및 ZIP 이름을 인덱싱합니다.</p>
+              <p className="mt-2 text-sm text-slate-300" aria-live="polite">
+                {indexLoading ? "상태 확인 중..." : subtitleIndex
+                  ? `등록 ${subtitleIndex.count.toLocaleString("ko-KR")}개 · 마지막 전체 갱신 ${new Date(subtitleIndex.refreshedAt).toLocaleString("ko-KR")}`
+                  : "아직 생성된 인덱스가 없습니다."}
+              </p>
+            </div>
+            <button type="button" onClick={handleRefreshSubtitleIndex}
+              disabled={indexRefreshing || indexLoading}
+              className="inline-flex items-center gap-2 rounded-xl bg-purple-600/20 px-4 py-2 text-sm font-medium text-purple-200 transition hover:bg-purple-600/30 disabled:cursor-wait disabled:opacity-50">
+              <RefreshCw className={`h-4 w-4 ${indexRefreshing ? "animate-spin" : ""}`} />
+              {indexRefreshing ? "갱신 중..." : "로컬 자막 인덱스 새로고침"}
+            </button>
+          </div>
+          {indexError && <p role="alert" className="mt-3 text-xs text-red-300">{indexError}</p>}
+          <p className="mt-3 text-xs text-slate-500">평소 검색은 저장된 인덱스를 사용하며, 전체 갱신은 버튼 또는 주간 자막 동기화 때 실행합니다.</p>
+        </section>
 
         <div className="mb-8 rounded-3xl border border-white/10 bg-[#0d1426]/70 p-6 shadow-2xl backdrop-blur-xl">
           <div className="flex items-center justify-between">
