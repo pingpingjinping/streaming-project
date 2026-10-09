@@ -43,9 +43,19 @@ test('Korean spacing and English aliases are searched before pagination and artw
   const api = setup([anissia(99,'자막 없는 작품',0)],files);
   const response = await api.getKoreanSubtitleCatalog({q:'검색작품',page:2});
   assert.equal(response.items.length,20);assert.equal(response.total_pages,3);assert.equal(response.has_next,true);
-  assert.equal(api.artwork.length,20,'Only visible page receives artwork requests');
+  assert.equal(api.artwork.length,0,'Keyword search does not wait for remote artwork');
   const english = await api.getKoreanSubtitleCatalog({q:'Foreign Work 45'});
   assert.equal(english.items[0].id,'re_work-45');
+});
+test('keyword search includes captionless works, without loading 20 remote posters', async () => {
+  const works = [anissia(1,'검색 가능한 자막 없는 작품',0),anissia(2,'검색 가능한 자막 있는 작품',2)];
+  const api = setup(works,[]);
+  const result = await api.getKoreanSubtitleCatalog({q:'검색가능한'});
+  assert.equal(result.items.length,2);
+  assert.deepEqual(Array.from(result.items,item=>item.id).sort(),['ani_1','ani_2']);
+  assert.equal(api.artwork.length,0);
+  const filtered = await api.getKoreanSubtitleCatalog({q:'검색가능한',captionsOnly:true});
+  assert.deepEqual(Array.from(filtered.items,item=>item.id),['ani_2']);
 });
 test('caption toggle includes registry-only subtitles and excludes captionless Anissia works', async () => {
   const api = setup([anissia(1,'자막 없음',0),anissia(2,'자막 있음',1)],[subtitle('naver',3,'네이버 전용 작품')]);

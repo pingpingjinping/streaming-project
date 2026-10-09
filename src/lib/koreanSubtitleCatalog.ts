@@ -102,16 +102,17 @@ export async function loadSubtitleCatalog(): Promise<SubtitleCatalogWork[]> {
             OR (f.reanime_id IS NOT NULL AND k.payload->>'reanimeId'=f.reanime_id))
           ORDER BY CASE WHEN k.source='Onnada' THEN 0 ELSE 1 END,k.source_record_id LIMIT 1
         ) k ON TRUE`;
-    } catch (error: any) { if (error?.code !== '42P01') throw error; }
+    } catch (error: any) {
+      // A stale or partially imported subtitle registry must not disable
+      // the entire Anissia title search.
+      console.warn('[Korean subtitle catalog: reviewed files]', error);
+    }
     // Weekly AniAll matches are stored separately from the frozen v6 file registry.
     try {
       const posts = await sql`
         SELECT 'aniall' AS source,m.ref_source AS target_source,m.ref_source_id AS target_id,
           m.canonical_title AS work_title_ko,c.payload,r.payload AS remote_payload,
-          CASE WHEN m.ref_source='ReAnime' THEN m.ref_source_id
-            WHEN c.payload->>'existing_match_status' IN ('strong_exact','strong_onnada_bridge')
-              AND jsonb_array_length((c.payload->>'cross_source_ids_json')::jsonb->'reanime_ids')=1
-            THEN (c.payload->>'cross_source_ids_json')::jsonb->'reanime_ids'->>0 END AS reanime_id,
+          CASE WHEN m.ref_source='ReAnime' THEN m.ref_source_id END AS reanime_id,
           count(DISTINCT m.post_id) AS post_count,0 AS file_count
         FROM anime_aniall_matches m
         JOIN anime_catalog_entries c ON c.source=m.ref_source AND c.source_record_id=m.ref_source_id
@@ -119,7 +120,11 @@ export async function loadSubtitleCatalog(): Promise<SubtitleCatalogWork[]> {
           AND m.ref_source='ReAnime'
         GROUP BY m.ref_source,m.ref_source_id,m.canonical_title,c.payload,r.payload`;
       subtitleRows.push(...posts);
-    } catch (error: any) { if (error?.code !== '42P01') throw error; }
+    } catch (error: any) {
+      // Weekly-post synchronization is optional; an error must not hide
+      // all titles or the successfully imported reviewed subtitle rows.
+      console.warn('[Korean subtitle catalog: weekly posts]', error);
+    }
     return buildSubtitleCatalog(baseRows, subtitleRows);
   })();
   cache = { sql, expires: Date.now() + 60_000, pending };
@@ -134,14 +139,18 @@ export async function getKoreanSubtitleCatalog(options: { q?: string; page?: num
       (!query || work.titles.some(title => normalize(title).includes(query)))
       && (!genre || work.genres.some(value => normalize(value).includes(genre)))
       && (!options.year || work.year === options.year)
-      && (!(options.captionsOnly || query) || work.providers.length > 0));
+      && (!options.captionsOnly || work.providers.length > 0));
     filtered.sort((a, b) => (options.sort === 'year_asc' ? 1 : -1) * (Number(a.year) - Number(b.year))
       || a.title.localeCompare(b.title, 'ko') || a.id.localeCompare(b.id));
     const selected = filtered.slice((page - 1) * 20, page * 20);
     const items = [];
+    const isSearching = Boolean(query);
     for (let i = 0; i < selected.length; i += 5) items.push(...await Promise.all(selected.slice(i, i + 5).map(async work => {
-      const artwork = (work.reanimeId ? await getReanimeArtwork(work.reanimeId).catch(() => null) : null)
-        || await fetchAniListMeta(work.titles.find(t => !/[가-힣]/.test(t)) || work.title).catch(() => null);
+      // Never block text search on 20 remote poster requests. Browsing the
+      // catalog without a query retains the existing artwork enrichment.
+      const artwork = isSearching ? null
+        : (work.reanimeId ? await getReanimeArtwork(work.reanimeId).catch(() => null) : null)
+          || await fetchAniListMeta(work.titles.find(t => !/[가-힣]/.test(t)) || work.title).catch(() => null);
       return { id: work.id, title: work.title, poster: artwork?.poster || '', detail_url: work.detailUrl,
         remarks: [work.providers.map(p => labels[p] || p).join(' · ') || '자막 정보 없음', work.year && work.year + '년'].filter(Boolean).join(' · '),
         source_name: work.providers.map(p => labels[p] || p).join(' · '), caption_count: work.captionCount + work.fileCount,
