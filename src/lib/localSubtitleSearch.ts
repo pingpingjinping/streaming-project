@@ -22,7 +22,7 @@ export async function searchLocalSubtitleEntries(query: string): Promise<LocalSu
   if (needle.length < 2) return [];
   const matches = (await getLocalSubtitleNameEntries(root()))
     .filter(entry => entry.normalizedName.includes(needle))
-    .map(({ choice }) => choice.entryType === 'folder'
+    .map(({ choice }) => choice.entryType === 'folder' && choice.provider !== 'naver'
       ? { ...choice, folderKey: bundleScopeKey({ type: 'folder', provider: choice.provider,
           work: choice.folderName, ...subtitleScope('', choice.folderName) }) }
       : { ...choice });
