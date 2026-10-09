@@ -11,13 +11,13 @@ const INDEX_FILE = '.local-subtitle-name-index-v1.json';
 const CHANGES_FILE = '.local-subtitle-search-updates.jsonl';
 const MAX_AGE_MS = 30 * 60_000; // Catch File Browser/manual moves that did not record a download.
 const SOURCES = ['anissia', 'aniall', 'naver'] as const;
-const normalize = (s: string) => s.normalize('NFKC').toLocaleLowerCase('ko-KR').replace(/[^\\p{L}\\p{N}]+/gu, '');
+const normalize = (s: string) => s.normalize('NFKC').toLocaleLowerCase('ko-KR').replace(/[^\p{L}\p{N}]+/gu, '');
 
 let index: NameIndex | null = null;
 let loading: Promise<NameIndex> | null = null;
 
 const safeRelative = (relative: string) => {
-  if (!relative || relative.includes('\\0') || relative.includes('\\\\') || relative.startsWith('/')) return false;
+  if (!relative || relative.includes('\0') || relative.includes('\\') || relative.startsWith('/')) return false;
   const parts = relative.split('/');
   return parts.length >= 2 && parts.every(p => p && p !== '.' && p !== '..')
     && SOURCES.some(source => parts[0] === source + '_subtitles');
@@ -44,7 +44,7 @@ const validEntry = (relativePath: string, kind: 'zip' | 'folder') => {
   if (!safeRelative(relativePath)) return false;
   const parts = relativePath.split('/');
   if (kind === 'folder') return parts.length === 2 && providerFrom(relativePath) !== 'naver';
-  return parts.length >= 2 && /\\.zip$/i.test(parts[parts.length - 1]);
+  return parts.length >= 2 && /\.zip$/i.test(parts[parts.length - 1]);
 };
 
 async function scan(root: string): Promise<Map<string, NameEntry>> {
@@ -62,7 +62,7 @@ async function scan(root: string): Promise<Map<string, NameEntry>> {
         if (child.isDirectory()) {
           if (depth === 0 && provider !== 'naver') entries.set(relative, makeEntry(relative, 'folder'));
           if (depth < 10) await walk(full, depth + 1);
-        } else if (child.isFile() && /\\.zip$/i.test(child.name)) {
+        } else if (child.isFile() && /\.zip$/i.test(child.name)) {
           entries.set(relative, makeEntry(relative, 'zip'));
         }
       }
@@ -90,7 +90,7 @@ async function replayChanges(value: NameIndex): Promise<boolean> {
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, value.logOffset);
     const lastNewline = buffer.lastIndexOf(10, bytesRead - 1);
     if (lastNewline < 0) return false; // A writer has not finished this JSONL row.
-    for (const line of buffer.subarray(0, lastNewline + 1).toString('utf8').split('\\n')) {
+    for (const line of buffer.subarray(0, lastNewline + 1).toString('utf8').split('\n')) {
       if (!line.trim()) continue;
       let relative: string;
       try {
