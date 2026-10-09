@@ -40,8 +40,10 @@ export async function GET(request: NextRequest) {
     const captionsOnly = q ? true : searchParams.has('captions')
       ? searchParams.get('captions') === '1' : await getAnissiaCatalogCaptionsOnly(user.username);
     result = await getKoreanSubtitleCatalog({ q, page, genre, year, captionsOnly: q ? false : captionsOnly, sort: searchParams.get('sort') || 'year_desc' });
-    if (q && result.error) {
-      const fallback = await provider.searchAnime(q, page).catch(() => result);
+    if (result.error) {
+      const fallback = q
+        ? await provider.searchAnime(q, page).catch(() => result)
+        : await provider.getAnimeListFiltered({ catalog: true, genre, year, page, captionsOnly }).catch(() => result);
       result = { ...fallback, error: result.error };
     }
   } else if (source === "anikoto") {
