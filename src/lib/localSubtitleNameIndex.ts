@@ -141,17 +141,17 @@ async function save(value: NameIndex) {
   }
 }
 
-async function load(root: string): Promise<NameIndex> {
+async function load(root: string, force = false): Promise<NameIndex> {
   let saved: NameIndex | null = null;
   try {
     const parsed = JSON.parse(await readFile(path.join(root, INDEX_FILE), 'utf8'));
-    if (parsed?.version === 1 && typeof parsed.scannedAt === 'number'
+    if (!force && parsed?.version === 1 && typeof parsed.scannedAt === 'number'
       && Number.isSafeInteger(parsed.logOffset) && parsed.logOffset >= 0
       && Array.isArray(parsed.entries) && Date.now() - parsed.scannedAt < MAX_AGE_MS) {
       saved = { root, scannedAt: parsed.scannedAt, logOffset: parsed.logOffset,
         entries: new Map(parsed.entries.filter((entry: NameEntry) =>
           typeof entry.relativePath === 'string' && validEntry(entry.relativePath, entry.choice?.entryType))
-          .map((entry: NameEntry) => [entry.relativePath, entry])) };
+          .map((entry: NameEntry) => [entry.relativePath, makeEntry(entry.relativePath, entry.choice.entryType)])) };
     }
   } catch (error: any) {
     if (error?.code !== 'ENOENT') console.warn('[Local subtitle name index: load]', error);
@@ -168,7 +168,12 @@ async function load(root: string): Promise<NameIndex> {
     console.info('[Local subtitle name index: rebuilt]', { names: saved.entries.size, changed });
     return saved;
   }
-  if (await replayChanges(saved)) await save(saved);
+  try {
+    if (await replayChanges(saved)) await save(saved);
+  } catch (error) {
+    console.warn('[Local subtitle name index: replay failed, rebuilding]', error);
+    return load(root, true);
+  }
   return saved;
 }
 
@@ -189,7 +194,8 @@ export async function getLocalSubtitleNameEntries(root: string): Promise<NameEnt
 
 /** Explicit refresh for manual File Browser moves. */
 export async function refreshLocalSubtitleNameIndex(root: string) {
-  index = null;
-  const result = await load(root);
-  return result.entries.size;
+  // Avoid interleaving an explicit refresh with an in-flight index build.
+  if (loading) await loading;
+  index = await load(root, true);
+  return index.entries.size;
 }
