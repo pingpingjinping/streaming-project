@@ -41,7 +41,9 @@ export async function GET(request: NextRequest) {
     const captionsOnly = searchParams.has('captions')
       ? searchParams.get('captions') === '1' : await getAnissiaCatalogCaptionsOnly(user.username);
     result = await getKoreanSubtitleCatalog({ q, page, genre, year, captionsOnly, sort: searchParams.get('sort') || 'year_desc' });
-    if (result.error) {
+    // The staged client fallback must surface genuine DB errors instead of
+    // silently calling the upstream API again.
+    if (result.error && searchParams.get('db_only') !== '1') {
       const fallback = q
         ? await provider.searchAnime(q, page).catch(() => result)
         : await provider.getAnimeListFiltered({ catalog: true, genre, year, page, captionsOnly }).catch(() => result);

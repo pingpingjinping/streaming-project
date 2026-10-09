@@ -3,6 +3,12 @@ const assert=require('node:assert/strict'),{test}=require('node:test');
 const root=path.join(__dirname,'..');
 const matchOverrides = {getWorkMatchOverrides:async()=>[], importedLinkIsOverridden:()=>false};
 function load(file,deps={},globals={}) {
+  // HomePage imports its search-only modules even in unrelated catalog tests.
+  deps = {
+    '@/components/AnissiaDbSearchFallback': { default: () => null },
+    '@/lib/anissiaSearchStages': { prepareAnissiaApiSearch: (result) => ({result, needsDbFallback: result.items.length === 0}) },
+    ...deps,
+  };
   deps={'./provisionalWorkMatches':{getProvisionalWorkMatches:async()=>[]},'./workMatchOverrides':matchOverrides,
     '@/lib/koreanSubtitleCatalog':{getKoreanSubtitleCatalog:async()=>{
       throw Error('ReAnime artwork tests must not request the Korean subtitle catalog');
