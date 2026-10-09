@@ -9,6 +9,7 @@ import {
   REANIME_GENRES,
 } from "@/lib/providers";
 import { OHLI24_GENRES } from "@/lib/providers/ohli24";
+import type { AnimeListResponse } from "@/lib/providers/types";
 import { getSessionUser } from "@/lib/auth";
 import { getAnissiaCatalogCaptionsOnly } from "@/lib/db";
 import { ANIKOTO_GENRES, ANIKOTO_YEARS, ANIKOTO_TYPES, ANIKOTO_STATUSES, ANIKOTO_SORTS } from "@/lib/anikotoCatalog";
@@ -33,7 +34,7 @@ export async function GET(request: NextRequest) {
   const typeLang = searchParams.get("type") || "";
   const period = (searchParams.get("period") || "day") as "day" | "week" | "month" | "all";
 
-  let result;
+  let result: AnimeListResponse;
   if(source==="reanime" && searchParams.get("linked")==="1") {
     result=await getLinkedReanimeCatalog({q,page,year,sort:searchParams.get("sort") || "year_desc"});
   } else if (source === 'anissia' && (q || tab === 'list')) {
