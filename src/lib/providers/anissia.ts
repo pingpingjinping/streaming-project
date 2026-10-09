@@ -828,6 +828,7 @@ class AnissiaProvider implements AnimeProvider {
           remarks: item.status === "ON" ? "방영중" : "완결",
           rating: meta?.rating ?? null,
           genres,
+          caption_count: Number(item.captionCount || 0),
         };
       });
 
