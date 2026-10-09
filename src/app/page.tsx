@@ -111,7 +111,7 @@ export default async function HomePage({
   const year = params.year || "";
   const sort = params.sort || (activeSource === "anikoto" ? "default" : "year_desc");
   const statusFilter = params.status || "";
-  const captionsOnly = activeSource === "anissia" && tab === "list" && !q
+  const captionsOnly = activeSource === "anissia" && (tab === "list" || Boolean(q))
     ? await getAnissiaCatalogCaptionsOnly(authenticatedUser.username)
     : false;
   const typeLang = params.type || "";
@@ -148,7 +148,7 @@ export default async function HomePage({
     const results = await Promise.allSettled(
       sources.map(async (source) => {
         if (source === 'anissia') {
-          const catalog = await getKoreanSubtitleCatalog({ q: normalizedQuery, page, captionsOnly: false });
+          const catalog = await getKoreanSubtitleCatalog({ q: normalizedQuery, page, captionsOnly });
           if (!catalog.error) return { source, result: catalog };
           // The catalog is an enhancement, not a single point of failure.
           // Keep the former Anissia keyword search working during DB errors.
@@ -387,7 +387,7 @@ export default async function HomePage({
   let sectionSubtitle = "";
 
   if (q) {
-    sectionTitle = `"${q}" 검색 결과 (${items.length}개 · ${searchScope === "all" ? "전체 사이트" : activeSource === 'anissia' ? '한글 자막 DB' : "현재 사이트"})`;
+    sectionTitle = `"${q}" 검색 결과 (${items.length}개 · ${searchScope === "all" ? "전체 사이트" : "현재 사이트"})`;
   } else if (activeSource === "anissia") {
     const dayNames = ["일", "월", "화", "수", "목", "금", "토", "기타"];
     if (tab === "recent_caption") {
