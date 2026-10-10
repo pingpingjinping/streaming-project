@@ -1,4 +1,5 @@
 import {getLinkedReanimeCatalog} from "@/lib/linkedReanimeCatalog";
+import { searchManualSubtitleLinks, mergeManualSubtitleSearchResults } from "@/lib/manualSubtitleSearch";
 import { getKoreanSubtitleCatalog } from '@/lib/koreanSubtitleCatalog';
 import { NextRequest, NextResponse } from "next/server";
 import {
@@ -81,6 +82,15 @@ export async function GET(request: NextRequest) {
   } else {
     // Default 'airing'
     result = await provider.getAnimeListFiltered({ section: "2", page, category: "airing" });
+  }
+
+  // The client-side Anissia DB fallback must also see Pi-only manual links,
+  // including matches absent from the Cloudflare release snapshot.
+  if (source === "anissia" && q && searchParams.get("db_only") === "1" && page === 1) {
+    const local = await searchManualSubtitleLinks(q);
+    if (local.length) {
+      result = { ...result, items: mergeManualSubtitleSearchResults(result.items, local) };
+    }
   }
 
   const noCache = searchParams.get("nocache") === "1";
