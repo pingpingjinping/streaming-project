@@ -115,7 +115,8 @@ export function buildReviewedWorkGroups(input: {
     members.sort((a,b)=>sourcePriority(a.source)-sourcePriority(b.source)
       || a.id.localeCompare(b.id,"en"));
     const primary=members.find(x=>x.source!=="Anikoto")||members[0];
-    selected.push({animeId:primary.animeId,title:primary.title,year:primary.year,
+    const display=members.find(x=>/[가-힣]/.test(x.title))||primary;
+    selected.push({animeId:primary.animeId,title:display.title,year:display.year||primary.year,
       members,multiAnikotoIds});
   }
   return selected.slice(0,input.limit??60);
