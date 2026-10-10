@@ -114,7 +114,7 @@ export default function SubtitleLinkManager() {
     try {
       // Prevent indefinite browser spinner on Pi/Postgres outages.
       const response = await fetch("/api/admin/subtitle-links?mode=works&q=" + encodeURIComponent(q),
-        { cache: "no-store", signal: AbortSignal.timeout(45000) });
+        { cache: "no-store", signal: AbortSignal.timeout(120000) });
       const data = await response.json();
       if (requestId !== workRequestId.current) return;
       if (!response.ok || !data.success) throw new Error(data.message || "작품 DB 검색 요청 실패");
@@ -127,7 +127,7 @@ export default function SubtitleLinkManager() {
     } catch (e) {
       if (requestId !== workRequestId.current) return;
       const message = e instanceof Error && e.name === "TimeoutError"
-        ? "45초 안에 응답이 없어 종료했어. Pi DB 부하 또는 서버 로그를 확인해 줘."
+        ? "120초 안에 응답이 없어 종료했어. Pi DB 부하 또는 서버 로그를 확인해 줘."
         : e instanceof Error ? e.message : "DB 작품 검색 실패";
       setWorkError(message);
       setWorkStatus("DB 검색 실패");
