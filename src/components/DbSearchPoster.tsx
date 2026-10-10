@@ -46,18 +46,23 @@ export default function DbSearchPoster({animeId,title,poster}:{animeId:string;ti
   },[animeId,poster]);
   useEffect(()=>{
     if(!visible||requested||src || !/^(?:ani_\d+|re_[A-Za-z0-9_-]+|ak_[A-Za-z0-9_-]+|db_(?:AniList|Onnada)_[A-Za-z0-9_-]+)$/.test(animeId))return;
-    setRequested(true);
     let active=true;
     enqueue({
       active:()=>active,
       run:async()=>{
-        const response=await fetch("/api/anime/search-poster?id="+encodeURIComponent(animeId),{
-          cache:"no-store",
-        });
-        if(!response.ok)return;
-        const result=await response.json();
-        if(active&&typeof result.poster==="string"&&/^https:\/\//.test(result.poster)) {
-          setSrc(result.poster);setFailed(false);
+        try {
+          const response=await fetch("/api/anime/search-poster?id="+encodeURIComponent(animeId),{
+            cache:"no-store",
+          });
+          if(!response.ok)return;
+          const result=await response.json();
+          if(active&&typeof result.poster==="string"&&/^https:\/\//.test(result.poster)) {
+            setSrc(result.poster);setFailed(false);
+          }
+        } finally {
+          // Setting this before the request finishes reruns the effect and
+          // invalidates its own in-flight response via the cleanup below.
+          if(active)setRequested(true);
         }
       },
     });
