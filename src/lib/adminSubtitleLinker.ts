@@ -139,12 +139,13 @@ export async function findCatalogWorks(q: string, exactAnimeId?: string) {
   const sql=getDb();if(!sql)return [];
   const escaped=query.replace(/[\\%_]/g,"\\$&");
   const pattern="%"+escaped+"%";
+  await initDb();
   const exactCore=exact&&exact.source!=="Anikoto"
     ? sql`SELECT source,source_record_id,payload FROM anime_catalog_entries
-      WHERE source=${exact.source} AND source_record_id=${exact.id} LIMIT 1` : null;
+      WHERE source=${exact.source} AND source_record_id=${exact.id} LIMIT 1` : exact ? Promise.resolve([]) : null;
   const exactAk=exact&&exact.source==="Anikoto"
     ? sql`SELECT anikoto_id,payload FROM anime_anikoto_catalog
-      WHERE anikoto_id=${exact.id} LIMIT 1` : null;
+      WHERE anikoto_id=${exact.id} LIMIT 1` : exact ? Promise.resolve([]) : null;
   const [matched,akMatched,korean,rematches,manual,crossRe,anilinks]=await Promise.all([
     exactCore || sql`SELECT source,source_record_id,payload FROM anime_catalog_entries
       WHERE source IN ('Anissia','ReAnime','AniList','Onnada')
