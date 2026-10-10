@@ -6,6 +6,7 @@ import { getLocalSubtitleNameEntries, refreshLocalSubtitleNameIndex } from "@/li
 import { inspectSubtitleArchive } from "@/lib/subtitleUpload";
 import { decodeSubtitleFile } from "@/lib/subtitles";
 import { readEpisodeEvidence, selectEpisodeEntries } from "@/lib/subtitleEpisodes";
+import { subtitleScope } from "@/lib/subtitleLocalIdentity";
 
 const PROVIDERS = ["anissia", "aniall", "naver"] as const;
 const EXT = /\.(?:ass|ssa|smi|srt|vtt)$/i;
@@ -244,6 +245,11 @@ export async function getAdminLinkedSubtitles(animeId: string, episode: number, 
     const files = link.type === "folder" ? await collectSubtitleFiles(verified.full) : [verified.full];
     for (const file of files.slice(0, 60)) {
       try {
+        const relativeName = path.relative(link.type === "folder" ? verified.full : path.dirname(verified.full), file);
+        const inferredKind = subtitleScope(relativeName, link.relativePath).kind;
+        // Explicit OVA/movie/special filename markers may not leak into TV
+        // links. Generic filenames are allowed when the admin supplies kind.
+        if (inferredKind === "unknown" || (inferredKind !== "main" && inferredKind !== link.kind)) continue;
         const info = await stat(file);
         if (!info.isFile() || info.size > 32 * 1024 * 1024 || info.size < 1) continue;
         if (/\.zip$/i.test(file)) {
