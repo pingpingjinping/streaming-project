@@ -72,8 +72,22 @@ export function buildReviewedWorkGroups(input: {
       else seeds.add("isolated:ak_"+row.id);
     } else seeds.add(find(idOf(row)));
   }
+  const hydrated=new Map(input.catalog.map(row=>[idOf(row),row]));
+  // Preserve known verified source IDs while initial search results are being
+  // expanded; a second pass hydrates those IDs with real catalog titles.
+  for(const key of parents.keys())if(!hydrated.has(key)) {
+    const cut=key.indexOf(":");
+    const source=key.slice(0,cut) as Source,id=key.slice(cut+1);
+    if(source!=="Anikoto")hydrated.set(key,{source,id,animeId:canonical(source,id),title:id,year:""});
+  }
+  for(const key of links.keys()) {
+    const id=key.slice(3);
+    if(!hydrated.has("Anikoto:"+id))hydrated.set("Anikoto:"+id,{
+      source:"Anikoto",id,animeId:key,title:id,year:"",
+    });
+  }
   const grouped=new Map<string,SourceWork[]>();
-  for(const row of input.catalog) {
+  for(const row of hydrated.values()) {
     const group=row.source==="Anikoto" ? "isolated:ak_"+row.id : find(idOf(row));
     if(!grouped.has(group))grouped.set(group,[]);
     grouped.get(group)!.push(row);
@@ -83,7 +97,7 @@ export function buildReviewedWorkGroups(input: {
     const members=[...(grouped.get(root)||[])];
     const multiAnikotoIds:string[]=[];
     for(const [id,targets] of links)if(targets.has(root)) {
-      const work=input.catalog.find(row=>row.animeId===id);
+      const work=hydrated.get("Anikoto:"+id.slice(3));
       if(work && !members.some(row=>row.animeId===id))members.push(work);
       if(targets.size>1)multiAnikotoIds.push(id);
     }
