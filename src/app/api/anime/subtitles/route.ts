@@ -219,7 +219,7 @@ export async function GET(request: NextRequest) {
     if (animeIdParam && !bundleAssignment && !creatorPreference) {
       try {
         const adminLinked = (await getAdminLinkedSubtitles(animeIdParam, ep, sourceEpisode))
-          .filter(sub => !isRejected("anissia", sub.name));
+          .filter(sub => !isRejected(sub.sourceProvider, sub.name));
         if (adminLinked.length) {
           return NextResponse.json({
             success: true, anime_title: title, episode: ep,
