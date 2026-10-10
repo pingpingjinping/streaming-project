@@ -77,6 +77,14 @@ export async function ensureSubtitleLinksTable() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       )`;
       await sql`CREATE INDEX IF NOT EXISTS idx_anime_admin_subtitle_links_work ON anime_admin_subtitle_links(anime_id)`;
+      await sql`CREATE TABLE IF NOT EXISTS anime_admin_subtitle_link_members (
+        relative_path TEXT NOT NULL REFERENCES anime_admin_subtitle_links(relative_path)
+          ON DELETE CASCADE ON UPDATE CASCADE,
+        anime_id VARCHAR(150) NOT NULL,
+        PRIMARY KEY (relative_path, anime_id)
+      )`;
+      await sql`CREATE INDEX IF NOT EXISTS idx_anime_admin_subtitle_link_members_work
+        ON anime_admin_subtitle_link_members(anime_id)`;
     })().catch(error => {
       subtitleLinkSchemaReady = null;
       throw error;
@@ -249,7 +257,11 @@ export async function browseLocalEntries(q = "") {
 
 export async function getAdminSubtitleLinks(animeId?: string) {
   const sql = await ensureSubtitleLinksTable();
-  const rows = animeId ? await sql`SELECT * FROM anime_admin_subtitle_links WHERE anime_id=${animeId} ORDER BY updated_at DESC LIMIT 200`
+  const rows = animeId ? await sql`SELECT l.* FROM anime_admin_subtitle_links l
+      WHERE l.anime_id=${animeId} OR EXISTS (
+        SELECT 1 FROM anime_admin_subtitle_link_members m
+        WHERE m.relative_path=l.relative_path AND m.anime_id=${animeId})
+      ORDER BY l.updated_at DESC LIMIT 200`
     : await sql`SELECT * FROM anime_admin_subtitle_links ORDER BY updated_at DESC LIMIT 300`;
   return rows.map(r => ({
     relativePath: String(r.relative_path), type: String(r.entry_type) as EntryType,
@@ -273,8 +285,16 @@ export async function saveAdminSubtitleLink(values: {
     : await sql`SELECT payload FROM anime_catalog_entries WHERE source=${id.source} AND source_record_id=${id.id} LIMIT 1`;
   if (!rows.length) throw new Error("작품 DB에 존재하지 않는 ID입니다.");
   const payload = rows[0].payload;
-  const title = String(payload?.title_ko || payload?.title_english || payload?.title_native ||
+  const title = String(payload?.title_ko || payload?.title || payload?.name ||
+    payload?.title_english || payload?.title_native ||
     payload?.title_romaji || id.id).slice(0, 300);
+  const reviewedGroups=await findCatalogWorks(id.id,values.animeId);
+  const reviewedGroup=reviewedGroups.find(group=>group.members.some(member=>member.animeId===values.animeId));
+  if(!reviewedGroup)throw new Error("선택한 작품의 확정 연결 정보를 다시 확인해 주세요.");
+  // Multi-target Anikoto URL must not implicitly attach unrelated seasons.
+  const memberIds=[...new Set(reviewedGroup.members
+    .filter(member=>!reviewedGroup.multiAnikotoIds.includes(member.animeId))
+    .map(member=>member.animeId).concat(values.animeId))];
 
   const sourceRoot = values.relativePath.split("/")[0];
   const destinationRoot = path.join(storageRoot(), sourceRoot);
@@ -322,6 +342,9 @@ export async function saveAdminSubtitleLink(values: {
         entry_type=EXCLUDED.entry_type, anime_id=EXCLUDED.anime_id, work_title=EXCLUDED.work_title,
         subtitle_kind=EXCLUDED.subtitle_kind, season=EXCLUDED.season, updated_by=EXCLUDED.updated_by,
         updated_at=CURRENT_TIMESTAMP`;
+      await tx`DELETE FROM anime_admin_subtitle_link_members WHERE relative_path=${relativePath}`;
+      for(const memberId of memberIds)await tx`INSERT INTO anime_admin_subtitle_link_members(relative_path,anime_id)
+        VALUES(${relativePath},${memberId}) ON CONFLICT DO NOTHING`;
     });
     try { await refreshLocalSubtitleNameIndex(storageRoot()); }
     catch (error) { console.warn("[Admin subtitle index refresh deferred]", error); }
