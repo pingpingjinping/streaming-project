@@ -52,7 +52,7 @@ export default async function AnimeDetailPage({
   const [seasonOptions, savedOrder] = isAnikoto
     ? await Promise.all([getAnikotoSeasons(anikotoId),getPreferredAnikotoSeason(user.username,anikotoId)])
     : [[],null] as const;
-  const requestedOrder=seasonQuery && /^\\d{1,3}$/.test(seasonQuery)?Number(seasonQuery):null;
+  const requestedOrder=seasonQuery && /^\d{1,3}$/.test(seasonQuery)?Number(seasonQuery):null;
   const effectiveOrder=(validSeasonOrder(requestedOrder)?requestedOrder:null) ?? savedOrder ??
     (seasonOptions.length===1?seasonOptions[0].order:null);
   const currentSeason=seasonOptions.find(row=>row.order===effectiveOrder)||null;
