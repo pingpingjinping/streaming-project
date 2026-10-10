@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Film, Search, Loader2, LogIn, LogOut, User, Globe, Settings, Users, ChevronDown, RefreshCw, Link2 } from "lucide-react";
+import { Film, Search, Loader2, LogIn, LogOut, User, Globe, Settings, Users, ChevronDown, RefreshCw, Link2, FolderOpen } from "lucide-react";
 import BaseUrlSettingsModal from "./BaseUrlSettingsModal";
 import SourceSelectModal, { StreamingSource } from "./SourceSelectModal";
 import { resolveAnimeSearchMode, type AnimeSearchMode } from "@/lib/animeSearchMode";
@@ -375,6 +375,13 @@ export default function Navbar() {
                         className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-medium text-purple-200 hover:bg-purple-600/20">
                         <Film className="h-3.5 w-3.5" /> 한글 애니 DB
                       </Link>
+
+                      {currentUser.isAdmin && (
+                        <Link href="/admin/subtitle-links" onClick={() => setIsMenuOpen(false)}
+                          className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-medium text-emerald-200 hover:bg-emerald-600/20">
+                          <FolderOpen className="h-3.5 w-3.5"/> 로컬 자막 DB 연결
+                        </Link>
+                      )}
 
                       <Link
                         href="/unmatched"
