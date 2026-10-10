@@ -34,14 +34,21 @@ export default function AnissiaDbSearchFallback({
     setStatus("loading");
     setResult(null);
     const params = new URLSearchParams({
-      source: "anissia",
-      tab: "list",
       q: keyword,
       page: String(page),
       captions: captionsOnly ? "1" : "0",
-      db_only: "1",
     });
-    fetch("/api/anime/list?" + params.toString(), {
+    // No upstream hits: keep the existing automatic Pi DB fallback.
+    // Optional "추가 DB 검색" button: query only the Cloudflare D1 Worker.
+    const endpoint = automatic
+      ? "/api/anime/list?" + new URLSearchParams({
+          ...Object.fromEntries(params),
+          source: "anissia",
+          tab: "list",
+          db_only: "1",
+        }).toString()
+      : "/api/anime/search-cloudflare?" + params.toString();
+    fetch(endpoint, {
       signal: controller.signal,
       credentials: "same-origin",
       cache: "no-store",
@@ -62,12 +69,12 @@ export default function AnissiaDbSearchFallback({
         setStatus("error");
       });
     return () => controller.abort();
-  }, [started, keyword, captionsOnly, page, retry]);
+  }, [started, automatic, keyword, captionsOnly, page, retry]);
 
   if (status === "idle") {
     return (
       <section className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-purple-500/20 bg-slate-900/60 px-5 py-4">
-        <p className="text-sm text-slate-300">AniAll · 네이버블로그 등 추가 자막 DB에서도 찾아볼 수 있어.</p>
+        <p className="text-sm text-slate-300">Cloudflare 검색 DB에서 애니시아 · AniAll · 네이버블로그 연결 작품을 추가로 찾아볼 수 있어.</p>
         <button type="button" onClick={() => setStarted(true)}
           className="rounded-xl border border-purple-500/40 bg-purple-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-purple-500">
           추가 DB 검색
@@ -82,9 +89,9 @@ export default function AnissiaDbSearchFallback({
         <p className="font-semibold text-slate-200">{automatic ? "애니시아 검색 결과 없음" : "추가 DB 검색"}</p>
         <div className="flex items-center gap-2 text-sm text-purple-300">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          <span>한글 자막 DB에서 찾고 있습니다...</span>
+          <span>{automatic ? "한글 자막 DB에서 찾고 있습니다..." : "Cloudflare 검색 DB에서 찾고 있습니다..."}</span>
         </div>
-        <p className="text-xs text-slate-400">애니시아 · AniAll · 네이버블로그 연결 작품 확인 중</p>
+        <p className="text-xs text-slate-400">{automatic ? "애니시아 · AniAll · 네이버블로그 연결 작품 확인 중" : "Cloudflare가 처리하는 검색이야. Pi의 자막 DB는 조회하지 않아."}</p>
       </div>
     );
   }
