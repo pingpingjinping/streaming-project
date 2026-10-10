@@ -286,12 +286,13 @@ export async function saveAdminSubtitleLink(values: {
     : await sql`SELECT payload FROM anime_catalog_entries WHERE source=${id.source} AND source_record_id=${id.id} LIMIT 1`;
   if (!rows.length) throw new Error("작품 DB에 존재하지 않는 ID입니다.");
   const payload = rows[0].payload;
-  const title = String(payload?.title_ko || payload?.title || payload?.name ||
+  let title = String(payload?.title_ko || payload?.title || payload?.name ||
     payload?.title_english || payload?.title_native ||
     payload?.title_romaji || id.id).slice(0, 300);
   const reviewedGroups=await findCatalogWorks(id.id,values.animeId);
   const reviewedGroup=reviewedGroups.find(group=>group.members.some(member=>member.animeId===values.animeId));
   if(!reviewedGroup)throw new Error("선택한 작품의 확정 연결 정보를 다시 확인해 주세요.");
+  title=reviewedGroup.title.slice(0,300);
   // Multi-target Anikoto URL must not implicitly attach unrelated seasons.
   const memberIds=[...new Set(reviewedGroup.members
     .filter(member=>!reviewedGroup.multiAnikotoIds.includes(member.animeId))
