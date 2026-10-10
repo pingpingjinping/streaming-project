@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
+import { isTrustedAdminWriteRequest } from "@/lib/adminSubtitleRequestAuth";
 import {
   browseLocalEntries, deleteAdminSubtitleLink, findCatalogWorks,
   getAdminSubtitleLinks, saveAdminSubtitleLink, safeSubtitlePath,
@@ -9,18 +10,21 @@ export const dynamic = "force-dynamic";
 const respond = (message: string, status: number) =>
   NextResponse.json({ success: false, message }, { status, headers: { "Cache-Control": "no-store" } });
 
-async function authorized(request: NextRequest) {
+async function adminSession() {
   const user = await getSessionUser();
-  if (!user?.isAdmin) return null;
-  const origin = request.headers.get("origin");
-  if (origin && origin !== request.nextUrl.origin) return null;
-  const site = request.headers.get("sec-fetch-site");
-  if (site && !["same-origin", "none"].includes(site)) return null;
-  return user;
+  if (!user) return { user: null, failure: respond("로그인 세션을 확인할 수 없습니다. 새로고침 후 다시 로그인해 주세요.", 401) };
+  if (!user.isAdmin) return { user: null, failure: respond("현재 로그인 계정에 관리자 권한이 없습니다.", 403) };
+  return { user, failure: null };
+}
+
+function writeOriginFailure(request: NextRequest) {
+  return isTrustedAdminWriteRequest(request.headers, request.nextUrl.origin)
+    ? null : respond("요청 출처를 확인할 수 없습니다. 현재 사이트 주소에서 다시 시도해 주세요.", 403);
 }
 
 export async function GET(request: NextRequest) {
-  if (!(await authorized(request))) return respond("관리자 권한이 필요합니다.", 403);
+  const auth = await adminSession();
+  if (!auth.user) return auth.failure!;
   const params = request.nextUrl.searchParams;
   const mode = params.get("mode") || "links";
   const q = (params.get("q") || "").slice(0, 150);
@@ -43,8 +47,11 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
-  const user = await authorized(request);
-  if (!user) return respond("관리자 권한이 필요합니다.", 403);
+  const auth = await adminSession();
+  if (!auth.user) return auth.failure!;
+  const originFailure = writeOriginFailure(request);
+  if (originFailure) return originFailure;
+  const user = auth.user;
   const data = await request.json().catch(() => null);
   if (!data || !safeSubtitlePath(data.relativePath, data.type) ||
     typeof data.animeId !== "string" || data.animeId.length > 150 ||
@@ -62,7 +69,10 @@ export async function PUT(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  if (!(await authorized(request))) return respond("관리자 권한이 필요합니다.", 403);
+  const auth = await adminSession();
+  if (!auth.user) return auth.failure!;
+  const originFailure = writeOriginFailure(request);
+  if (originFailure) return originFailure;
   const relativePath = request.nextUrl.searchParams.get("path") || "";
   if (!safeSubtitlePath(relativePath, /\.zip$/i.test(relativePath) ? "zip" : "folder"))
     return respond("해제할 파일 경로를 확인해 주세요.", 400);
