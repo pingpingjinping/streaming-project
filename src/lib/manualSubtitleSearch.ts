@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import type { AnimeListItem } from "@/lib/providers/types";
+import { directManualSearchHref } from "@/lib/catalogDirectPlayback";
 
 export type ManualSubtitleSearchHit = { item: AnimeListItem; memberIds: string[] };
 type LinkedRow = { relative_path: string; anime_id: string; work_title: string; member_ids: string[] | null };
@@ -40,6 +41,10 @@ export function mergeManualSubtitleSearchResults(
       if (touched.has(match.id)) continue;
       touched.add(match.id);
       match.source_name = [match.source_name, "Pi 자막 연결"].filter(Boolean).join(" · ");
+      // If the Pi has a verified playable ID, a Cloudflare catalog card
+      // should use that work link directly rather than stop at /catalog.
+      const directHref = directManualSearchHref(match.id, hit.item.detail_url);
+      if (directHref) match.detail_url = directHref;
       continue;
     }
     if ([...identities].some(id => addedAliases.has(id))) continue;
