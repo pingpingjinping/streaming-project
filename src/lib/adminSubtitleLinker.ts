@@ -54,21 +54,30 @@ export async function verifiedLocalEntry(relativePath: string, type: EntryType) 
   } catch { return null; }
 }
 
+let subtitleLinkSchemaReady: Promise<void> | null = null;
 export async function ensureSubtitleLinksTable() {
   const sql = getDb();
   if (!sql) throw new Error("PostgreSQL 연결이 필요합니다.");
-  await initDb();
-  await sql`CREATE TABLE IF NOT EXISTS anime_admin_subtitle_links (
-    relative_path TEXT PRIMARY KEY,
-    entry_type VARCHAR(8) NOT NULL CHECK (entry_type IN ('folder','zip')),
-    anime_id VARCHAR(150) NOT NULL,
-    work_title TEXT NOT NULL,
-    subtitle_kind VARCHAR(16) NOT NULL,
-    season SMALLINT NOT NULL CHECK (season BETWEEN 1 AND 99),
-    updated_by VARCHAR(100) NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-  )`;
-  await sql`CREATE INDEX IF NOT EXISTS idx_anime_admin_subtitle_links_work ON anime_admin_subtitle_links(anime_id)`;
+  if (!subtitleLinkSchemaReady) {
+    subtitleLinkSchemaReady = (async () => {
+      await initDb();
+      await sql`CREATE TABLE IF NOT EXISTS anime_admin_subtitle_links (
+        relative_path TEXT PRIMARY KEY,
+        entry_type VARCHAR(8) NOT NULL CHECK (entry_type IN ('folder','zip')),
+        anime_id VARCHAR(150) NOT NULL,
+        work_title TEXT NOT NULL,
+        subtitle_kind VARCHAR(16) NOT NULL,
+        season SMALLINT NOT NULL CHECK (season BETWEEN 1 AND 99),
+        updated_by VARCHAR(100) NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`;
+      await sql`CREATE INDEX IF NOT EXISTS idx_anime_admin_subtitle_links_work ON anime_admin_subtitle_links(anime_id)`;
+    })().catch(error => {
+      subtitleLinkSchemaReady = null;
+      throw error;
+    });
+  }
+  await subtitleLinkSchemaReady;
   return sql;
 }
 
