@@ -229,15 +229,19 @@ export async function findCatalogWorks(q: string, exactAnimeId?: string) {
   }).slice(0,60);
 }
 
+/** Browse an existing on-disk name index; no ZIP decompression or DB title lookup.
+ * Return total count too, since the admin UI intentionally renders only 200 rows.
+ */
 export async function browseLocalEntries(q = "") {
-  const needle = q.normalize("NFKC").toLocaleLowerCase("ko-KR").replace(/[^\\p{L}\\p{N}]+/gu, "");
+  const normalize = (value: string) => value.normalize("NFKC").toLocaleLowerCase("ko-KR")
+    .replace(/[^\p{L}\p{N}]+/gu, "");
+  const needle = normalize(q);
   const entries = await getLocalSubtitleNameEntries(storageRoot());
   const indexed = entries.map(e => ({
     relativePath: e.relativePath, type: e.choice.entryType, name: e.choice.folderName,
     source: e.choice.provider,
   }));
-  // The playback index intentionally skips Naver work directories, but the
-  // administrator must also be able to link an already-present Naver folder.
+  // Playback search skips Naver work directories; admin linking supports those.
   const naverFolders: typeof indexed = [];
   try {
     for (const entry of await readdir(path.join(storageRoot(), "naver_subtitles"), { withFileTypes: true })) {
@@ -249,11 +253,11 @@ export async function browseLocalEntries(q = "") {
   } catch (error: any) {
     if (error?.code !== "ENOENT") throw error;
   }
-  return [...indexed, ...naverFolders]
-    .filter(e => !needle || e.name.normalize("NFKC").toLocaleLowerCase("ko-KR")
-      .replace(/[^\\p{L}\\p{N}]+/gu, "").includes(needle))
-    .sort((a,b) => a.relativePath.localeCompare(b.relativePath, "ko"))
-    .slice(0, 200);
+  // Also match parent work-folder names when a nested ZIP is named "01.zip".
+  const matched = [...indexed, ...naverFolders]
+    .filter(entry => !needle || normalize(entry.relativePath).includes(needle))
+    .sort((a,b) => a.relativePath.localeCompare(b.relativePath, "ko"));
+  return { items: matched.slice(0, 200), total: matched.length };
 }
 
 export async function getAdminSubtitleLinks(animeId?: string) {
