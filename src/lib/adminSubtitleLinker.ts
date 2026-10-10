@@ -96,13 +96,30 @@ export async function findCatalogWorks(q: string) {
 }
 
 export async function browseLocalEntries(q = "") {
-  const needle = q.normalize("NFKC").toLocaleLowerCase("ko-KR").replace(/[^\p{L}\p{N}]+/gu, "");
+  const needle = q.normalize("NFKC").toLocaleLowerCase("ko-KR").replace(/[^\\p{L}\\p{N}]+/gu, "");
   const entries = await getLocalSubtitleNameEntries(storageRoot());
-  return entries.filter(e => !needle || e.normalizedName.includes(needle))
-    .slice(0, 200).map(e => ({
-      relativePath: e.relativePath, type: e.choice.entryType, name: e.choice.folderName,
-      source: e.choice.provider,
-    }));
+  const indexed = entries.map(e => ({
+    relativePath: e.relativePath, type: e.choice.entryType, name: e.choice.folderName,
+    source: e.choice.provider,
+  }));
+  // The playback index intentionally skips Naver work directories, but the
+  // administrator must also be able to link an already-present Naver folder.
+  const naverFolders: typeof indexed = [];
+  try {
+    for (const entry of await readdir(path.join(storageRoot(), "naver_subtitles"), { withFileTypes: true })) {
+      if (entry.isDirectory() && !entry.name.startsWith(".")) {
+        naverFolders.push({ relativePath: "naver_subtitles/" + entry.name,
+          type: "folder", name: entry.name, source: "naver" });
+      }
+    }
+  } catch (error: any) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  return [...indexed, ...naverFolders]
+    .filter(e => !needle || e.name.normalize("NFKC").toLocaleLowerCase("ko-KR")
+      .replace(/[^\\p{L}\\p{N}]+/gu, "").includes(needle))
+    .sort((a,b) => a.relativePath.localeCompare(b.relativePath, "ko"))
+    .slice(0, 200);
 }
 
 export async function getAdminSubtitleLinks(animeId?: string) {
@@ -160,7 +177,7 @@ export function safeUploadSegments(value: unknown): string[] | null {
 /** Uploaded files are sandboxed under a unique Anissia-local work folder. */
 export async function uploadAdminSubtitles(files: Array<{ name: string; bytes: Buffer }>, label: string) {
   if (!files.length || files.length > 120) throw new Error("파일은 한 번에 120개까지 가능합니다.");
-  if (files.some(f => !safeUploadSegments(f.name) || f.bytes.length < 1 || f.bytes.length > 16 * 1024 * 1024) ||
+  if (files.some(f => !safeUploadSegments(f.name) || f.bytes.length < 1 || f.bytes.length > (f.name.toLowerCase().endsWith('.zip') ? 32 : 16) * 1024 * 1024) ||
     files.reduce((n, f) => n + f.bytes.length, 0) > 48 * 1024 * 1024)
     throw new Error("파일 경로 또는 업로드 용량이 허용 범위를 넘었습니다.");
   if (files.some(f => !/\.(?:zip|ass|ssa|smi|srt|vtt)$/i.test(f.name))) throw new Error("자막 및 ZIP만 업로드할 수 있어요.");
@@ -217,7 +234,7 @@ export async function getAdminLinkedSubtitles(animeId: string, episode: number, 
     for (const file of files.slice(0, 60)) {
       try {
         const info = await stat(file);
-        if (!info.isFile() || info.size > 16 * 1024 * 1024 || info.size < 1) continue;
+        if (!info.isFile() || info.size > 32 * 1024 * 1024 || info.size < 1) continue;
         if (/\.zip$/i.test(file)) {
           const { zip, entries } = inspectSubtitleArchive(await readFile(file));
           // The linked work/season is explicit; each member must still prove its episode.
