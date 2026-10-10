@@ -7,6 +7,7 @@ function load(file,deps={},globals={}) {
   deps = {
     '@/components/AnissiaDbSearchFallback': { default: () => null },
     '@/lib/anissiaSearchStages': { prepareAnissiaApiSearch: (result) => ({result, needsDbFallback: result.items.length === 0}) },
+    '@/lib/cloudflareAnimeSearch': { searchCloudflareAnimeFirst: async () => null },
     ...deps,
   };
   deps={'./provisionalWorkMatches':{getProvisionalWorkMatches:async()=>[]},'./workMatchOverrides':matchOverrides,
