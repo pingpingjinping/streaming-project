@@ -4,6 +4,8 @@ const crypto = require("node:crypto");
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const vm = require("node:vm");
+const os = require("node:os");
+const fsp = require("node:fs/promises");
 const ts = require("typescript");
 
 const original = fs.readFileSync(path.join(__dirname, "../src/lib/adminSubtitleLinker.ts"), "utf8");
@@ -17,12 +19,19 @@ const context = vm.createContext({
     if (id === "node:crypto") return crypto;
     if (id === "node:fs/promises") return require(id);
     if (id === "node:path") return path;
+    if (id === "@/lib/subtitleUpload") return { inspectSubtitleArchive: bytes => {
+      const names = JSON.parse(bytes.toString("utf8").replace(/^PK/, ""));
+      return { entries: names.map((filename,index)=>({index,filename})),
+        zip: {getEntries: ()=>names.map((filename,index)=>({getData:()=>Buffer.from("WEBVTT\\n\\n"+index)}))} };
+    }};
+    if (id === "@/lib/localSubtitleNameIndex") return {refreshLocalSubtitleNameIndex: async()=>{}};
     if (id.startsWith("@/")) return {};
     throw new Error("Unexpected import " + id);
   },
 });
 vm.runInContext(code, context);
-const { safeSubtitlePath, safeUploadSegments, parseWorkId } = context.exports;
+const { safeSubtitlePath, safeUploadSegments, parseWorkId,
+  allocateCanonicalFolder, extractZipAsFolder, uploadAdminSubtitles } = context.exports;
 
 test("Admin Pi folder and ZIP paths are supported across all three source directories", () => {
   for (const src of ["anissia", "aniall", "naver"]) {
@@ -60,4 +69,48 @@ test("Manual works accept specific catalogue sources and reject unknown IDs", ()
   assert.equal(parseWorkId("db_Onnada_443").source, "Onnada");
   assert.equal(parseWorkId("ani_0"), null);
   assert.equal(parseWorkId("db_Unknown_1"), null);
+});
+
+test("ZIP gets extracted into a directory and traversal is rejected", async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(),"anime-zip-test-"));
+  try {
+    await extractZipAsFolder(Buffer.from(JSON.stringify(["01.srt","S02/02.ass"])), path.join(root,"good"));
+    assert.equal(fs.existsSync(path.join(root,"good","01.srt")),true);
+    assert.equal(fs.existsSync(path.join(root,"good","S02","02.ass")),true);
+    await assert.rejects(() => extractZipAsFolder(
+      Buffer.from(JSON.stringify(["../evil.srt"])), path.join(root,"bad")), /안전하지/);
+    assert.equal(fs.existsSync(path.join(root,"evil.srt")),false);
+  } finally { await fsp.rm(root,{recursive:true,force:true}); }
+});
+
+test("Canonical DB title is kept, and occupied titles receive a collision suffix", async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(),"anime-rename-test-"));
+  try {
+    const canonical = await allocateCanonicalFolder(root,"  슬라임 2기  ");
+    assert.equal(path.basename(canonical.full),"슬라임 2기");
+    await fsp.mkdir(canonical.full);
+    assert.equal(path.basename((await allocateCanonicalFolder(root,"슬라임 2기")).full),"슬라임 2기 (2)");
+    assert.equal((await allocateCanonicalFolder(root,"슬라임 2기",canonical.full)).full,canonical.full);
+  } finally {await fsp.rm(root,{recursive:true,force:true});}
+});
+
+test("Uploading ZIP writes extracted subtitle files, not the original archive", async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(),"anime-upload-test-"));
+  const before=process.env.SUBTITLE_STORAGE_DIR;
+  process.env.SUBTITLE_STORAGE_DIR=root;
+  try {
+    const result = await uploadAdminSubtitles([{
+      name:"외부.zip",
+      bytes:Buffer.from("PK"+JSON.stringify(["01.srt","02.ass"]))
+    }],"임시 받은 자막");
+    assert.equal(result.type,"folder");
+    assert.equal(result.count,2);
+    assert.equal(fs.existsSync(path.join(root,result.relativePath,"01.srt")),true);
+    assert.equal(fs.existsSync(path.join(root,result.relativePath,"02.ass")),true);
+    assert.equal(fs.existsSync(path.join(root,result.relativePath,"외부.zip")),false);
+  } finally {
+    if (before === undefined) delete process.env.SUBTITLE_STORAGE_DIR;
+    else process.env.SUBTITLE_STORAGE_DIR=before;
+    await fsp.rm(root,{recursive:true,force:true});
+  }
 });
