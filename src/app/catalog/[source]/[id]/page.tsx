@@ -3,9 +3,13 @@ import Navbar from '@/components/Navbar';
 import { requireAuth } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { loadSubtitleCatalog } from '@/lib/koreanSubtitleCatalog';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
+import { directCatalogPlaybackHref } from '@/lib/catalogDirectPlayback';
 
-export default async function CatalogWorkPage({ params }: { params: Promise<{ source: string; id: string }> }) {
+export default async function CatalogWorkPage({ params, searchParams }: {
+  params: Promise<{ source: string; id: string }>;
+  searchParams: Promise<{ view?: string }>;
+}) {
   await requireAuth();
   const { source, id } = await params;
   if (!['AniList','Onnada','ReAnime','Anissia'].includes(source) || !id || id.length > 160) notFound();
@@ -39,11 +43,29 @@ export default async function CatalogWorkPage({ params }: { params: Promise<{ so
   try { posts = await sql`SELECT DISTINCT post_id,blog_title FROM anime_aniall_matches
     WHERE ref_source=${source} AND ref_source_id=${id} ORDER BY post_id`; }
   catch (error: any) { if (error?.code !== '42P01') throw error; }
-  let streams: any[] = [];
-  try { streams = await sql`SELECT DISTINCT anikoto_id FROM anime_anikoto_work_lookup
+  let streams: Array<{anikoto_id:string;link_status:string}> = [];
+  try { streams = await sql`SELECT DISTINCT anikoto_id,link_status FROM anime_anikoto_work_lookup
     WHERE source=${source} AND source_record_id=${id}
       AND link_status IN ('automatic','reviewed','multi_reviewed') ORDER BY anikoto_id`; }
   catch (error: any) { if (error?.code !== '42P01') throw error; }
+
+  // Catalog-only pages are informational. A known, single playable source
+  // should open the ordinary work page immediately, preserving a manual
+  // ?view=catalog escape hatch for subtitle/file inspection.
+  if ((await searchParams).view !== 'catalog') {
+    let manualMembers: Array<{anime_id:string}> = [];
+    if (manualLinks.length) {
+      const paths = manualLinks.map(row => row.relative_path);
+      manualMembers = await sql`SELECT DISTINCT anime_id
+        FROM anime_admin_subtitle_link_members
+        WHERE relative_path=ANY(${paths}::text[])`;
+    }
+    const target = directCatalogPlaybackHref(
+      manualMembers.map(row => row.anime_id), streams,
+    );
+    if (target) redirect(target);
+  }
+
   return <div className="min-h-screen bg-[#0b0f19] text-slate-200"><Navbar />
     <main className="mx-auto max-w-5xl px-4 py-8">
       <h1 className="text-2xl font-bold">{work.title}</h1>
