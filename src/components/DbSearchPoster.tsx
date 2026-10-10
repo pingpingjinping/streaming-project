@@ -1,5 +1,6 @@
 "use client";
 import {useEffect,useRef,useState} from "react";
+import {shouldFetchVerifiedPoster} from "@/lib/dbSearchPosterFallback";
 
 type QueuedJob={run:()=>Promise<void>;active:()=>boolean};
 const queue:QueuedJob[]=[];
@@ -22,7 +23,7 @@ function drain() {
   }
 }
 /**
- * Only missing/broken posters request external artwork, lazily when on screen.
+ * Missing or stock-placeholder posters request verified artwork lazily when on screen.
  * Search text renders independently; simultaneous requests are capped to 3.
  */
 export default function DbSearchPoster({animeId,title,poster}:{animeId:string;title:string;poster:string}) {
@@ -45,7 +46,7 @@ export default function DbSearchPoster({animeId,title,poster}:{animeId:string;ti
     setSrc(poster);setFailed(false);setRequested(false);
   },[animeId,poster]);
   useEffect(()=>{
-    if(!visible||requested||src || !/^(?:ani_\d+|re_[A-Za-z0-9_-]+|ak_[A-Za-z0-9_-]+|db_(?:AniList|Onnada)_[A-Za-z0-9_-]+)$/.test(animeId))return;
+    if(!visible||requested||!shouldFetchVerifiedPoster(animeId,src))return;
     let active=true;
     enqueue({
       active:()=>active,
