@@ -28,6 +28,8 @@ async function ensurePreferenceTable() {
         user_id VARCHAR(100) NOT NULL,
         anikoto_id VARCHAR(150) NOT NULL,
         target_order INTEGER NOT NULL CHECK (target_order BETWEEN 1 AND 999),
+        target_source VARCHAR(30) NOT NULL,
+        target_id VARCHAR(150) NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY(user_id,anikoto_id)
       )`;
@@ -94,8 +96,12 @@ export function filterSeasonEpisodes<T extends {number:number}>(
 export async function getPreferredAnikotoSeason(userId:string,anikotoId:string):Promise<number|null> {
   if(!userId||!validAnikotoId(anikotoId))return null;
   const sql=await ensurePreferenceTable();
-  const found=await sql`SELECT target_order FROM anime_account_preferred_seasons
-    WHERE user_id=${userId} AND anikoto_id=${anikotoId} LIMIT 1`;
+  const found=await sql`SELECT p.target_order FROM anime_account_preferred_seasons p
+    JOIN anime_anikoto_work_targets t ON
+      t.anikoto_id=p.anikoto_id AND t.target_order=p.target_order
+      AND t.target_source=p.target_source AND t.target_id=p.target_id
+    WHERE p.user_id=${userId} AND p.anikoto_id=${anikotoId}
+      AND t.link_status IN ('reviewed','automatic','multi_reviewed') LIMIT 1`;
   const order=Number(found[0]?.target_order);
   return validSeasonOrder(order)?order:null;
 }
@@ -103,11 +109,16 @@ export async function getPreferredAnikotoSeason(userId:string,anikotoId:string):
 export async function savePreferredAnikotoSeason(userId:string,anikotoId:string,order:number) {
   if(!userId||userId.length>100||!validAnikotoId(anikotoId)||!validSeasonOrder(order))return false;
   const candidates=await getAnikotoSeasons(anikotoId);
-  if(!candidates.some(item=>item.order===order))return false;
+  const target=candidates.find(item=>item.order===order);
+  if(!target)return false;
   const sql=await ensurePreferenceTable();
-  await sql`INSERT INTO anime_account_preferred_seasons(user_id,anikoto_id,target_order,updated_at)
-    VALUES(${userId},${anikotoId},${order},CURRENT_TIMESTAMP)
+  await sql`INSERT INTO anime_account_preferred_seasons(
+      user_id,anikoto_id,target_order,target_source,target_id,updated_at)
+    VALUES(${userId},${anikotoId},${order},${target.source},${target.sourceId},CURRENT_TIMESTAMP)
     ON CONFLICT(user_id,anikoto_id) DO UPDATE SET
-      target_order=EXCLUDED.target_order,updated_at=CURRENT_TIMESTAMP`;
+      target_order=EXCLUDED.target_order,
+      target_source=EXCLUDED.target_source,
+      target_id=EXCLUDED.target_id,
+      updated_at=CURRENT_TIMESTAMP`;
   return true;
 }
