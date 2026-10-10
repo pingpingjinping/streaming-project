@@ -8,6 +8,7 @@ const os = require("node:os");
 const fsp = require("node:fs/promises");
 const ts = require("typescript");
 
+let testNameEntries = [];
 const original = fs.readFileSync(path.join(__dirname, "../src/lib/adminSubtitleLinker.ts"), "utf8");
 const code = ts.transpileModule(original, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
@@ -24,14 +25,17 @@ const context = vm.createContext({
       return { entries: names.map((filename,index)=>({index,filename})),
         zip: {getEntries: ()=>names.map((filename,index)=>({getData:()=>Buffer.from("WEBVTT\\n\\n"+index)}))} };
     }};
-    if (id === "@/lib/localSubtitleNameIndex") return {refreshLocalSubtitleNameIndex: async()=>{}};
+    if (id === "@/lib/localSubtitleNameIndex") return {
+      getLocalSubtitleNameEntries: async () => testNameEntries,
+      refreshLocalSubtitleNameIndex: async()=>{}
+    };
     if (id.startsWith("@/")) return {};
     throw new Error("Unexpected import " + id);
   },
 });
 vm.runInContext(code, context);
 const { safeSubtitlePath, safeUploadSegments, parseWorkId,
-  allocateCanonicalFolder, extractZipAsFolder, uploadAdminSubtitles } = context.exports;
+  allocateCanonicalFolder, extractZipAsFolder, uploadAdminSubtitles, browseLocalEntries } = context.exports;
 
 test("Admin Pi folder and ZIP paths are supported across all three source directories", () => {
   for (const src of ["anissia", "aniall", "naver"]) {
@@ -111,6 +115,57 @@ test("Uploading ZIP writes extracted subtitle files, not the original archive", 
   } finally {
     if (before === undefined) delete process.env.SUBTITLE_STORAGE_DIR;
     else process.env.SUBTITLE_STORAGE_DIR=before;
+    await fsp.rm(root,{recursive:true,force:true});
+  }
+});
+
+test("Pi search includes parent folder paths for nested ZIP archives", async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "anime-admin-files-"));
+  const previous = process.env.SUBTITLE_STORAGE_DIR;
+  process.env.SUBTITLE_STORAGE_DIR = root;
+  try {
+    await fsp.mkdir(path.join(root, "naver_subtitles"));
+    testNameEntries = [
+      {relativePath:"anissia_subtitles/슬라임 2기/01.zip",
+        choice:{entryType:"zip",folderName:"01.zip",provider:"anissia"}},
+      {relativePath:"aniall_subtitles/히다마리 스케치/01.zip",
+        choice:{entryType:"zip",folderName:"01.zip",provider:"aniall"}},
+      {relativePath:"anissia_subtitles/슬라임 2기",
+        choice:{entryType:"folder",folderName:"슬라임 2기",provider:"anissia"}},
+    ];
+    await fsp.mkdir(path.join(root, "naver_subtitles", "슬라임 극장판"));
+    const result = await browseLocalEntries("슬라임");
+    assert.equal(result.total, 3);
+    assert.deepEqual(Array.from(result.items.map(x=>x.relativePath)).sort(), [
+      "anissia_subtitles/슬라임 2기",
+      "anissia_subtitles/슬라임 2기/01.zip",
+      "naver_subtitles/슬라임 극장판"
+    ].sort());
+    assert.equal((await browseLocalEntries("히다마리")).total, 1);
+  } finally {
+    testNameEntries = [];
+    if (previous === undefined) delete process.env.SUBTITLE_STORAGE_DIR;
+    else process.env.SUBTITLE_STORAGE_DIR = previous;
+    await fsp.rm(root,{recursive:true,force:true});
+  }
+});
+
+test("Pi file search shows the total even when only 200 rows are displayed", async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "anime-search-limit-"));
+  const previous = process.env.SUBTITLE_STORAGE_DIR;
+  process.env.SUBTITLE_STORAGE_DIR = root;
+  try {
+    testNameEntries = Array.from({length:225},(_,index)=>({
+      relativePath:"anissia_subtitles/작품 "+index,
+      choice:{entryType:"folder",folderName:"작품 "+index,provider:"anissia"}
+    }));
+    const result = await browseLocalEntries("작품");
+    assert.equal(result.total,225);
+    assert.equal(result.items.length,200);
+  } finally {
+    testNameEntries = [];
+    if (previous === undefined) delete process.env.SUBTITLE_STORAGE_DIR;
+    else process.env.SUBTITLE_STORAGE_DIR = previous;
     await fsp.rm(root,{recursive:true,force:true});
   }
 });
