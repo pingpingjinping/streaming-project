@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
+import { isTrustedAdminWriteRequest } from "@/lib/adminSubtitleRequestAuth";
 import { uploadAdminSubtitles } from "@/lib/adminSubtitleLinker";
 
 export const runtime = "nodejs";
@@ -7,12 +8,16 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   const user = await getSessionUser();
-  if (!user?.isAdmin) return NextResponse.json({ success: false, message: "관리자 권한이 필요합니다." }, { status: 403 });
-  const site = request.headers.get("sec-fetch-site");
-  if (site && !["same-origin", "none"].includes(site)) return NextResponse.json({ success: false, message: "허용되지 않은 요청입니다." }, { status: 403 });
-  const origin = request.headers.get("origin");
-  if (origin && origin !== request.nextUrl.origin)
-    return NextResponse.json({ success: false, message: "외부에서의 업로드는 허용하지 않습니다." }, { status: 403 });
+  if (!user) return NextResponse.json({
+    success: false, message: "로그인 세션을 확인할 수 없습니다. 새로고침 후 다시 로그인해 주세요."
+  }, { status: 401 });
+  if (!user.isAdmin) return NextResponse.json({
+    success: false, message: "현재 로그인 계정에 관리자 권한이 없습니다."
+  }, { status: 403 });
+  if (!isTrustedAdminWriteRequest(request.headers, request.nextUrl.origin))
+    return NextResponse.json({
+      success: false, message: "업로드 요청 출처를 확인할 수 없습니다. 현재 사이트 주소에서 다시 시도해 주세요."
+    }, { status: 403 });
   if (Number(request.headers.get("content-length")) > 52 * 1024 * 1024)
     return NextResponse.json({ success: false, message: "한 번에 48MB까지 올릴 수 있습니다." }, { status: 413 });
   try {
