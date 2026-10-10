@@ -14,6 +14,16 @@ export function directCatalogPlaybackHref(
   members: string[],
   streams: CatalogStreamLink[],
 ): string | null {
+  // A unique explicit Anikoto link is the destination advertised on this
+  // catalog page. Prefer it, but never auto-enter a multi-season listing.
+  if (streams.some(row => row.link_status === "multi_reviewed")) return null;
+  const streamIds = [...new Set(streams
+    .filter(row => ["reviewed", "automatic"].includes(row.link_status))
+    .map(row => row.anikoto_id)
+    .filter(valid))];
+  if (streamIds.length > 1) return null;
+  if (streamIds.length === 1) return "/anime/ak_" + encodeURIComponent(streamIds[0]);
+
   // Only source IDs already present in the exact administrator-reviewed group
   // are eligible. Never infer a video work from the catalog's Korean title.
   for (const prefix of ["ani_", "re_"]) {
@@ -23,15 +33,7 @@ export function directCatalogPlaybackHref(
     if (sourceIds.length === 1) return "/anime/" + encodeURIComponent(sourceIds[0]);
   }
 
-  // The Anikoto catalog lookup is independently reviewed and can resolve a
-  // catalog work even if its video ID wasn't included in the local link table.
-  // Do not automatically enter any ambiguous or multi-season lookup.
-  if (streams.some(row => row.link_status === "multi_reviewed")) return null;
-  const streamIds = [...new Set(streams
-    .filter(row => ["reviewed", "automatic"].includes(row.link_status))
-    .map(row => row.anikoto_id)
-    .filter(valid))];
-  return streamIds.length === 1 ? "/anime/ak_" + encodeURIComponent(streamIds[0]) : null;
+  return null;
 }
 
 export function directManualSearchHref(itemId: string, candidateUrl: string): string | null {
