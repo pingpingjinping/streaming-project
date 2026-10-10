@@ -86,6 +86,15 @@ put('anissia_subtitles/동일 내용 복수 출처/혼즈키4 9화.ass',ass('ide
 for(const creator of ['카이란','다른제작자'])weeklyFile(`anissia_subtitles/동일 내용 복수 출처/24화/${creator}/혼즈키4 24화.ass`,
   'anissia',creator==='카이란'?730:731,creator,24,ass('identical duplicated content'));
 put('.weekly-subtitle-sources.json',JSON.stringify(migrationSources));
+for(const provider of ['anissia','aniall']) for(const layout of ['folder','zip']) {
+  const title=`하느님의 메모장 ${provider} ${layout}`;
+  const files=Object.fromEntries([1,10,11,12].flatMap(ep=>[
+    [`하느님의 메모장 page ${String(ep).padStart(2,'0')}${ep===10?'화':''}.srt`,srt(`page base ${ep}`)],
+    [`하느님의 메모장 page ${String(ep).padStart(2,'0')} NS.srt`,srt(`page NS ${ep}`)],
+  ]));
+  if(layout==='zip')zipFile(`${provider}_subtitles/${title}/all.zip`,files);
+  else for(const[name,bytes]of Object.entries(files))put(`${provider}_subtitles/${title}/${name}`,bytes);
+}
 const db=require('../src/lib/db.ts'),auth=require('../src/lib/auth.ts'),storage=require('../src/lib/subtitleStorage.ts');
 const reviewed=require('../src/lib/reviewedSubtitleStorage.ts'),titles=require('../src/lib/subtitles.ts'),matches=require('../src/lib/reanimeMatches.ts');
 const identity=require('../src/lib/subtitleLocalIdentity.ts');
@@ -132,6 +141,56 @@ test('same creator and generic ZIP names are scoped by work; assigned ns track f
   const next=await play('re_a','작품 A',2);assert.equal(next.count,1);assert.equal(next.needs_manual_subtitle_choice,false);
   assert.ok(next.subtitles[0].content.includes('A two ns'));
   const other=await play('re_b','작품 B');assert.ok(other.subtitles[0].content.includes('B one ns'));
+});
+test('page-numbered ordinary and spaced NS tracks follow later episodes in folders and ZIPs',async()=>{
+  for(const provider of ['anissia','aniall']) for(const layout of ['folder','zip']) {
+    const title=`하느님의 메모장 ${provider} ${layout}`,id=`re_page_${provider}_${layout}`;
+    const folder=identity.bundleScopeKey({type:'folder',provider,work:title,kind:'main',season:1});
+    const first=provider==='anissia'
+      ?await storage.getAnissiaArchiveSubtitles([title],1,null,1,{bundleKey:folder})
+      :await storage.getAniAllArchiveSubtitles(title,1,1,null,'',{bundleKey:folder});
+    assert.equal(first.length,2);
+    const base=first.find(s=>s.content.includes('page base 1'));
+    const ns=first.find(s=>s.content.includes('page NS 1'));
+    assert.notEqual(base.sourceBundleKey,ns.sourceBundleKey);
+    if(provider==='anissia')assert.equal(ns.localArchiveTrackLabel,'논스폰서판');
+    for(const [selected,variant]of [[base,'base'],[ns,'NS']]) {
+      assert.equal((await assign(id,provider,selected)).success,true);
+      for(const ep of [10,11,12]) {
+        const next=await play(id,title,ep);
+        assert.equal(next.count,1);assert.equal(next.needs_manual_subtitle_choice,false);
+        assert.ok(next.subtitles[0].content.includes(`page ${variant} ${ep}`));
+        assert.equal(next.subtitles[0].sourceBundleKey,selected.sourceBundleKey);
+      }
+    }
+    const current=identity.parseBundleScope(ns.sourceBundleKey);
+    const legacy=identity.bundleScopeKey({...current,track:current.track.replaceAll('pageepns','page11ns')});
+    assignments.set(`alice:${id}`,{animeId:id,provider,bundleKey:legacy,label:'기존 11화 NS 선택',exclusive:true});
+    const resumed=await play(id,title,12);
+    assert.equal(resumed.count,1);assert.ok(resumed.subtitles[0].content.includes('page NS 12'));
+    assert.equal(resumed.bundle_assignment.bundleKey,ns.sourceBundleKey);
+  }
+});
+test('saved page 11 NS and page 10화 tracks remain compatible without crossing variants or work scopes',()=>{
+  const scope={type:'local',provider:'anissia',work:'하느님의 메모장',kind:'main',season:1,
+    track:'로컬파일|하느님의메모장pageepns|하느님의메모장pageepns'};
+  const current=identity.bundleScopeKey(scope);
+  const legacy=identity.bundleScopeKey({...scope,track:'로컬파일|하느님의메모장page11ns|하느님의메모장page11ns'});
+  assert.equal(identity.bundleMatchesAssignment(legacy,current),true);
+  assert.equal(identity.refineLocalBundleAssignment(legacy,current),current);
+  const ordinary=identity.bundleScopeKey({...scope,track:'로컬파일|하느님의메모장pageep|하느님의메모장pageep'});
+  const oldOrdinary=identity.bundleScopeKey({...scope,track:'로컬파일|하느님의메모장pageep화|하느님의메모장pageep화'});
+  assert.equal(identity.bundleMatchesAssignment(oldOrdinary,ordinary),true);
+  for(const changed of [
+    {track:'로컬파일|하느님의메모장pageep|하느님의메모장pageep'},
+    {track:'로컬파일|하느님의메모장pageeps|하느님의메모장pageeps'},
+    {track:'로컬파일|하느님의메모장pageepns__2|하느님의메모장pageepns__2'},
+    {work:'다른 작품'}, {season:2}, {kind:'ova'}, {provider:'aniall'},
+  ]) assert.equal(identity.bundleMatchesAssignment(legacy,identity.bundleScopeKey({...scope,...changed})),false);
+  const recorded={...scope,track:'제작자|하느님의메모장pageepns|하느님의메모장pageepns|source:anissia:1'};
+  const oldRecorded=identity.bundleScopeKey({...recorded,track:recorded.track.replaceAll('pageepns','page11ns')});
+  for(const track of [recorded.track.replace('제작자','다른제작자'),recorded.track.replace('source:anissia:1','source:anissia:2')])
+    assert.equal(identity.bundleMatchesAssignment(oldRecorded,identity.bundleScopeKey({...recorded,track})),false);
 });
 test('one physical TV+OVA ZIP has independent scopes and preserves original bytes',async()=>{
   const files=await storage.getAniAllArchiveSubtitles('혼합 작품',1,null,null,'',{manualSearch:true});
