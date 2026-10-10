@@ -29,8 +29,8 @@ export async function POST(request: NextRequest) {
     let total = 0;
     for (let i = 0; i < files.length; i++) {
       const file = files[i] as File;
-      if (file.size < 1 || file.size > 16 * 1024 * 1024 || typeof names[i] !== "string")
-        return NextResponse.json({ success: false, message: "개별 파일은 16MB 이하로 올려 주세요." }, { status: 413 });
+      if (file.size < 1 || file.size > (file.name.toLowerCase().endsWith('.zip') ? 32 : 16) * 1024 * 1024 || typeof names[i] !== "string")
+        return NextResponse.json({ success: false, message: "ZIP은 32MB, 자막 파일은 16MB 이하로 올려 주세요." }, { status: 413 });
       total += file.size;
       if (total > 48 * 1024 * 1024)
         return NextResponse.json({ success: false, message: "총 업로드 크기는 48MB 이하입니다." }, { status: 413 });
