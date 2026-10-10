@@ -29,13 +29,18 @@ export function convertCloudflareSearchResponse(
   captionsOnly: boolean,
 ): AnimeListResponse {
   if (!payload || typeof payload !== "object") throw new Error("Invalid Cloudflare search response");
-  const data = payload as { items?: unknown; total_pages?: unknown; has_next?: unknown };
-  if (!Array.isArray(data.items) || data.items.length > 20) {
+  // The Worker may expose its records under "results" rather than "items".
+  const data = payload as {
+    items?: unknown; results?: unknown; total?: unknown;
+    total_pages?: unknown; has_next?: unknown;
+  };
+  const records = Array.isArray(data.items) ? data.items : data.results;
+  if (!Array.isArray(records) || records.length > 20) {
     throw new Error("Invalid Cloudflare search items");
   }
 
   const items: AnimeListItem[] = [];
-  for (const value of data.items as CloudflareWork[]) {
+  for (const value of records as CloudflareWork[]) {
     if (!value || typeof value !== "object") continue;
     const id = typeof value.id === "string" ? value.id : "";
     const title = typeof value.title === "string" ? value.title : "";
@@ -54,11 +59,15 @@ export function convertCloudflareSearchResponse(
       remarks: typeof value.remarks === "string" ? value.remarks : "",
     });
   }
+  const total = Number(data.total);
   const totalPages = Number(data.total_pages);
+  const pages = Number.isSafeInteger(totalPages) && totalPages >= 1 ? totalPages
+    : Number.isSafeInteger(total) && total >= 0 ? Math.max(1, Math.ceil(total / 20)) : 1;
   return {
     items,
     page,
-    total_pages: Number.isSafeInteger(totalPages) && totalPages >= 1 ? Math.min(totalPages, 100) : 1,
-    has_next: Boolean(data.has_next) && page < 100,
+    total_pages: Math.min(pages, 100),
+    has_next: typeof data.has_next === "boolean" ? data.has_next && page < 100
+      : page < pages,
   };
 }
