@@ -9,9 +9,27 @@ export default async function CatalogWorkPage({ params }: { params: Promise<{ so
   await requireAuth();
   const { source, id } = await params;
   if (!['AniList','Onnada','ReAnime','Anissia'].includes(source) || !id || id.length > 160) notFound();
-  const work = (await loadSubtitleCatalog()).find(row => row.id === 'db_' + source + '_' + id);
   const sql = getDb();
-  if (!work || !sql) notFound();
+  if (!sql) notFound();
+  const workId = 'db_' + source + '_' + id;
+  const knownWork = (await loadSubtitleCatalog()).find(row => row.id === workId);
+  // A newly connected Pi folder is not part of the frozen reviewed registry.
+  // Keep its catalog detail route usable even when it has no packaged subtitle
+  // files and therefore no pre-existing loadSubtitleCatalog() entry.
+  let manualLinks: Array<{relative_path:string;work_title:string}> = [];
+  try {
+    manualLinks = await sql`SELECT DISTINCT l.relative_path,l.work_title
+      FROM anime_admin_subtitle_links l
+      JOIN anime_admin_subtitle_link_members m ON m.relative_path=l.relative_path
+      WHERE m.anime_id=${workId} OR l.anime_id=${workId}
+      ORDER BY l.relative_path LIMIT 50`;
+  } catch (error: any) {
+    if (error?.code !== '42P01') throw error;
+  }
+  if (!knownWork && !manualLinks.length) notFound();
+  const work = knownWork || {
+    title: manualLinks[0].work_title,year:'',format:'',fileCount:0,postCount:0,
+  };
   let files: any[] = [];
   try { files = await sql`SELECT source,member_path,review_status FROM anime_subtitle_files
     WHERE target_source=${source} AND target_id=${id} AND work_confirmed
@@ -36,6 +54,12 @@ export default async function CatalogWorkPage({ params }: { params: Promise<{ so
         {!streams.length && <p className="text-sm text-slate-400">연결된 영상이 아직 없습니다. 자막 작품 정보는 아래에서 확인할 수 있습니다.</p>}
       </div>
       <h2 className="mt-8 text-lg font-bold">연결된 자막</h2>
+      {!!manualLinks.length && <div className="mt-3 space-y-2">
+        {manualLinks.map(link => <p key={link.relative_path}
+          className="rounded-lg border border-emerald-500/20 bg-emerald-950/20 p-3 text-sm text-emerald-200">
+          Pi 수동 자막 연결 · {link.relative_path}
+        </p>)}
+      </div>}
       <ul className="mt-3 space-y-2">{posts.map(row => /^\d+$/.test(String(row.post_id)) && <li key={row.post_id}>
         <a href={'https://aniall.tistory.com/' + row.post_id} target="_blank" rel="noopener noreferrer" className="text-purple-300">AniAll 자막 글: {row.blog_title}</a>
       </li>)}</ul>

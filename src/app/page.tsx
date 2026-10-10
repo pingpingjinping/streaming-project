@@ -7,6 +7,7 @@ import ReanimeFeedFallback from "@/components/ReanimeFeedFallback";
 import AnissiaDbSearchFallback from "@/components/AnissiaDbSearchFallback";
 import { prepareAnissiaApiSearch } from "@/lib/anissiaSearchStages";
 import { searchCloudflareAnimeFirst } from "@/lib/cloudflareAnimeSearch";
+import { mergeManualSubtitleSearchResults, searchManualSubtitleLinks } from "@/lib/manualSubtitleSearch";
 import { resolveAnimeSearchMode, shouldQueryCloudflare, shouldUseLocalDbFallback } from "@/lib/animeSearchMode";
 import AnikotoCatalogFilters from "@/components/AnikotoCatalogFilters";
 import { cookies } from "next/headers";
@@ -194,6 +195,14 @@ export default async function HomePage({
       }
     }
     items = Array.from(uniqueItems.values());
+    // Cloudflare D1 is read-only and cannot know about new Pi PostgreSQL manual
+    // subtitle links. Overlay verified local mappings on the first DB-search
+    // page without changing Cloudflare pagination or triggering a release sync.
+    if (activeSource === "anissia" && searchScope === "current" &&
+      shouldQueryCloudflare(searchMode) && page === 1) {
+      const local = await searchManualSubtitleLinks(normalizedQuery);
+      items = mergeManualSubtitleSearchResults(items, local);
+    }
     has_next = fulfilled.some(({ result }) => result.has_next);
     total_pages = Math.max(1, ...fulfilled.map(({ result }) => result.total_pages));
     if (searchScope === 'current') catalogError = fulfilled.find(({ source }) => source === activeSource)?.result.error;
