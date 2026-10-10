@@ -42,9 +42,11 @@ export default function AnissiaDbSearchFallback({
     // Optional "추가 DB 검색" button: query only the Cloudflare D1 Worker.
     const endpoint = automatic
       ? "/api/anime/list?" + new URLSearchParams({
-          ...Object.fromEntries(params),
           source: "anissia",
           tab: "list",
+          q: keyword,
+          page: String(page),
+          captions: captionsOnly ? "1" : "0",
           db_only: "1",
         }).toString()
       : "/api/anime/search-cloudflare?" + params.toString();
