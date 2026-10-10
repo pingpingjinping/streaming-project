@@ -7,6 +7,7 @@ import ReanimeFeedFallback from "@/components/ReanimeFeedFallback";
 import AnissiaDbSearchFallback from "@/components/AnissiaDbSearchFallback";
 import { prepareAnissiaApiSearch } from "@/lib/anissiaSearchStages";
 import { searchCloudflareAnimeFirst } from "@/lib/cloudflareAnimeSearch";
+import { resolveAnimeSearchMode, shouldQueryCloudflare, shouldUseLocalDbFallback } from "@/lib/animeSearchMode";
 import AnikotoCatalogFilters from "@/components/AnikotoCatalogFilters";
 import { cookies } from "next/headers";
 import {
@@ -56,6 +57,7 @@ interface SearchParams {
   scope?: string;
   linked?: string;
   status?: string;
+  search_mode?: string;
 }
 
 async function toggleAnissiaCatalogCaptions(formData: FormData) {
@@ -68,7 +70,9 @@ async function toggleAnissiaCatalogCaptions(formData: FormData) {
   const genre = String(formData.get("genre") || "").slice(0, 100);
   const query = String(formData.get("q") || "").trim().slice(0, 200);
   const scope = formData.get("scope") === "all" ? "all" : "current";
+  const mode = formData.get("search_mode") === "page" ? "page" : "db";
   const params = new URLSearchParams({ tab: query ? "search" : "list", page: "1" });
+  if (query && scope === "current") params.set("search_mode", mode);
   if (query) params.set("q", query);
   if (query && scope === "all") params.set("scope", "all");
   if (!query && genre) params.set("genre", genre);
@@ -113,6 +117,7 @@ export default async function HomePage({
   const directAnissiaId = anissiaIdFromUrl(q);
   if (directAnissiaId) redirect(`/anime/ani_${directAnissiaId}`);
   const searchScope = params.scope === "all" ? "all" : "current";
+  const searchMode = resolveAnimeSearchMode(activeSource, searchScope, params.search_mode);
   const page = parseInt(params.page || "1", 10) || 1;
   const genre = params.genre || "";
   const year = params.year || "";
@@ -158,9 +163,9 @@ export default async function HomePage({
     const results = await Promise.allSettled(
       sources.map(async (source) => {
         if (source === 'anissia') {
-          // Cloudflare D1 first. Only a miss/error/timeout checks the live
-          // Anissia API; the pre-existing client DB fallback handles an empty API.
-          if (searchScope === "current") {
+          // Cloudflare is the default in current-site DB mode only.
+          // "페이지 검색" and other providers never query the D1 index.
+          if (searchScope === "current" && shouldQueryCloudflare(searchMode)) {
             const cloudflare = await searchCloudflareAnimeFirst(normalizedQuery, page, captionsOnly);
             if (cloudflare) return { source, result: cloudflare };
           }
@@ -364,6 +369,7 @@ export default async function HomePage({
     if (tab) p.set("tab", tab);
     if (q) p.set("q", q);
     if (q && searchScope === "all") p.set("scope", "all");
+    if (q && activeSource === "anissia" && searchScope === "current") p.set("search_mode", searchMode);
     if (genre) p.set("genre", genre);
     if(linkedOnly)p.set("linked","1");
     if (year) p.set("year", year);
@@ -384,7 +390,8 @@ export default async function HomePage({
   };
 
   const needsAnissiaDbFallback = Boolean(
-    q && activeSource === "anissia" && searchScope === "current" && items.length === 0
+    q && activeSource === "anissia" && searchScope === "current"
+      && shouldUseLocalDbFallback(searchMode) && items.length === 0
   );
 
   const genresToDisplay =
@@ -402,7 +409,7 @@ export default async function HomePage({
   let sectionSubtitle = "";
 
   if (q) {
-    sectionTitle = `"${q}" 검색 결과 (${items.length}개 · ${searchScope === "all" ? "전체 사이트" : "현재 사이트"})`;
+    sectionTitle = `"${q}" 검색 결과 (${items.length}개 · ${searchScope === "all" ? "전체 사이트" : activeSource === "anissia" ? (searchMode === "db" ? "DB 검색" : "페이지 검색") : "현재 사이트"})`;
   } else if (activeSource === "anissia") {
     const dayNames = ["일", "월", "화", "수", "목", "금", "토", "기타"];
     if (tab === "recent_caption") {
@@ -1184,6 +1191,7 @@ export default async function HomePage({
               <input type="hidden" name="enabled" value={captionsOnly ? "0" : "1"} />
               <input type="hidden" name="q" value={q} />
               <input type="hidden" name="scope" value={searchScope} />
+              <input type="hidden" name="search_mode" value={searchMode} />
               <button
                 type="submit"
                 role="switch"
