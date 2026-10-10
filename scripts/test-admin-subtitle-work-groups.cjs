@@ -92,3 +92,36 @@ test("Unhydrated reviewed IDs can be gathered, then absent catalog records stay 
   const real=buildReviewedWorkGroups(args);
   assert.deepEqual(real[0].members.map(x=>x.animeId),["db_Onnada_o3"]);
 });
+
+test("Month-end verified GitHub release group restores source identity grouping",()=>{
+  const rows=[work("Onnada","300","토라도라!"),work("ReAnime","toradora","Toradora"),
+    work("AniList","900","Toradora"),work("Anikoto","stream","Toradora")];
+  const groups=buildReviewedWorkGroups({
+    seeds:[{source:"Onnada",id:"300"}],catalog:rows,...empty,
+    release:[{members:["db_Onnada_300","re_toradora","db_AniList_900","ak_stream"]}]
+  });
+  assert.equal(groups.length,1);
+  assert.deepEqual(groups[0].members.map(x=>x.source),["ReAnime","AniList","Onnada","Anikoto"]);
+});
+
+test("Outdated release identity may not undo a newer Pi admin ReAnime mapping",()=>{
+  const rows=[work("Anissia","10","season"),work("ReAnime","old","wrong"),
+    work("ReAnime","new","correct")];
+  const groups=buildReviewedWorkGroups({
+    seeds:rows,catalog:rows,...empty,manual:[{reanimeId:"new",anissiaNo:10}],
+    release:[{members:["ani_10","re_old"]}]
+  });
+  const attached=groups.find(g=>g.members.some(m=>m.animeId==="ani_10"));
+  assert.deepEqual(attached.members.map(m=>m.animeId),["ani_10","re_new"]);
+  assert.equal(groups.length,2);
+});
+
+test("Month-end Anikoto reference never joins separate unrelated season groups",()=>{
+  const rows=[work("Anissia","10","Season one"),work("Anissia","20","Season two"),
+    work("Anikoto","k10","Two Seasons")];
+  const groups=buildReviewedWorkGroups({
+    seeds:[{source:"Anikoto",id:"k10"}],catalog:rows,...empty,
+    release:[{members:["ani_10","ak_k10"]},{members:["ani_20","ak_k10"]}]
+  });
+  assert.equal(groups.length,2);
+});
