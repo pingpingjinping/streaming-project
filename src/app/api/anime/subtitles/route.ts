@@ -27,7 +27,7 @@ import {
 import { getAniAllArchiveSubtitle, getAnissiaArchiveSubtitles, getUploadedSubtitles, getVerifiedSubtitleCache, getAniAllArchiveSubtitles } from "@/lib/subtitleStorage";
 import { getReviewedSubtitles } from "@/lib/reviewedSubtitleStorage";
 import { getReanimeMatch } from "@/lib/reanimeMatches";
-import { parseBundleScope, bundleScopesOverlap, refineLocalBundleAssignment } from "@/lib/subtitleLocalIdentity";
+import { bundleScopeKey, bundleMatchesAssignment, parseBundleScope, bundleScopesOverlap, refineLocalBundleAssignment } from "@/lib/subtitleLocalIdentity";
 import {resolveSubtitleOverride, distinctLocalSubtitles} from "@/lib/subtitleOverrides";
 import { pruneVerifiedSubtitleCache } from "@/lib/subtitleCache";
 
@@ -322,45 +322,64 @@ export async function GET(request: NextRequest) {
       }, { headers: { "Cache-Control": "no-store" } });
     }
 
+    const localResponse = async (subtitles: Array<any>, creators: Array<any> = []) => {
+      let distinct=distinctLocalSubtitles(subtitles);
+      if(!distinct.length) return null;
+      let effectiveAssignment=bundleAssignment;
+      const confirmed=distinct.filter(s=>s.episodeConfirmed && s.sourceBundleKey && s.sourceProvider);
+      if(confirmed.length) {
+        // Stable ordering chooses one valid release, then the saved track scopes subsequent episodes.
+        const chosen=[...confirmed].sort((a,b)=>a.sourceBundleKey<b.sourceBundleKey?-1:a.sourceBundleKey>b.sourceBundleKey?1:
+          String(a.reviewedFileId || a.localFileId || a.orig_filename).localeCompare(String(b.reviewedFileId || b.localFileId || b.orig_filename),'en'))[0];
+        const scope=bundleAssignment ? parseBundleScope(bundleAssignment.bundleKey) : null;
+        const fileScope=parseBundleScope(chosen.sourceBundleKey);
+        let selectedKey=chosen.sourceBundleKey;
+        if(scope?.type==='folder' && fileScope?.type==='local')selectedKey=bundleScopeKey({...scope,track:fileScope.track});
+        else if(bundleAssignment && scope?.type!=='reviewed')selectedKey=refineLocalBundleAssignment(bundleAssignment.bundleKey,chosen.sourceBundleKey) || bundleAssignment.bundleKey;
+        // Equal bytes with several provenances cannot refine a legacy creator/source preference.
+        const canRemember=confirmed.length>1 || new Set(subtitles.map(s=>s.sourceBundleKey)).size===1;
+        if(animeIdParam && canRemember && selectedKey!==bundleAssignment?.bundleKey) {
+          try {
+            const saved=await saveSubtitleBundleAssignment(user.username,animeIdParam,chosen.sourceProvider,selectedKey,
+              (bundleAssignment?.label || chosen.sourceBundleLabel || chosen.matchedTitle || title).slice(0,1000),bundleAssignment?.bundleKey || '',true);
+            if(saved) effectiveAssignment={animeId:animeIdParam,provider:chosen.sourceProvider,bundleKey:selectedKey,
+              label:bundleAssignment?.label || chosen.sourceBundleLabel || title,exclusive:true};
+            else {
+              const current=await getSubtitleBundleAssignment(user.username,animeIdParam);
+              const others=await getSubtitleBundleAssignments(user.username);
+              const preference=await getSubtitleCreatorPreference(user.username,animeIdParam);
+              const claimed=others.some(entry=>entry.animeId!==animeIdParam && entry.provider===chosen.sourceProvider
+                && entry.exclusive && bundleScopesOverlap(entry.bundleKey,selectedKey));
+              if(current && current.provider===chosen.sourceProvider && bundleMatchesAssignment(current.bundleKey,chosen.sourceBundleKey))effectiveAssignment=current;
+              else if(claimed || preference || current?.bundleKey!==bundleAssignment?.bundleKey || current?.provider!==bundleAssignment?.provider)
+                return NextResponse.json({success:true,anime_title:title,episode:ep,count:0,subtitles:[],creators:[],
+                  bundle_assignment:current,needs_manual_subtitle_choice:true,subtitle_notice:'자막 선택이 변경됐어요. 다시 불러와 주세요.'},
+                  {headers:{'Cache-Control':'no-store'}});
+            }
+          }catch(error){console.warn('[Local subtitle choice save deferred]',error);}
+        }
+        distinct=[{...chosen,bundleAssigned:Boolean(effectiveAssignment && bundleMatchesAssignment(effectiveAssignment.bundleKey,chosen.sourceBundleKey))}];
+      }
+      await pruneLocalCache(animeIdParam,ep,distinct.filter(s=>s.episodeConfirmed));
+      return NextResponse.json({success:true,anime_title:title,resolved_title:resolvedTitle,episode:ep,count:distinct.length,
+        subtitles:distinct,creators,local_archive:true,bundle_assignment:effectiveAssignment,
+        needs_manual_subtitle_choice:distinct.length>1 || distinct.some(s=>!s.episodeConfirmed)}, {headers:{'Cache-Control':'no-store'}});
+    };
     const findReviewedLocal = async (source: "aniall" | "naver" | "anissia", includeUnknown = true) => {
       if (bundleAssignment && bundleAssignment.provider !== source) return null;
       const reviewed = await getReviewedSubtitles({ animeId: animeIdParam, episode: ep, sourceEpisode,
-        season: parseSeason(comparisonTitle) || parseSeason(searchTarget), source,
+        season: parseSeason(comparisonTitle) || parseSeason(searchTarget), source, automaticSelection:true,
         bundleKey: bundleAssignment?.provider === source ? bundleAssignment.bundleKey : undefined,
         isRejected: (provider, key) => isRejected(provider, key)
           || (provider === "aniall" && rejections.some(r => r.provider === "aniall" && !r.sourceKey.startsWith("reviewed:"))) });
       const subtitles = distinctLocalSubtitles(reviewed.subtitles
         .filter(s => !claimedByOtherAnime(source, s.sourceBundleKey))
         .filter(s => !bundleAssignment || bundleAssignment.provider !== source
-          || s.sourceBundleKey === bundleAssignment.bundleKey)
+          || bundleMatchesAssignment(bundleAssignment.bundleKey,s.sourceBundleKey))
         .map(s => ({ ...s, bundleAssigned: Boolean(bundleAssignment
-          && bundleAssignment.provider === source && s.sourceBundleKey === bundleAssignment.bundleKey) })));
+          && bundleAssignment.provider === source && bundleMatchesAssignment(bundleAssignment.bundleKey,s.sourceBundleKey)) })));
       if (!subtitles.length || (!includeUnknown && !bundleAssignment && subtitles.every(s => !s.episodeConfirmed))) return null;
-      await pruneLocalCache(animeIdParam, ep, subtitles.filter(s => s.episodeConfirmed));
-      return NextResponse.json({ success: true, anime_title: title, episode: ep,
-        count: subtitles.length, subtitles, creators: [], local_archive: true,
-        bundle_assignment: bundleAssignment,
-        needs_manual_subtitle_choice: subtitles.length > 1 || subtitles.some(s=>!s.episodeConfirmed) },
-        { headers: { "Cache-Control": "no-store" } });
-    };
-    const localResponse = async (subtitles: Array<any>, creators: Array<any> = []) => {
-      const distinct=distinctLocalSubtitles(subtitles);
-      if(!distinct.length) return null;
-      let effectiveAssignment=bundleAssignment;
-      // A unique confirmed continuation can add provenance to a legacy choice.
-      // Ambiguous episodes and folder-only choices never lock a release silently.
-      if(bundleAssignment && distinct.length===1 && distinct[0].episodeConfirmed && distinct[0].sourceBundleKey
-        && new Set(subtitles.map(s=>s.sourceBundleKey)).size===1) {
-        const refined=refineLocalBundleAssignment(bundleAssignment.bundleKey,distinct[0].sourceBundleKey);
-        if(refined)try {
-          if(await saveSubtitleBundleAssignment(user.username,animeIdParam,bundleAssignment.provider,refined,bundleAssignment.label,bundleAssignment.bundleKey))
-            effectiveAssignment={...bundleAssignment,bundleKey:refined};
-        }catch(error){console.warn('[Local subtitle metadata refinement deferred]',error);}
-      }
-      await pruneLocalCache(animeIdParam,ep,distinct.filter(s=>s.episodeConfirmed));
-      return NextResponse.json({success:true,anime_title:title,resolved_title:resolvedTitle,episode:ep,count:distinct.length,
-        subtitles:distinct,creators,local_archive:true,bundle_assignment:effectiveAssignment,
-        needs_manual_subtitle_choice:distinct.length>1 || distinct.some(s=>!s.episodeConfirmed)}, {headers:{'Cache-Control':'no-store'}});
+      return localResponse(subtitles);
     };
     const findAniAllLocal = async () => {
       if(bundleAssignment && bundleAssignment.provider!=='aniall') return null;

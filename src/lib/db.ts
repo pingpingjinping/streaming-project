@@ -587,6 +587,7 @@ export async function saveSubtitleBundleAssignment(
   bundleKey: string,
   label = "",
   expectedBundleKey?: string,
+  automatic = false,
 ): Promise<boolean> {
   const sql = getDb();
   if (!sql || !userId || !animeId || animeId.length > 100 ||
@@ -596,10 +597,18 @@ export async function saveSubtitleBundleAssignment(
   try {
     return await sql.begin(async (tx) => {
       await tx`SELECT pg_advisory_xact_lock(hashtext(${userId}))`;
-      const current=await tx`SELECT anime_id,bundle_key FROM subtitle_bundle_assignments WHERE user_id=${userId} AND provider=${provider}`;
-      // Automatic metadata enrichment must not overwrite a newer manual choice
+      const all=await tx`SELECT anime_id,provider,bundle_key FROM subtitle_bundle_assignments WHERE user_id=${userId}`;
+      const current=all.filter(row=>row.provider===provider);
+      // Automatic selection/refinement must not overwrite a newer manual choice
       // or a different episode's refinement while this request was in flight.
-      if(expectedBundleKey!==undefined && !current.some(row=>row.anime_id===animeId && row.bundle_key===expectedBundleKey))return false;
+      if(expectedBundleKey!==undefined && (expectedBundleKey===''
+        ? all.some(row=>row.anime_id===animeId)
+        : !current.some(row=>row.anime_id===animeId && row.bundle_key===expectedBundleKey)))return false;
+      if(automatic) {
+        if(current.some(row=>row.anime_id!==animeId && bundleScopesOverlap(bundleKey,row.bundle_key)))return false;
+        const preference=await tx`SELECT anime_id FROM subtitle_creator_preferences WHERE user_id=${userId} AND anime_id=${animeId}`;
+        if(preference.length)return false;
+      }
       for(const row of current) {
         if(row.anime_id!==animeId && bundleScopesOverlap(bundleKey,row.bundle_key)) {
           await tx`DELETE FROM subtitle_bundle_assignments WHERE user_id=${userId} AND anime_id=${row.anime_id}`;

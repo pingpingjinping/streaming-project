@@ -6,7 +6,7 @@ import iconv from "iconv-lite";
 import { getDb } from "@/lib/db";
 import { decodeSubtitleFile, parseSeason } from "@/lib/subtitles";
 import { evidenceAgrees, readEpisodeEvidence, selectEpisodeEntries } from "@/lib/subtitleEpisodes";
-import { bundleScopeKey, parseBundleScope, subtitleScope, scopeLabel } from './subtitleLocalIdentity';
+import { normalizeSubtitleTrackFilename, bundleMatchesAssignment, bundleScopeKey, parseBundleScope, subtitleScope, scopeLabel } from './subtitleLocalIdentity';
 import { LOOSE_REVIEWED_DATASET, readReviewedLooseBytes } from './reviewedLooseSubtitles';
 
 const DATASET = "reviewed_v6_1109";
@@ -93,7 +93,7 @@ export async function findReviewedBundleFiles(source: Provider, bundleKey: strin
         AND f.target_source=${scope.workSource} AND f.target_id=${scope.workId}
       ORDER BY f.pid LIMIT 5000
     `;
-    return (rows as unknown as ReviewedFile[]).filter(f => reviewedBundleKey(f) === bundleKey);
+    return (rows as unknown as ReviewedFile[]).filter(f => bundleMatchesAssignment(bundleKey,reviewedBundleKey(f)));
   } catch (error: any) {
     if (error?.code === "42P01") return [];
     throw error;
@@ -101,8 +101,14 @@ export async function findReviewedBundleFiles(source: Provider, bundleKey: strin
 }
 
 export function reviewedBundleKey(file: ReviewedFile) {
-  return bundleScopeKey({type:'reviewed',dataset:fileDataset(file),pack:file.pack_id,workSource:file.target_source,workId:file.target_id,
-    ...subtitleScope(file.member_path,file.work_title_ko,parseSeason(file.work_title_ko) || 1)});
+  const evidence=readEpisodeEvidence(file.member_path,true);
+  const parts=file.member_path.split('/');
+  const track=evidence.episodes.length===1 && !evidence.range && !evidence.conflict
+    ? [...parts.slice(0,-1),normalizeSubtitleTrackFilename(parts.at(-1)!,evidence.episodes[0],true)].join('/') : undefined;
+  const scope={type:'reviewed' as const,dataset:fileDataset(file),pack:file.pack_id,workSource:file.target_source,workId:file.target_id,
+    ...subtitleScope(file.member_path,file.work_title_ko,parseSeason(file.work_title_ko) || 1)};
+  const key=bundleScopeKey({...scope,...(track?{track}:{})});
+  return key.length<=2000 ? key : bundleScopeKey(scope);
 }
 
 /** Explicit user exceptions may point at another work, but never at held files. */
@@ -282,7 +288,9 @@ export function reviewedEpisodeCandidates(files: ReviewedFile[], episode: number
 function interleaveReviewedBundles(rows: ReviewedFile[]): ReviewedFile[] {
   const groups = new Map<string, ReviewedFile[]>();
   for (const file of rows) {
-    const key = reviewedBundleKey(file);
+    const scope=parseBundleScope(reviewedBundleKey(file))!;
+    if(scope?.type!=='reviewed')continue;
+    const key=bundleScopeKey({...scope,track:undefined});
     const group = groups.get(key) || [];
     group.push(file);
     groups.set(key, group);
@@ -298,7 +306,7 @@ function interleaveReviewedBundles(rows: ReviewedFile[]): ReviewedFile[] {
 }
 
 export async function getReviewedSubtitles(input: { animeId: string; episode: number; sourceEpisode: number;
-  season: number | null; source?: Provider; keyword?: string; manualSearch?: boolean; bundleKey?: string;
+  season: number | null; source?: Provider; keyword?: string; manualSearch?: boolean; bundleKey?: string; automaticSelection?: boolean;
   isRejected?: (provider: string, key: string) => boolean }) {
   const sourceFiles = input.source && input.bundleKey
     ? await findReviewedBundleFiles(input.source, input.bundleKey)
@@ -313,7 +321,7 @@ export async function getReviewedSubtitles(input: { animeId: string; episode: nu
     && looseKinds.size === 1 ? [...looseKinds][0] : subtitleScope('',files[0]?.work_title_ko || '').kind);
   const eligible = input.manualSearch ? files : files.filter(f => subtitleScope(f.member_path,f.work_title_ko).kind === expectedKind);
   const selectedLooseSet = !input.manualSearch && input.source === 'anissia'
-    && scope?.type === 'reviewed' && scope.dataset === LOOSE_REVIEWED_DATASET;
+    && ((scope?.type === 'reviewed' && scope.dataset === LOOSE_REVIEWED_DATASET) || input.automaticSelection===true);
   const { exact, manual } = reviewedEpisodeCandidates(eligible, input.episode, input.sourceEpisode,
     scope?.season || input.season, selectedLooseSet);
   const results: Array<NonNullable<Awaited<ReturnType<typeof readReviewedFile>>> & { episode: number; episodeConfirmed: boolean }> = [];
