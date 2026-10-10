@@ -4,7 +4,9 @@ import { PlayCircle } from "lucide-react";
 import LocalizedAnimeTitle from "@/components/LocalizedAnimeTitle";
 
 export default function AnimeCard({ anime }: { anime: AnimeListItem }) {
-  const targetHref = anime.id?.startsWith('db_') && anime.detail_url.startsWith('/catalog/')
+  const targetHref = anime.id?.startsWith('db_') &&
+    (anime.detail_url.startsWith('/catalog/') ||
+      /^\/anime\/(?:ani_[1-9]\d*|re_[A-Za-z0-9_-]+|ak_[A-Za-z0-9_-]+)$/.test(anime.detail_url))
     ? anime.detail_url
     : anime.id
     ? `/anime/${anime.id}`
