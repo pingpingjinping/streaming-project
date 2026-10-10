@@ -2,6 +2,7 @@ import Link from "next/link";
 import { AnimeListItem } from "@/lib/linkkf";
 import { PlayCircle } from "lucide-react";
 import LocalizedAnimeTitle from "@/components/LocalizedAnimeTitle";
+import DbSearchPoster from "@/components/DbSearchPoster";
 
 export default function AnimeCard({ anime }: { anime: AnimeListItem }) {
   const targetHref = anime.id?.startsWith('db_') &&
@@ -21,20 +22,7 @@ export default function AnimeCard({ anime }: { anime: AnimeListItem }) {
     >
       {/* 16:9 Landscape Poster Wrapper (가로로 긴 와이드 비율) */}
       <div className="relative aspect-video w-full overflow-hidden bg-slate-950">
-        {anime.poster ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={anime.poster}
-            alt={anime.title}
-            className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
-            style={{ objectPosition: "center 25%" }}
-            loading="lazy"
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-xs text-slate-500">
-            No Image
-          </div>
-        )}
+        <DbSearchPoster animeId={anime.id} title={anime.title} poster={anime.poster || ""} />
 
         {/* 좌측 상단 뱃지: 랭킹 or 평점 or 방영시각 */}
         {anime.rank ? (
