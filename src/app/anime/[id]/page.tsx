@@ -135,7 +135,7 @@ export default async function AnimeDetailPage({
                     className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 px-6 py-3 font-bold text-white shadow-xl shadow-purple-600/30 transition hover:scale-105 active:scale-95 text-sm"
                   >
                     <Play className="h-4 w-4 fill-white" />
-                    1화 바로 시청
+                    {episodes[0].number}화 바로 시청
                   </Link>
                 )}
                 <FavoriteButton
