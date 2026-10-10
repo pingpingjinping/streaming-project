@@ -80,11 +80,13 @@ export default function SubtitleLinkManager() {
         ? " · " + (data.elapsedMs / 1000).toFixed(1) + "초" : "";
       setFileStatus("검색 완료 · " + total.toLocaleString() + "개" +
         (total > items.length ? " (처음 " + items.length + "개 표시)" : "") + seconds);
+      return true;
     } catch (e) {
       if (requestId !== fileRequestId.current) return;
       const message = e instanceof Error ? e.message : "Pi 파일 목록을 불러오지 못했습니다.";
       setFileStatus("Pi 파일/폴더 검색 실패");
       setError(message);
+      return false;
     } finally {
       if (requestId === fileRequestId.current) setFileSearching(false);
     }
@@ -140,8 +142,9 @@ export default function SubtitleLinkManager() {
     setBusy(true); setError(""); setFileStatus("Pi 인덱스 전체 갱신 중… (폴더가 많으면 오래 걸릴 수 있어)");
     try {
       const data = await jsonRequest("/api/admin/subtitle-index", { method: "POST" });
-      await loadFiles(keyword);
-      setNotice("Pi 자막 인덱스 갱신 완료 · " + (data.index?.count ?? "?") + "개 항목 확인");
+      const searched = await loadFiles(keyword);
+      if (searched) setNotice("Pi 자막 인덱스 갱신·검색 완료 · " + (data.index?.count ?? "?") + "개 항목 확인");
+      else setNotice("Pi 인덱스는 갱신했지만 검색 결과 조회가 실패했어.");
     } catch (e) {
       setFileStatus("Pi 인덱스 새로고침 실패");
       setError(e instanceof Error ? e.message : "Pi 인덱스 새로고침 실패");
