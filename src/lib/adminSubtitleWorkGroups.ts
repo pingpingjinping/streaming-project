@@ -6,6 +6,7 @@ export type ReanimeLink = { reanimeId: string; anissiaNo: number; reviewStatus: 
 export type ManualLink = { reanimeId: string; anissiaNo: number };
 export type CrossLink = { reanimeId: string; anilistId: string; compatible: boolean };
 export type AnikotoLink = { anikotoId: string; target: WorkRef; status: string; mappingKind: string };
+export type ReleasedGroup = { members: string[] };
 export type SourceWork = WorkRef & { animeId: string; title: string; year: string; format?: string };
 export type WorkGroup = { animeId: string; title: string; year: string; members: SourceWork[]; multiAnikotoIds: string[] };
 
@@ -23,7 +24,7 @@ const verifiedAnikoto = (value: string) => ["reviewed", "automatic", "multi_revi
 export function buildReviewedWorkGroups(input: {
   seeds: WorkRef[]; catalog: SourceWork[];
   korean: KoreanLink[]; reanime: ReanimeLink[]; manual: ManualLink[];
-  cross: CrossLink[]; anikoto: AnikotoLink[];
+  cross: CrossLink[]; anikoto: AnikotoLink[]; release?: ReleasedGroup[];
   limit?: number; hydrateMissing?: boolean;
 }): WorkGroup[] {
   const parents = new Map<string,string>();
@@ -65,6 +66,29 @@ export function buildReviewedWorkGroups(input: {
     if(r.compatible)union({source:"ReAnime",id:r.reanimeId},{source:"AniList",id:r.anilistId});
   }
 
+  // Month-end release groups persist reviewed cross-source identities across
+  // Pi restoration. They are never inferred from matching titles.
+  const decode=(key:string):WorkRef|null=>{
+    if(/^ani_[1-9]\d*$/.test(key))return {source:"Anissia",id:key.slice(4)};
+    if(/^re_[A-Za-z0-9_-]+$/.test(key))return {source:"ReAnime",id:key.slice(3)};
+    if(/^ak_[A-Za-z0-9_-]+$/.test(key))return {source:"Anikoto",id:key.slice(3)};
+    const m=/^db_(AniList|Onnada)_([A-Za-z0-9_-]+)$/.exec(key);
+    return m?{source:m[1] as Source,id:m[2]}:null;
+  };
+  for(const group of input.release||[]) {
+    const refs=group.members.map(decode).filter((x):x is WorkRef=>!!x);
+    if(refs.length!==group.members.length)continue;
+    const anissia=refs.find(x=>x.source==="Anissia");
+    const reanime=refs.find(x=>x.source==="ReAnime");
+    // If a newer administrator correction contradicts this older monthly
+    // release group, keep the newer Pi correction rather than the stale edge.
+    if(anissia&&reanime&&input.manual.some(m=>
+      (String(m.anissiaNo)===anissia.id&&m.reanimeId!==reanime.id) ||
+      (m.reanimeId===reanime.id&&String(m.anissiaNo)!==anissia.id)))continue;
+    const core=refs.filter(x=>x.source!=="Anikoto");
+    for(const ref of core.slice(1))union(core[0],ref);
+  }
+
   // The import's lookup may include the same Anikoto ID in multiple work groups.
   // Keep that item visible in both cards but NEVER collapse the two core groups.
   const links=new Map<string,Set<string>>();
@@ -73,6 +97,17 @@ export function buildReviewedWorkGroups(input: {
     const root=find(idOf(r.target)),key="ak_"+r.anikotoId;
     if(!links.has(key))links.set(key,new Set());
     links.get(key)!.add(root);
+  }
+  for(const group of input.release||[]) {
+    const refs=group.members.map(decode).filter((x):x is WorkRef=>!!x);
+    const core=refs.find(ref=>ref.source!=="Anikoto");
+    if(!core)continue;
+    const root=find(idOf(core));
+    for(const ref of refs)if(ref.source==="Anikoto") {
+      const key="ak_"+ref.id;
+      if(!links.has(key))links.set(key,new Set());
+      links.get(key)!.add(root);
+    }
   }
   const seeds=new Set<string>();
   for(const row of input.seeds) {
