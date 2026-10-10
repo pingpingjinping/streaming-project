@@ -2,6 +2,7 @@ import { getDb } from './db';
 import { getReanimeArtwork } from './providers/reanime';
 import { fetchAniListMeta } from './providers/anissia';
 import type { AnimeListResponse } from './providers/types';
+import { LOOSE_REVIEWED_DATASET } from './reviewedLooseSubtitles';
 
 export interface SubtitleCatalogWork {
   id: string; source: string; sourceId: string; title: string; titles: string[];
@@ -89,12 +90,15 @@ export async function loadSubtitleCatalog(): Promise<SubtitleCatalogWork[]> {
         WITH files AS (
           SELECT f.source,f.target_source,f.target_id,f.work_title_ko,
             CASE WHEN f.target_source='ReAnime' THEN f.target_id
+              WHEN f.dataset_key=${LOOSE_REVIEWED_DATASET} AND NULLIF(f.reanime_id,'') IS NOT NULL THEN f.reanime_id
               WHEN EXISTS (SELECT 1 FROM anime_subtitle_work_reanime_links w
                 WHERE w.dataset_key=f.dataset_key AND w.target_source=f.target_source
                   AND w.target_id=f.target_id AND w.reanime_id=f.reanime_id AND w.automatic_eligible)
               THEN f.reanime_id END AS reanime_id,count(*) AS file_count
           FROM anime_subtitle_files f
-          WHERE f.work_confirmed AND f.source IN ('aniall','naver')
+          WHERE f.work_confirmed
+            AND ((f.dataset_key='reviewed_v6_1109' AND f.source IN ('aniall','naver'))
+              OR (f.dataset_key=${LOOSE_REVIEWED_DATASET} AND f.source='anissia'))
             AND f.target_id IS NOT NULL AND f.target_id<>''
           GROUP BY f.source,f.target_source,f.target_id,f.work_title_ko,f.reanime_id,f.dataset_key
         )
@@ -213,3 +217,4 @@ export async function getKoreanSubtitleCatalog(options: { q?: string; page?: num
     return { items: [], page, has_next: false, total_pages: 1, error: '한글 자막 DB 목록을 불러오지 못했습니다.' };
   }
 }
+

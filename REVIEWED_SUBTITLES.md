@@ -1,5 +1,29 @@
 # Reviewed subtitle registry
 
+## Extracted subsubsub review package
+
+The separate `subsubsub_20261009` dataset reads the reviewed package after its
+five Windows ZIPs have been extracted into `subtitle-data/anissia_subtitles`.
+For example, a registered member `ISUCA (이스카)/isuca 01.smi` is read directly
+from that work folder. Each read checks the exact registered member path and
+SHA-256; the original archive references remain provenance and do not require
+repacking the files. Missing, changed, held, or unrelated work files are not
+accepted as reviewed candidates.
+
+The new dataset has work review but no confirmed episode rows. It appears in
+local recommendations/manual search and retains dataset/PID identity for explicit
+file choices, bundle assignments, native-player reads, and episode exceptions.
+Without a selected set, filename episode numbers remain manual suggestions. After
+the user explicitly selects a reviewed set, playback uses the existing filename
+episode algorithm, including the configured start episode and continuation into
+the next episode. OVA/specials stay in their selected work slice, and unknown
+episodes or competing variants still require a choice. Broad manual searches do
+not grant automatic episode status. Reading never writes episode confirmations.
+Registered loose files cannot bypass these checks through the old automatic
+filename reader; existing weekly files and explicit folder assignments keep their
+existing behavior. Apply the published one-time dataset SQL separately from the
+normal db-v1 updater; this web change does not import or modify registry rows.
+
 ## Weekly downloads
 
 New Anissia downloads use `title/episode/creator` and reuse the existing exact title folder. File-level work IDs and original hashes are recorded in `.weekly-subtitle-sources.json`, including history backfill and Erulabo downloads. The reader accepts those IDs without requiring `finish.txt`. Existing plain-title and numbered folders remain readable.
@@ -65,3 +89,4 @@ In ReAnime, `DB 연결 작품만 보기` lists confirmed `anime_reanime_matches`
 ## Validation
 
 `npm run test:subtitles` exercises mixed archives, archive/member hashes, flattened paths, PID rejection, confirmed episodes, episode offsets, ambiguity, missing files, native VTT and loose weekly files. It also checks independent TV/OVA assignments, successive episodes, exact-file exceptions, removal, missing-file notices and user isolation. GitHub Actions runs actual PostgreSQL queries and settings writes, comparing only the fixture rows involved to verify reviewed work links and confirmed episodes remain unchanged. The existing importer checks and production build also run in the same workflow.
+

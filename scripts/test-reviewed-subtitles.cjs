@@ -37,6 +37,117 @@ function pack(name, files, physical) {
 }
 const findRows = rows => { db.getDb = () => async () => rows; };
 const request = overrides => ({animeId:'re_review-test',episode:1,sourceEpisode:1,season:1,...overrides});
+function loose(name, files) {
+  return Object.entries(files).map(([member, bytes], index) => {
+    const memberPath = `${name}/${member}`;
+    const physical = path.join(root, 'anissia_subtitles', memberPath);
+    fs.mkdirSync(path.dirname(physical), {recursive:true}); fs.writeFileSync(physical, bytes);
+    return {dataset_key:'subsubsub_20261009',pid:`subsubsub_20261009:${digest(bytes)}`,source:'anissia',
+      pack_id:'subsubsub_20261009:01',zip_relative_path:'anissia/subsubsub_20261009/missing-original.zip',
+      member_path:memberPath,sha256:digest(bytes),archive_sha256:'a'.repeat(64),work_title_ko:name,
+      reanime_id:'review-test',target_source:'Anissia',target_id:'490',content_extension:'.srt',confirmed_episodes:[]};
+  });
+}
+test('extracted reviewed package reads exact Korean path and stays manual without episode review', async () => {
+  const rows = loose('ISUCA (이스카)', {'isuca 01.smi':srt('extracted exact reviewed bytes'), 'isuca OAD.smi':srt('separate OAD')});
+  findRows(rows);
+  const before = rows.map(row => digest(fs.readFileSync(path.join(root,'anissia_subtitles',row.member_path))));
+  const result = await storage.getReviewedSubtitles(request());
+  assert.equal(result.subtitles.length,1);
+  assert.ok(result.subtitles[0].content.includes('extracted exact reviewed bytes'));
+  assert.equal(result.subtitles[0].sourceProvider,'anissia');
+  assert.ok(result.subtitles[0].reviewedFileId.startsWith('subsubsub_20261009:'));
+  assert.equal(result.subtitles[0].episodeConfirmed,false);
+  assert.equal(result.needsManualChoice,true);
+  const scope = require('../src/lib/subtitleLocalIdentity.ts').parseBundleScope(result.subtitles[0].sourceBundleKey);
+  assert.equal(scope.dataset,'subsubsub_20261009');
+  const broad = await storage.getReviewedSubtitles(request({manualSearch:true,keyword:'ISUCA'}));
+  assert.equal(broad.subtitles.length,2);
+  assert.ok(broad.subtitles.every(s => !s.episodeConfirmed));
+  assert.deepEqual(rows.map(row => digest(fs.readFileSync(path.join(root,'anissia_subtitles',row.member_path)))),before);
+});
+test('loose filename episode numbers never create exact candidates, including source offset and variants', () => {
+  const rows = loose('New reviewed season', {'13.srt':srt('absolute thirteen'), '13ns.srt':srt('other version'), '14.srt':srt('next episode')});
+  const candidates = storage.reviewedEpisodeCandidates(rows,1,13,1);
+  assert.equal(candidates.exact.length,0);
+  assert.equal(candidates.manual.length,2);
+  assert.deepEqual(rows.map(r => r.confirmed_episodes),[[],[],[]]);
+});
+test('an explicitly selected loose set follows numbered episodes and continues without choosing its OAD',async()=>{
+  const rows=loose('Selected reviewed TV set',{'01.srt':srt('selected first'),'02.srt':srt('selected next'),
+    'OAD.srt':srt('separate selected OAD')});findRows(rows);
+  const bundleKey=storage.reviewedBundleKey(rows[0]);
+  for(const [episode,text] of [[1,'selected first'],[2,'selected next']]){
+    const result=await storage.getReviewedSubtitles(request({episode,sourceEpisode:episode,source:'anissia',bundleKey}));
+    assert.equal(result.subtitles.length,1);assert.ok(result.subtitles[0].content.includes(text));
+    assert.equal(result.subtitles[0].episodeConfirmed,true);assert.equal(result.needsManualChoice,false);
+    assert.equal(result.subtitles[0].sourceBundleKey,bundleKey);
+  }
+  const browsing=await storage.getReviewedSubtitles(request({source:'anissia',bundleKey,manualSearch:true}));
+  assert.ok(browsing.subtitles.every(s=>!s.episodeConfirmed));
+  assert.deepEqual(rows.map(r=>r.confirmed_episodes),[[],[],[]]);
+});
+test('selected loose sets apply the source episode start once and keep variants and unknown episodes manual',async()=>{
+  const rows=loose('Selected reviewed source numbering',{'13.srt':srt('source thirteen'),'14.srt':srt('source fourteen')});
+  findRows(rows);const bundleKey=storage.reviewedBundleKey(rows[0]);
+  for(const [episode,sourceEpisode,text] of [[1,13,'source thirteen'],[2,14,'source fourteen']]){
+    const result=await storage.getReviewedSubtitles(request({episode,sourceEpisode,source:'anissia',bundleKey}));
+    assert.equal(result.subtitles.length,1);assert.ok(result.subtitles[0].content.includes(text));
+    assert.equal(result.needsManualChoice,false);
+  }
+  const variants=loose('Selected reviewed variants',{'13.srt':srt('first variant'),'13ns.srt':srt('second variant')});
+  findRows(variants);
+  const competing=await storage.getReviewedSubtitles(request({sourceEpisode:13,source:'anissia',bundleKey:storage.reviewedBundleKey(variants[0])}));
+  assert.equal(competing.subtitles.length,2);assert.equal(competing.needsManualChoice,true);
+  const unknown=loose('Selected reviewed unknown',{'subtitle.srt':srt('no episode evidence')});findRows(unknown);
+  const unresolved=await storage.getReviewedSubtitles(request({source:'anissia',bundleKey:storage.reviewedBundleKey(unknown[0])}));
+  assert.equal(unresolved.subtitles[0].episodeConfirmed,false);assert.equal(unresolved.needsManualChoice,true);
+});
+test('an OAD-only reviewed work remains available manually without mixing it into the main TV work', async () => {
+  const rows=loose('ISUCA OAD work with original folder title',{'isuca OAD.smi':srt('only reviewed OAD work')});
+  rows[0].work_title_ko='ISUCA (이스카)';rows[0].target_source='ReAnime';rows[0].target_id='isuca-ova';
+  rows[0].reanime_id='isuca-ova';findRows(rows);
+  const result=await storage.getReviewedSubtitles(request({animeId:'re_isuca-ova'}));
+  assert.equal(result.subtitles.length,1);
+  assert.equal(result.subtitles[0].episodeConfirmed,false);
+  assert.equal(result.needsManualChoice,true);
+});
+test('changed or missing loose file cannot fall back to a nearby filename or an old ZIP', async () => {
+  const rows=loose('Loose byte mismatch',{'01.srt':srt('expected bytes'),'01__2.srt':srt('other variant')});
+  fs.writeFileSync(path.join(root,'anissia_subtitles',rows[0].member_path),srt('modified bytes'));
+  assert.equal(await storage.readReviewedFile(rows[0]),null);
+  fs.unlinkSync(path.join(root,'anissia_subtitles',rows[1].member_path));
+  assert.equal(await storage.readReviewedFile(rows[1]),null);
+});
+test('loose review rejects traversal and symlinks outside its source corpus', async () => {
+  const row=loose('Loose safety',{'01.srt':srt('safe expected bytes')})[0];
+  assert.equal(await storage.readReviewedFile({...row,member_path:'../Loose safety/01.srt'}),null);
+  const outside=path.join(root,'outside-reviewed.srt');fs.writeFileSync(outside,srt('safe expected bytes'));
+  const physical=path.join(root,'anissia_subtitles',row.member_path);
+  fs.unlinkSync(physical);fs.symlinkSync(outside,physical);
+  assert.equal(await storage.readReviewedFile(row),null);
+});
+test('rejected loose dataset/PID stays rejected and exact-ID manual exceptions retain identity', async () => {
+  const row=loose('Loose rejection',{'01.srt':srt('reviewed loose reject')})[0];findRows([row]);
+  const id=`${row.dataset_key}:${row.pid}`;
+  const result=await storage.getReviewedSubtitles(request({isRejected:(_provider,key)=>key===`reviewed:${id}`}));
+  assert.equal(result.subtitles.length,0);
+  const explicit=await storage.getReviewedFileForOverride(id);
+  assert.equal(explicit.reviewedFileId,id);
+  assert.ok(explicit.content.includes('reviewed loose reject'));
+  const native=await storage.getReviewedSubtitleById('re_review-test',id);
+  assert.equal(native.reviewedFileId,id);
+  assert.equal(await storage.getReviewedSubtitleById('re_review-test',id,()=>true),null);
+});
+test('registered loose files cannot bypass work/hold/hash review in the old automatic filename reader', async () => {
+  const policy=require('../src/lib/reviewedLooseSubtitles.ts');
+  const identity=require('../src/lib/subtitleLocalIdentity.ts');
+  const rows=loose('Loose hold guard',{'01.srt':srt('held or changed file')});findRows(rows);
+  const known={localFileId:identity.localFileKey(`anissia_subtitles/${rows[0].member_path}`,'',rows[0].sha256)};
+  const unrelated={localFileId:identity.localFileKey('anissia_subtitles/Weekly/02.srt','',rows[0].sha256)};
+  const archived={localFileId:identity.localFileKey('anissia_subtitles/Weekly/02.zip','02.srt',rows[0].sha256)};
+  assert.deepEqual(await policy.excludeRegisteredLooseFiles([known,unrelated,archived]),[unrelated,archived]);
+});
 test('flattened Naver ZIP keeps original hashes while CP949 SMI text decodes as Korean', async () => {
   const iconv = require('iconv-lite');
   const korean = '안녕, 오늘도 즐거운 하루!';
@@ -193,18 +304,22 @@ test('weekly loose AniAll files coexist with archive folders, applying start onc
 });
 
 
-async function withAutomaticRoute(rows, run) {
+async function withAutomaticRoute(rows, run, options={}) {
   const patches=[];
   const patch=(obj,key,value)=>{ patches.push([obj,key,obj[key]]); obj[key]=value; };
   const subtitles=require('../src/lib/subtitles.ts');
   const reanime=require('../src/lib/reanimeMatches.ts');
   const local=require('../src/lib/subtitleStorage.ts');
   patch(db,'getDb',()=>async()=>rows);
-  patch(db,'getSubtitleEpisodeStart',async()=>null);
+  patch(db,'getSubtitleEpisodeStart',async()=>options.sourceEpisodeStart || null);
   patch(db,'getSubtitleRejections',async()=>[]);
   patch(db,'getSubtitleSourcePriority',async()=> 'aniall');
   patch(db,'getAniAllMatches',async()=>[]);
   patch(db,'getManualSubtitleLink',async()=>null);
+  patch(db,'getSubtitleBundleAssignment',async()=>options.bundleAssignment || null);
+  patch(db,'getSubtitleBundleAssignments',async()=>[]);
+  patch(db,'getSubtitleCreatorPreference',async()=>null);
+  patch(db,'getSubtitleEpisodeOverrides',async()=>[]);
   patch(auth,'getSessionUser',async()=>({username:'test'}));
   patch(subtitles,'resolveKoreanTitle',async title=>title);
   patch(reanime,'getReanimeMatch',async()=>null);
@@ -254,6 +369,30 @@ test('automatic route surfaces competing reviewed variants without choosing file
     assert.equal(result.count,2);assert.equal(result.needs_manual_subtitle_choice,true);
   });
 });
+test('automatic route exposes a new loose reviewed file as a manual choice without web fallback',async()=>{
+  const rows=loose('Route new loose work',{'07.srt':srt('manual reviewed episode seven')});
+  await withAutomaticRoute(rows,async get=>{
+    const result=await get(7);
+    assert.equal(result.success,true);
+    assert.equal(result.subtitles[0].sourceProvider,'anissia');
+    assert.ok(result.subtitles[0].content.includes('manual reviewed episode seven'));
+    assert.equal(result.subtitles[0].episodeConfirmed,false);
+    assert.equal(result.needs_manual_subtitle_choice,true);
+  });
+});
+test('automatic route continues an explicitly selected reviewed set with the configured source start',async()=>{
+  const rows=loose('Route selected loose set',{'13.srt':srt('route selected first'),'14.srt':srt('route selected next')});
+  const assignment={provider:'anissia',bundleKey:storage.reviewedBundleKey(rows[0]),label:'selected reviewed set'};
+  await withAutomaticRoute(rows,async get=>{
+    for(const [episode,text] of [[1,'route selected first'],[2,'route selected next']]){
+      const result=await get(episode);
+      assert.equal(result.count,1);assert.ok(result.subtitles[0].content.includes(text));
+      assert.equal(result.subtitles[0].bundleAssigned,true);
+      assert.equal(result.needs_manual_subtitle_choice,false);
+    }
+  },{bundleAssignment:assignment,sourceEpisodeStart:13});
+  assert.deepEqual(rows.map(r=>r.confirmed_episodes),[[],[]]);
+});
 
 test('Postgres selects only current exact work links and relevant confirmed episodes', {skip:!process.env.REVIEWED_TEST_DATABASE_URL}, async () => {
   process.env.DATABASE_URL=process.env.REVIEWED_TEST_DATABASE_URL;
@@ -296,7 +435,29 @@ test('Postgres selects only current exact work links and relevant confirmed epis
     assert.equal(manual[0].reanime_id,null);
     assert.equal((await storage.findReviewedFiles('re_test-work','정상 작품')).length,2);
     assert.equal((await storage.findReviewedTitles('정상')).length,2);
+    await sql.unsafe(`
+      INSERT INTO anime_subtitle_archives VALUES('subsubsub_20261009','loose-pack','${'a'.repeat(64)}');
+      INSERT INTO anime_subtitle_files VALUES
+        ('subsubsub_20261009','loose-direct','anissia','loose-pack','anissia/old.zip','ISUCA/01.smi','${'b'.repeat(64)}','새 정리본','test-work','Anissia','490','.smi',true),
+        ('subsubsub_20261009','loose-bridge','anissia','loose-pack','anissia/old.zip','소방대/03.smi','${'b'.repeat(64)}','새 정리본',NULL,'Anissia','1744','.smi',true),
+        ('subsubsub_20261009','loose-held','anissia','loose-pack','anissia/old.zip','보류/01.smi','${'b'.repeat(64)}','새 정리본','test-work','Anissia','491','.smi',false),
+        ('subsubsub_20261009','loose-ambiguous','anissia','loose-pack','anissia/old.zip','다중/01.smi','${'b'.repeat(64)}','새 정리본',NULL,'Anissia','1745','.smi',true),
+        ('subsubsub_20261009','loose-ova','anissia','loose-pack','anissia/old.zip','ISUCA/OAD.smi','${'b'.repeat(64)}','새 정리본','test-ova','ReAnime','test-ova','.smi',true);
+      INSERT INTO anime_subtitle_work_reanime_links VALUES
+        ('reviewed_v6_1109','Anissia','1744','test-work',true),
+        ('reviewed_v6_1109','Anissia','1745','test-work',false);
+    `);
+    const imported=await storage.findReviewedFiles('re_test-work');
+    assert.deepEqual(imported.map(r=>r.pid),['current','loose-bridge','loose-direct']);
+    assert.deepEqual(imported.slice(1).map(r=>r.confirmed_episodes),[[],[]]);
+    assert.deepEqual((await storage.findReviewedFiles('ani_490')).map(r=>r.pid),['loose-direct']);
+    assert.deepEqual((await storage.findReviewedFiles('re_test-ova')).map(r=>r.pid),['loose-ova']);
+    const bundle=storage.reviewedBundleKey(imported.find(r=>r.pid==='loose-direct'));
+    assert.deepEqual((await storage.findReviewedBundleFiles('anissia',bundle)).map(r=>r.pid),['loose-direct']);
+    assert.equal((await storage.findReviewedFiles('re_test-work','새 정리본')).length,4);
+    assert.equal((await sql`SELECT count(*)::int AS n FROM anime_subtitle_confirmed_episodes`)[0].n,4);
   } finally {
     await sql.end(); db.getDb=()=>null; delete process.env.DATABASE_URL;
   }
 });
+
