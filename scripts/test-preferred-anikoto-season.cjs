@@ -22,10 +22,17 @@ const sql=(chunks,...params)=>{
   if(statement.includes("CREATE TABLE IF NOT EXISTS"))return Promise.resolve([]);
   if(statement.includes("FROM anime_anikoto_work_targets"))return Promise.resolve(
     rows.filter(r=>r.anikoto_id===params[0]));
-  if(statement.includes("SELECT target_order FROM anime_account_preferred_seasons"))
-    return Promise.resolve(preferences.has(params.join("/"))?[{target_order:preferences.get(params.join("/"))}]:[]);
+  if(statement.includes("FROM anime_account_preferred_seasons p")) {
+    const value=preferences.get(params[0]+"/"+params[1]);
+    const stillValid=value&&rows.some(r=>r.anikoto_id===params[1]&&
+      r.target_order===value.order&&r.target_source===value.source&&
+      r.target_id===value.sourceId&&["reviewed","automatic","multi_reviewed"].includes(r.link_status));
+    return Promise.resolve(stillValid?[{target_order:value.order}]:[]);
+  }
   if(statement.includes("INSERT INTO anime_account_preferred_seasons")) {
-    preferences.set(params[0]+"/"+params[1],params[2]);return Promise.resolve([]);
+    preferences.set(params[0]+"/"+params[1],{
+      order:params[2],source:params[3],sourceId:params[4],
+    });return Promise.resolve([]);
   }
   throw Error("Unexpected SQL "+statement);
 };
@@ -48,6 +55,14 @@ test("priority choice stays per account, not a shared database link",async()=>{
   assert.equal(await api.getPreferredAnikotoSeason("viewer2","toradora-tiwtx"),null);
   assert.equal(await api.savePreferredAnikotoSeason("viewer2","toradora-tiwtx",1),true);
   assert.equal(await api.getPreferredAnikotoSeason("viewer1","toradora-tiwtx"),2);
+});
+
+test("monthly release changing target order never silently changes a saved season",async()=>{
+  await api.savePreferredAnikotoSeason("viewer-old","toradora-tiwtx",2);
+  const old=rows;
+  rows=old.map(row=>row.target_order===2?{...row,target_id:"another-season"}:row);
+  try {assert.equal(await api.getPreferredAnikotoSeason("viewer-old","toradora-tiwtx"),null);}
+  finally{rows=old;}
 });
 
 test("unknown video or season cannot be prioritized",async()=>{
