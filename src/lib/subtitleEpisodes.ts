@@ -27,14 +27,17 @@ export function readEpisodeEvidence(value: string, filename = false, filePath = 
     .replace(/\[[a-f\d]{8}\]/gi, ' ');
   const parts = filePath ? text.split(/[\\/]/) : [text];
   const base = parts[parts.length - 1].replace(/\.(?:ass|ssa|srt|smi|vtt|zip)$/i, '');
+  // Compact S101 means season 1, episode 01; longer ambiguous numbers stay unknown.
+  const compact=[...base.matchAll(/(?:^|[^a-z\d])s([1-9])(\d{2})(?=$|[^a-z\d])/gi)];
   const seasons = unique([
+    ...compact,
     ...text.matchAll(/(?:^|[^a-z\d])(?:season|시즌|s)\s*0*(\d{1,2})(?=$|[^\d])/gi),
     ...text.matchAll(/(?:제|第)?\s*(\d{1,2})\s*(?:기|期)/g),
     ...text.matchAll(/\b(\d{1,2})(?:st|nd|rd|th)\s+season\b/gi),
   ].map(m => Number(m[1])).filter(valid));
   const multipleSeasons = seasons.length > 1 || /(?:\d+\s*[-~, ]\s*)+\d+\s*기/.test(text)
     || /(?:season|시즌|s)\s*\d+\s*[-~]\s*\d+/i.test(text);
-  const paired = [...base.matchAll(/(?:^|[^a-z\d])s\s*0*(\d{1,2})\s*e\s*0*(\d{1,4})(?!\d)/gi)];
+  const paired = [...compact, ...base.matchAll(/(?:^|[^a-z\d])s\s*0*(\d{1,2})\s*e\s*0*(\d{1,4})(?!\d)/gi)];
   const episodes: number[] = paired.map(m => Number(m[2]));
   let clean = base.replace(/(?:season|시즌|s)\s*\d+\s*[-~]\s*(?:season|시즌|s)?\s*\d+/gi, ' ').replace(/(?:\d+\s*[-~, ]\s*)+\d+\s*기/g, ' ').replace(/(?:^|[^a-z\d])s\s*\d{1,2}\s*e\s*\d{1,4}(?!\d)/gi, ' ')
     .replace(/(?:season|part|cour|시즌|파트)\s*\d+|\bS\d+\b|\d+\s*(?:기|期)|\b\d+(?:st|nd|rd|th)\b/gi, ' ');

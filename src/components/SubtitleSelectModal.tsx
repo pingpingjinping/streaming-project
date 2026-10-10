@@ -252,10 +252,11 @@ export default function SubtitleSelectModal({
     if(savingBundleKey)return;
     try {
       const scope=subtitle.sourceFolderKey ? parseBundleScope(subtitle.sourceFolderKey) : null;
-      if(!subtitle.episodeException && scope?.type==='folder' && subtitle.localFileId) {
-        setSavingBundleKey(`${scope.provider}:${subtitle.sourceBundleKey}`);setBundleNotice(null);
+      if(!subtitle.episodeException && ((scope?.type==='folder' && subtitle.localFileId)
+        || (parseBundleScope(subtitle.sourceBundleKey || '')?.type==='reviewed' && subtitle.reviewedFileId))) {
+        setSavingBundleKey(`${subtitle.sourceProvider}:${subtitle.sourceBundleKey}`);setBundleNotice(null);
         const response=await fetch('/api/anime/subtitle-bundle',{method:'PUT',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({animeId,provider:scope.provider,bundleKey:subtitle.sourceFolderKey,fileId:subtitle.localFileId})});
+          body:JSON.stringify({animeId,provider:subtitle.sourceProvider,bundleKey:subtitle.sourceFolderKey || subtitle.sourceBundleKey,fileId:subtitle.localFileId || subtitle.reviewedFileId})});
         const data=await response.json();if(!response.ok || !data.success)throw new Error(data.message || '버전을 저장하지 못했습니다.');
         setBundleAssignment(data.assignment);window.dispatchEvent(new CustomEvent('subtitle-settings-changed',{detail:{animeId}}));
       }
@@ -758,7 +759,7 @@ export default function SubtitleSelectModal({
                           onClick={() => selectLocalSubtitle(subtitle)}
                           className="flex w-full min-w-0 flex-col items-start gap-2 rounded-xl border border-emerald-500/20 bg-slate-900/70 px-3 py-2 text-left hover:border-emerald-400/50 hover:bg-slate-900">
                           <span className="w-full min-w-0 whitespace-normal break-words [overflow-wrap:anywhere] text-sm font-semibold leading-relaxed text-white">{subtitleDisplayName(subtitle)}</span>
-                          <span className="shrink-0 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-bold text-emerald-300">{subtitle.sourceFolderKey ? "현재 화 선택 · 다음 화 유지" : "현재 화 적용"}</span>
+                          <span className="shrink-0 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-bold text-emerald-300">{!subtitle.episodeException && (subtitle.sourceFolderKey || subtitle.reviewedFileId) ? "현재 화 선택 · 다음 화 유지" : "현재 화 적용"}</span>
                         </button>
                         <div className="flex flex-wrap items-center gap-2">
                         {subtitle.sourceProvider && subtitle.sourceBundleKey && (
@@ -1104,7 +1105,7 @@ export default function SubtitleSelectModal({
                       }}
                       className="rounded-xl bg-purple-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-purple-500 active:scale-95"
                     >
-                      {sub.sourceFolderKey ? "선택 · 다음 화 유지" : "현재 화 선택"}
+                      {!sub.episodeException && (sub.sourceFolderKey || sub.reviewedFileId) ? "선택 · 다음 화 유지" : "현재 화 선택"}
                     </button>
                     </div>
                   </div>

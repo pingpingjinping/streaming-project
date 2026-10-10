@@ -7,7 +7,7 @@ import { extractSubtitleFromBuffer, decodeSubtitleFile } from "@/lib/subtitles";
 import { episodeFromSubtitleFilename, inspectSubtitleArchive } from "@/lib/subtitleUpload";
 import { parseSeason } from "@/lib/subtitles";
 import { readEpisodeEvidence, evidenceAgrees, selectEpisodeEntries } from "@/lib/subtitleEpisodes";
-import { bundleScopeKey, parseBundleScope, localFileKey, parseLocalFileKey, subtitleScope, scopeLabel, bundleScopesOverlap, bundleMatchesAssignment } from './subtitleLocalIdentity';
+import { normalizeSubtitleTrackFilename, bundleScopeKey, parseBundleScope, localFileKey, parseLocalFileKey, subtitleScope, scopeLabel, bundleScopesOverlap, bundleMatchesAssignment } from './subtitleLocalIdentity';
 
 import {readSubtitleSourceManifest,sourceDigestMatches,sourceTrackIdentity} from './subtitleSourceManifest';
 import type {DownloadRecord} from './subtitleSourceManifest';
@@ -297,36 +297,13 @@ export async function searchLocalSubtitleFolders(query:string) {
   return matches.sort((a,b)=>a.folderName.localeCompare(b.folderName,'ko')).slice(0,200);
 }
 
-function normalizeAnissiaTrackFilename(filename: string, episode: number): string {
-  const filenameBase = path.basename(filename).replace(/\.(ass|ssa|smi|srt|vtt|zip)$/i, "");
-  // Completion status does not identify a release variant. Keep the real filename
-  // and episode evidence intact; only normalize the name used for track grouping.
-  const base = (filenameBase.replace(/(?:\s*\[\s*미완성\s*\]|\s*\(\s*미완성\s*\)|[\s_-]*미완성)\s*$/, "") || filenameBase)
-    .replace(/\b(s\s*0*\d{1,2}\s*e\s*)0*\d{1,4}(?!\d)/gi,'$1{ep}');
-  const patterns = [
-    new RegExp("(^|[\\s_-])0*" + episode + "(?=__\\d+$)"),
-    new RegExp("(^|[\\s_-])0*" + episode + "(?=[A-Za-z][A-Za-z0-9._-]*$)"),
-    new RegExp("(^|[^a-z\\d])(?:episode|ep|e|#)\\s*0*" + episode + "(?!\\d)", "i"),
-    new RegExp("((?:제|第\\s*)?0*)" + episode + "(\\s*(?:화|회|편|話))"),
-    new RegExp("(^|[\\s_-])0*" + episode + "$"),
-  ];
-  for (const pattern of patterns) {
-    const match = base.match(pattern);
-    if (match) {
-      const prefix = match[1] || "";
-      const suffix = match[2] || "";
-      return base.replace(pattern, `${prefix}{ep}${suffix}`);
-    }
-  }
-  return base;
-}
-
 function anissiaTrackIdentity(creator: string, archiveFilename: string, entryFilename: string, episode: number) {
   const rangePattern = /(?:^|[^\d])\d{1,3}\s*[-~]\s*\d{1,3}(?!\d)/;
   const archiveBase = path.basename(archiveFilename).replace(/\.(zip)$/i, "").replace(rangePattern, "{range}");
-  const normalizedArchive = normalizeAnissiaTrackFilename(archiveBase, episode);
-  const entryEpisode = episodeFromSubtitleFilename(entryFilename);
-  const normalizedEntry = entryEpisode === episode ? normalizeAnissiaTrackFilename(entryFilename, episode) : "";
+  const normalizedArchive = normalizeSubtitleTrackFilename(archiveBase, episode);
+  const entryEvidence=readEpisodeEvidence(entryFilename,true);
+  const entryEpisode=entryEvidence.episodes.length===1 ? entryEvidence.episodes[0] : episodeFromSubtitleFilename(entryFilename);
+  const normalizedEntry = entryEpisode === episode ? normalizeSubtitleTrackFilename(entryFilename, episode) : "";
   const trackKey = [normalizeBlogTitle(creator), normalizeBlogTitle(normalizedArchive), normalizeBlogTitle(normalizedEntry)].join("|");
   const entryTrack = normalizedEntry.match(/\{ep\}([a-z][a-z0-9._-]*)$/i)?.[1] || "";
   const archiveTrack = normalizedArchive.match(/(?:\{ep\}|\{range\})([a-z][a-z0-9._-]*)$/i)?.[1] || "";
@@ -340,7 +317,8 @@ function anissiaTrackIdentity(creator: string, archiveFilename: string, entryFil
 function rawBundleIdentity(provider: 'aniall'|'anissia', relative: string, member: string, creator: string, title: string, sourceRecord?:DownloadRecord) {
   const parts=relative.split('/'),filename=parts[parts.length-1];
   const evidence=readEpisodeEvidence(parts[2] || '');
-  const episode=episodeFromSubtitleFilename(member || filename) || (evidence.episodes.length===1 ? evidence.episodes[0] : 1);
+  const fileEvidence=readEpisodeEvidence(member || filename,true);
+  const episode=(fileEvidence.episodes.length===1 ? fileEvidence.episodes[0] : episodeFromSubtitleFilename(member || filename)) || (evidence.episodes.length===1 ? evidence.episodes[0] : 1);
   const identity=anissiaTrackIdentity(creator,filename,member || filename,episode);
   const scope=subtitleScope(member || parts.slice(2).join('/'),`${title} ${filename}`,parseSeason(title) || 1);
   return {sourceFolderKey:bundleScopeKey({type:'folder',provider,work:parts[1],...scope}),sourceFolderLabel:scopeLabel(title,scope),

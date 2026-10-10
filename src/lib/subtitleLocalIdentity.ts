@@ -3,7 +3,7 @@ import { readEpisodeEvidence } from './subtitleEpisodes';
 export type LocalProvider = 'aniall' | 'anissia' | 'naver';
 export type SubtitleKind = 'main' | 'ova' | 'special' | 'movie' | 'preview' | 'drama' | 'unknown';
 export type BundleScope = { kind: SubtitleKind; season: number } & (
-  { type: 'reviewed'; dataset: string; pack: string; workSource: string; workId: string }
+  { type: 'reviewed'; dataset: string; pack: string; workSource: string; workId: string; track?:string }
   | { type: 'folder'; provider: 'aniall' | 'anissia'; work: string; track?:string }
   | { type: 'local'; provider: 'aniall' | 'anissia'; work: string; track: string }
 );
@@ -13,7 +13,7 @@ const text = (value: unknown, limit = 1000): value is string => typeof value ===
 /** User bindings describe a work slice of an archive, never ownership of the ZIP itself. */
 export function bundleScopeKey(scope: BundleScope): string {
   const identity = scope.type === 'reviewed'
-    ? {type: scope.type, dataset: scope.dataset, pack: scope.pack, workSource: scope.workSource, workId: scope.workId}
+    ? {type: scope.type, dataset: scope.dataset, pack: scope.pack, workSource: scope.workSource, workId: scope.workId,...(scope.track?{track:scope.track}:{})}
     : scope.type==='folder' ? {type:scope.type,provider:scope.provider,work:scope.work,...(scope.track?{track:scope.track}:{})}
     : {type: scope.type, provider: scope.provider, work: scope.work, track: scope.track};
   return 'b2:' + encodeURIComponent(JSON.stringify({...identity, kind: scope.kind, season: scope.season}));
@@ -24,7 +24,7 @@ export function parseBundleScope(key: string): BundleScope | null {
     const s = JSON.parse(decodeURIComponent(key.slice(3)));
     if (!s || !kinds.includes(s.kind) || !Number.isInteger(s.season) || s.season < 1 || s.season > 99) return null;
     if (s.type === 'reviewed') {
-      if (![s.dataset,s.pack,s.workSource,s.workId].every(v => text(v))) return null;
+      if (![s.dataset,s.pack,s.workSource,s.workId].every(v => text(v)) || (s.track!==undefined && !text(s.track))) return null;
     } else if (s.type === 'local' || s.type === 'folder') {
       if (!['aniall','anissia'].includes(s.provider) || !text(s.work) || (s.type==='local' && !text(s.track))) return null;
       if(s.type==='folder' && s.track!==undefined && !text(s.track))return null;
@@ -77,7 +77,10 @@ export function parseLocalFileKey(key: string): {relative: string; member: strin
 export function bundleScopesOverlap(first:string,second:string):boolean {
   if(first===second)return true;
   const a=parseBundleScope(first),b=parseBundleScope(second);
-  if(!a || !b || a.type==='reviewed' || b.type==='reviewed')return false;
+  if(!a || !b)return false;
+  if(a.type==='reviewed' || b.type==='reviewed')return a.type==='reviewed' && b.type==='reviewed'
+    && a.dataset===b.dataset && a.pack===b.pack && a.workSource===b.workSource && a.workId===b.workId
+    && a.kind===b.kind && a.season===b.season;
   return a.provider===b.provider && a.work===b.work && a.kind===b.kind && a.season===b.season
     && (a.type==='folder' || b.type==='folder' || localTracksCompatible(a.track,b.track));
 }
@@ -116,7 +119,8 @@ export function refineLocalBundleAssignment(assignment:string,candidate:string):
 
 export function bundleMatchesAssignment(assignment:string,candidate:string):boolean {
   const scope=parseBundleScope(assignment),file=parseBundleScope(candidate);
-  return bundleScopesOverlap(assignment,candidate) && !(scope?.type==='folder' && scope.track && file?.type==='local'
+  return bundleScopesOverlap(assignment,candidate)
+    && !(scope?.type==='reviewed' && file?.type==='reviewed' && scope.track && scope.track!==file.track) && !(scope?.type==='folder' && scope.track && file?.type==='local'
     && !localTracksCompatible(scope.track,file.track));
 }
 
@@ -124,4 +128,33 @@ export function bundleMatchesAssignment(assignment:string,candidate:string):bool
 export function bundleSelectionMatches(assignment:string,candidate:string):boolean {
   const scope=parseBundleScope(assignment);
   return bundleMatchesAssignment(assignment,candidate) && !(scope?.type==='folder' && !scope.track);
+}
+
+export function normalizeSubtitleTrackFilename(filename: string, episode: number, reviewed = false): string {
+  const filenameBase = filename.split(/[\\/]/).pop()!.replace(/\.(ass|ssa|smi|srt|vtt|zip)$/i, "");
+  // Completion status does not identify a release variant. Keep the real filename
+  // and episode evidence intact; only normalize the name used for track grouping.
+  const base = (filenameBase.replace(/(?:\s*\[\s*미완성\s*\]|\s*\(\s*미완성\s*\)|[\s_-]*미완성)\s*$/, "") || filenameBase)
+    .replace(/(?:^|[^a-z\d])(s[1-9])\d{2}(?=$|[^a-z\d])/gi,'$1{ep}')
+    .replace(/\b(s\s*0*\d{1,2}\s*e\s*)0*\d{1,4}(?!\d)/gi,'$1{ep}');
+  const patterns = [
+    new RegExp("(^|[\\s_-])0*" + episode + "(?=__\\d+$)"),
+    new RegExp("(^|[\\s_-])0*" + episode + "(?=[A-Za-z][A-Za-z0-9._-]*$)"),
+    new RegExp("(^|[^a-z\\d])(?:episode|ep|e|#)\\s*0*" + episode + "(?!\\d)", "i"),
+    new RegExp("((?:제|第\\s*)?0*)" + episode + "(\\s*(?:화|회|편|話))"),
+    new RegExp("(^|[\\s_-])0*" + episode + "$"),
+  ];
+  if(reviewed) patterns.push(
+    new RegExp("([\\[(]\\s*)0*"+episode+"(\\s*[\\])])"),
+    new RegExp("(^|[\\s_-])0*"+episode+"(?=\\s*(?:END|완결|끝)?\\s*(?:\\([^)]*\\)|\\[[^\\]]*\\])*\\s*$)","i"),
+  );
+  for (const pattern of patterns) {
+    const match = base.match(pattern);
+    if (match) {
+      const prefix = match[1] || "";
+      const suffix = match[2] || "";
+      return base.replace(pattern, `${prefix}{ep}${suffix}`);
+    }
+  }
+  return base;
 }

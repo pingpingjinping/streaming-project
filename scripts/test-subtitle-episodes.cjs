@@ -329,3 +329,14 @@ test('upload HTTP route refuses unnamed ZIP positional guesses', async () => {
     assert.equal(fs.existsSync(path.join(root, 'uploads/regression-user/re_ambiguous')), false);
   } finally { auth.getSessionUser = oldUser; }
 });
+
+
+test('compact S101, S102 and S201 carry explicit season/episode evidence without parsing longer numbers',()=>{
+  const {readEpisodeEvidence}=require('../src/lib/subtitleEpisodes.ts');
+  for(const[name,season,ep]of [['s101.srt',1,1],['s102.srt',1,2],['s201.srt',2,1]]) {
+    const evidence=readEpisodeEvidence(name,true);assert.deepEqual(evidence.episodes,[ep]);assert.equal(evidence.season,season);
+    assert.equal(evidence.seasonEpisodePair,true);
+  }
+  assert.deepEqual(readEpisodeEvidence('s2026.srt',true).episodes,[]);
+  assert.equal(extractSubtitleFromBuffer(zip({'s101.srt':'wrong season','s201.srt':'right season'}),13,'all.zip',true,2,{localEpisode:1})?.content.includes('right season'),true);
+});

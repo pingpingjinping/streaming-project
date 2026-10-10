@@ -48,6 +48,16 @@ for(const provider of ['anissia','aniall']) {
   for(const ep of [15,16])
     put(`${provider}_subtitles/미완성 제목 ${provider}/미완성의 작품 ${ep}화.srt`,srt(`${provider} title ${ep}`));
 }
+for(const provider of ['anissia','aniall']) for(const layout of ['folder','zip']) {
+  const title=`번호 표기 ${provider} ${layout}`;
+  const files=Object.fromEntries([1,2,10].flatMap(ep=>[
+    [`${String(ep).padStart(2,'0')}.srt`,srt(`bare release ${ep}`)],
+    [`s1${String(ep).padStart(2,'0')}.srt`,srt(`compact release ${ep}`)],
+    [`${ep}화.srt`,srt(`Korean release ${ep}`)],
+  ]));
+  if(layout==='zip')zipFile(`${provider}_subtitles/${title}/all.zip`,files);
+  else for(const[name,bytes]of Object.entries(files))put(`${provider}_subtitles/${title}/${name}`,bytes);
+}
 const migrationSources={version:1,files:{}};
 function weeklyFile(relative,provider,id,creator,episode,bytes) {
   put(relative,bytes);
@@ -87,8 +97,9 @@ let username='alice';const assignments=new Map(),exceptions=new Map();let rows=[
 patch(auth,'getSessionUser',async()=>({username}));
 patch(db,'getSubtitleBundleAssignment',async(u,a)=>assignments.get(`${u}:${a}`)||null);
 patch(db,'getSubtitleBundleAssignments',async u=>[...assignments.entries()].filter(([k])=>k.startsWith(u+':')).map(([,v])=>v));
-patch(db,'saveSubtitleBundleAssignment',async(u,a,provider,bundleKey,label,expectedBundleKey)=>{
-  if(expectedBundleKey!==undefined && assignments.get(`${u}:${a}`)?.bundleKey!==expectedBundleKey)return false;
+patch(db,'saveSubtitleBundleAssignment',async(u,a,provider,bundleKey,label,expectedBundleKey,automatic=false)=>{
+  if(expectedBundleKey!==undefined && (assignments.get(`${u}:${a}`)?.bundleKey || '')!==expectedBundleKey)return false;
+  if(automatic && [...assignments.values()].some(v=>v.animeId!==a && v.provider===provider && identity.bundleScopesOverlap(v.bundleKey,bundleKey)))return false;
   for(const[k,v]of assignments)if(k.startsWith(u+':')&&v.provider===provider&&identity.bundleScopesOverlap(v.bundleKey,bundleKey))assignments.delete(k);
   assignments.set(`${u}:${a}`,{animeId:a,provider,bundleKey,label,exclusive:true});return true;
 });
@@ -132,10 +143,11 @@ test('one physical TV+OVA ZIP has independent scopes and preserves original byte
   const hidden=await play('re_wrong_season','혼합 작품');assert.equal(hidden.subtitles?.some(s=>s.content.includes('TV one')),false);
   assert.deepEqual(fs.readFileSync(path.join(root,'aniall_subtitles/혼합 작품/all.zip')),mixedBytes);
 });
-test('different same-episode versions require a choice, even with a work assignment',async()=>{
-  const result=await play('re_versions','버전 작품');assert.equal(result.count,2);assert.equal(result.needs_manual_subtitle_choice,true);
+test('same-episode variants automatically choose one and manual selection replaces it',async()=>{
+  const result=await play('re_versions','버전 작품');assert.equal(result.count,1);assert.equal(result.needs_manual_subtitle_choice,false);
+  assert.ok(assignments.get('alice:re_versions'));
   const files=await storage.getAniAllArchiveSubtitles('버전 작품',1);await assign('re_versions','aniall',files[0]);
-  // One selected release track can be applied; other tracks are never chosen arbitrarily.
+  // A deliberate selection can replace the initial automatic release.
   const assigned=await play('re_versions','버전 작품');assert.equal(assigned.count,1);assert.ok(assigned.subtitles[0].content.includes('version one'));
 });
 test('trailing completion status preserves the selected track across loose files and ZIPs',async()=>{
@@ -155,7 +167,7 @@ test('trailing completion status preserves the selected track across loose files
     assert.equal((await play(id,title,17)).count,1);
   }
 });
-test('complete and incomplete files for the same episode still require a choice',async()=>{
+test('complete and incomplete versions of the same episode choose one automatically',async()=>{
   for(const provider of ['anissia','aniall']) {
     const title=`완성 중복 ${provider}`,id=`re_completion_duplicate_${provider}`;
     const files=provider==='anissia' ? await storage.getAnissiaArchiveSubtitles([title],16)
@@ -164,7 +176,7 @@ test('complete and incomplete files for the same episode still require a choice'
     assert.notEqual(files[0].localFileId,files[1].localFileId);
     await assign(id,provider,files[0]);
     const result=await play(id,title,16);
-    assert.equal(result.count,2);assert.equal(result.needs_manual_subtitle_choice,true);
+    assert.equal(result.count,1);assert.equal(result.needs_manual_subtitle_choice,false);
   }
 });
 test('completion suffix normalization preserves sponsor, copy and title distinctions',async()=>{
@@ -231,18 +243,16 @@ test('legacy flat ASS and ZIP selections follow registered nested episodes witho
     }
   }
 });
-test('multiple registered candidates compatible with an unknown legacy track still require a choice',async()=>{
+test('multiple compatible registered releases pick one and remember its creator',async()=>{
   for(const provider of ['anissia','aniall']) {
     const title=`새 출처 중복 ${provider}`,id=`re_migration_duplicates_${provider}`;
     const first=provider==='anissia'?await storage.getAnissiaArchiveSubtitles([title],9):await storage.getAniAllArchiveSubtitles(title,9);
     await assign(id,provider,first[0]);
     const savedBefore=assignments.get(`alice:${id}`).bundleKey;
-    const result=await play(id,title,24);assert.equal(result.count,2);assert.equal(result.needs_manual_subtitle_choice,true);
-    assert.equal(assignments.get(`alice:${id}`).bundleKey,savedBefore);
-    assert.equal(new Set(result.subtitles.map(s=>s.sourceBundleKey)).size,2);
-    await assign(id,provider,result.subtitles.find(s=>s.content.includes('duplicate 카이란')));
+    const result=await play(id,title,24);assert.equal(result.count,1);assert.equal(result.needs_manual_subtitle_choice,false);
+    assert.notEqual(assignments.get(`alice:${id}`).bundleKey,savedBefore);
     const selected=await play(id,title,24);assert.equal(selected.count,1);assert.equal(selected.needs_manual_subtitle_choice,false);
-    assert.ok(selected.subtitles[0].content.includes('duplicate 카이란'));
+    assert.equal(selected.subtitles[0].sourceBundleKey,result.subtitles[0].sourceBundleKey);
   }
 });
 test('per-file source creators override a stale root marker and exact file resolution agrees',async()=>{
@@ -467,6 +477,22 @@ test('Postgres persists scoped ownership and episode exceptions without modifyin
     await exports.deleteSubtitleBundleAssignment('alice','refining');
     assert.equal(await exports.saveSubtitleBundleAssignment('alice','refining','anissia',refinedA,'Deleted',legacyKey),false);
     assert.equal(await exports.getSubtitleBundleAssignment('alice','refining'),null);
+    // A first automatic choice is atomic, preserves manual preferences and cannot steal ownership.
+    const autoKey=identity.bundleScopeKey({type:'folder',provider:'anissia',work:'자동 선택 경쟁',kind:'main',season:1,track:'base'});
+    const autoOther=identity.bundleScopeKey({...identity.parseBundleScope(autoKey),track:'other'});
+    const initial=await Promise.all([
+      exports.saveSubtitleBundleAssignment('auto','initial','anissia',autoKey,'A','',true),
+      exports.saveSubtitleBundleAssignment('auto','initial','anissia',autoOther,'B','',true),
+    ]);
+    assert.deepEqual([...initial].sort(),[false,true]);
+    const chosen=(await exports.getSubtitleBundleAssignment('auto','initial')).bundleKey;
+    assert.equal(await exports.saveSubtitleBundleAssignment('auto','other-work','anissia',chosen,'steal','',true),false);
+    assert.equal((await exports.getSubtitleBundleAssignment('auto','initial')).bundleKey,chosen);
+    await exports.saveSubtitleBundleAssignment('auto','cross-provider','aniall',tvKey,'Manual');
+    assert.equal(await exports.saveSubtitleBundleAssignment('auto','cross-provider','anissia',autoKey,'stale','',true),false);
+    await sql`INSERT INTO subtitle_creator_preferences(user_id,anime_id,source_provider,creator_name,website) VALUES('auto','preferred','anissia','Manual','https://example.com')`;
+    assert.equal(await exports.saveSubtitleBundleAssignment('auto','preferred','anissia',autoKey,'stale','',true),false);
+    assert.equal((await sql`SELECT * FROM subtitle_creator_preferences WHERE user_id='auto' AND anime_id='preferred'`).length,1);
     assert.equal(await snapshot(),before);
   } finally {
     db.getDb=previous;if(sql) await sql.end();
@@ -481,8 +507,9 @@ test('folder can be assigned without a file; unpacked numbered members follow su
   assert.equal(response.status,200);
   for(const ep of [1,2,3]) {
     const result=await play('re_flat','다른 번역명',ep);
-    assert.equal(result.count,2);assert.equal(result.needs_manual_subtitle_choice,true);
-    assert.ok(result.subtitles.every(s=>s.content.includes(` ${ep}`)));
+    assert.equal(result.count,1);assert.equal(result.needs_manual_subtitle_choice,false);
+    assert.ok(result.subtitles[0].content.includes(`flat base ${ep}`));
+    assert.ok(identity.parseBundleScope(result.bundle_assignment.bundleKey).track);
   }
   const folderChoices=await storage.searchLocalSubtitleFolders('풀린');
   assert.ok(folderChoices.some(f=>f.folderKey===key));
@@ -571,9 +598,10 @@ test('current-episode recommendations contain only the requested folder episode 
     const chosen=files.find(file=>file.content.includes('series__2'));assert.ok(chosen);
     await bundleRoute.PUT(request('subtitle-bundle','PUT',{animeId:`re_recs_${provider}`,provider,bundleKey:key,fileId:chosen.localFileId}));
     const data=await (await local.GET(request(`subtitles/local?animeId=re_recs_${provider}&title=${encodeURIComponent('다른 이름')}&ep=2`,'GET'))).json();
-    assert.equal(data.success,true);assert.equal(data.count,1);
-    assert.ok(data.subtitles[0].content.includes('series__2 episode 2'));
-    assert.equal(data.subtitles[0].episodeConfirmed,true);
+    assert.equal(data.success,true);assert.equal(data.count,2);
+    assert.ok(data.subtitles.every(s=>s.episodeConfirmed && s.content.includes('episode 2')));
+    assert.equal(data.subtitles.filter(s=>s.bundleAssigned).length,1);
+    assert.ok(data.subtitles.find(s=>s.bundleAssigned).content.includes('series__2 episode 2'));
   }
 });
 
@@ -607,4 +635,44 @@ test('recommendations exclude other episodes while explicit search still permits
     assert.equal(search.success,true);
     assert.ok(search.subtitles.some(s=>!s.episodeConfirmed && s.content.includes('episode 1\n')));
   }finally{username='alice';}
+});
+
+
+test('initial folder and ZIP defaults persist; changing compact or Korean release follows later episodes',async()=>{
+  for(const provider of ['anissia','aniall']) for(const layout of ['folder','zip']) {
+    const title=`번호 표기 ${provider} ${layout}`,id=`re_default_${provider}_${layout}`;
+    const key=identity.bundleScopeKey({type:'folder',provider,work:title,kind:'main',season:1});
+    assert.equal((await bundleRoute.PUT(request('subtitle-bundle','PUT',{animeId:id,provider,bundleKey:key}))).status,200);
+    const first=await play(id,'다른 이름',1);
+    assert.equal(first.count,1);assert.equal(first.needs_manual_subtitle_choice,false);
+    assert.ok(identity.parseBundleScope(first.bundle_assignment.bundleKey).track);
+    const initial=first.subtitles[0].content.replace('release 1','release 2');
+    assert.equal((await play(id,'다른 이름',2)).subtitles[0].content,initial);
+    const files=provider==='anissia'?await storage.getAnissiaArchiveSubtitles([title],1,null,1,{bundleKey:key})
+      :await storage.getAniAllArchiveSubtitles(title,1,1,null,'',{bundleKey:key});
+    assert.equal(files.length,3);
+    for(const variant of ['compact','Korean']) {
+      const file=files.find(s=>s.content.includes(variant+' release 1'));assert.ok(file);
+      assert.equal((await bundleRoute.PUT(request('subtitle-bundle','PUT',{animeId:id,provider,bundleKey:key,fileId:file.localFileId}))).status,200);
+      for(const ep of [2,10]) {
+        const next=await play(id,'다른 이름',ep);assert.equal(next.count,1);assert.equal(next.needs_manual_subtitle_choice,false);
+        assert.ok(next.subtitles[0].content.includes(`${variant} release ${ep}`));
+      }
+    }
+  }
+});
+test('a newer manual selection wins over an automatic request in flight',async()=>{
+  const title='번호 표기 aniall folder',id='re_race_choice',save=db.saveSubtitleBundleAssignment;
+  const files=await storage.getAniAllArchiveSubtitles(title,1);
+  const manual=files.find(s=>s.content.includes('Korean release 1'));
+  await bundleRoute.DELETE(request(`subtitle-bundle?animeId=re_default_aniall_folder`,'DELETE'));
+  try {
+    db.saveSubtitleBundleAssignment=async(u,a,provider,key,label,expected,automatic)=>{
+      if(automatic && a===id){await save(u,a,provider,manual.sourceBundleKey,'Manual');return false;}
+      return save(u,a,provider,key,label,expected,automatic);
+    };
+    const result=await play(id,title);assert.equal(result.count,0);assert.equal(result.needs_manual_subtitle_choice,true);
+    assert.equal(assignments.get(`alice:${id}`).bundleKey,manual.sourceBundleKey);
+    assert.ok((await play(id,title,2)).subtitles[0].content.includes('Korean release 2'));
+  }finally{db.saveSubtitleBundleAssignment=save;}
 });

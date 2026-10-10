@@ -87,7 +87,7 @@ test('an explicitly selected loose set follows numbered episodes and continues w
   assert.ok(browsing.subtitles.every(s=>!s.episodeConfirmed));
   assert.deepEqual(rows.map(r=>r.confirmed_episodes),[[],[],[]]);
 });
-test('selected loose sets apply the source episode start once and keep variants and unknown episodes manual',async()=>{
+test('selected loose sets apply start once, retain their variant, and keep unknown episodes manual',async()=>{
   const rows=loose('Selected reviewed source numbering',{'13.srt':srt('source thirteen'),'14.srt':srt('source fourteen')});
   findRows(rows);const bundleKey=storage.reviewedBundleKey(rows[0]);
   for(const [episode,sourceEpisode,text] of [[1,13,'source thirteen'],[2,14,'source fourteen']]){
@@ -98,7 +98,8 @@ test('selected loose sets apply the source episode start once and keep variants 
   const variants=loose('Selected reviewed variants',{'13.srt':srt('first variant'),'13ns.srt':srt('second variant')});
   findRows(variants);
   const competing=await storage.getReviewedSubtitles(request({sourceEpisode:13,source:'anissia',bundleKey:storage.reviewedBundleKey(variants[0])}));
-  assert.equal(competing.subtitles.length,2);assert.equal(competing.needsManualChoice,true);
+  assert.equal(competing.subtitles.length,1);assert.equal(competing.needsManualChoice,false);
+  assert.ok(competing.subtitles[0].content.includes('first variant'));
   const unknown=loose('Selected reviewed unknown',{'subtitle.srt':srt('no episode evidence')});findRows(unknown);
   const unresolved=await storage.getReviewedSubtitles(request({source:'anissia',bundleKey:storage.reviewedBundleKey(unknown[0])}));
   assert.equal(unresolved.subtitles[0].episodeConfirmed,false);assert.equal(unresolved.needsManualChoice,true);
@@ -193,7 +194,7 @@ test('broad search reads across bundles instead of letting 100 same-episode vari
   findRows([...crowded, ...main]);
   const result = await storage.getReviewedSubtitles(request({ keyword: '히다마리', manualSearch: true }));
   assert.ok(result.subtitles.some(s => s.content.includes('main bundle after crowded special')));
-  assert.equal(new Set(result.subtitles.map(s => s.sourceBundleKey)).size, 2);
+  assert.equal(new Set(result.subtitles.map(s => require('../src/lib/subtitleLocalIdentity.ts').parseBundleScope(s.sourceBundleKey).pack)).size,2);
   assert.ok(result.subtitles.length <= 50);
 });
 test('mixed ZIP only reads members returned by the current work binding', async () => {
@@ -310,13 +311,21 @@ async function withAutomaticRoute(rows, run, options={}) {
   const subtitles=require('../src/lib/subtitles.ts');
   const reanime=require('../src/lib/reanimeMatches.ts');
   const local=require('../src/lib/subtitleStorage.ts');
-  patch(db,'getDb',()=>async()=>rows);
+  patch(db,'getDb',()=>async(strings,...values)=>{
+    if(strings.join(' ').includes('AND f.pid='))return rows.filter(row=>row.pid===values[1]);
+    return rows;
+  });
   patch(db,'getSubtitleEpisodeStart',async()=>options.sourceEpisodeStart || null);
   patch(db,'getSubtitleRejections',async()=>[]);
   patch(db,'getSubtitleSourcePriority',async()=> 'aniall');
   patch(db,'getAniAllMatches',async()=>[]);
   patch(db,'getManualSubtitleLink',async()=>null);
-  patch(db,'getSubtitleBundleAssignment',async()=>options.bundleAssignment || null);
+  let assignment=options.bundleAssignment || null;
+  patch(db,'getSubtitleBundleAssignment',async()=>assignment);
+  patch(db,'saveSubtitleBundleAssignment',async(u,a,provider,bundleKey,label,expected)=>{
+    if(expected!==undefined && (assignment?.bundleKey || '')!==expected)return false;
+    assignment={animeId:a,provider,bundleKey,label,exclusive:true};return true;
+  });
   patch(db,'getSubtitleBundleAssignments',async()=>[]);
   patch(db,'getSubtitleCreatorPreference',async()=>null);
   patch(db,'getSubtitleEpisodeOverrides',async()=>[]);
@@ -347,7 +356,7 @@ test('automatic route prefers a known weekly AniAll file over unknown historical
     assert.equal(Boolean(result.needs_manual_subtitle_choice),false);
   });
 });
-test('automatic route prefers known Anissia or Naver episodes over unknown reviewed AniAll files',async()=>{
+test('automatic route prefers known Naver over unknown AniAll and retains the chosen provider',async()=>{
   const oldRows=pack('old-manual', {'subtitle.srt':srt('old unknown')});
   const naver=pack('new-naver', {'05.srt':srt('known naver')},'naver_subtitles/작품/new-naver.zip');
   naver[0].source='naver';naver[0].zip_relative_path='naver/작품/new-naver.zip';
@@ -358,26 +367,27 @@ test('automatic route prefers known Anissia or Naver episodes over unknown revie
     local.getAnissiaArchiveSubtitles=async()=>[{creator:'existing',localArchiveTrackKey:'existing-track',localArchiveTrackLabel:'TV',
       archiveFilename:'01.zip',orig_filename:'01.srt',content:'WEBVTT\n\nexisting Anissia',format:'VTT',is_ass:false,website:'',matchedTitle:'검수 작품',updatedAt:''}];
     const anissiaResult=await get(4);
-    assert.equal(anissiaResult.subtitles[0].sourceProvider,'anissia');
-    assert.ok(anissiaResult.subtitles[0].content.includes('existing Anissia'));
+    assert.equal(anissiaResult.count,0);assert.equal(anissiaResult.assignment_missing,true);
+    assert.equal(anissiaResult.bundle_assignment.provider,'naver');
   });
 });
-test('automatic route surfaces competing reviewed variants without choosing file order',async()=>{
+test('automatic route chooses and remembers one reviewed release',async()=>{
   const rows=pack('auto-choice', {'06.srt':srt('version a'), '06ns.srt':srt('version b')});
   await withAutomaticRoute(rows,async get=>{
     const result=await get(6);
-    assert.equal(result.count,2);assert.equal(result.needs_manual_subtitle_choice,true);
+    assert.equal(result.count,1);assert.equal(result.needs_manual_subtitle_choice,false);assert.ok(result.bundle_assignment);
   });
 });
-test('automatic route exposes a new loose reviewed file as a manual choice without web fallback',async()=>{
+test('automatic route matches a numbered work-bound loose file without creating episode rows',async()=>{
   const rows=loose('Route new loose work',{'07.srt':srt('manual reviewed episode seven')});
   await withAutomaticRoute(rows,async get=>{
     const result=await get(7);
     assert.equal(result.success,true);
     assert.equal(result.subtitles[0].sourceProvider,'anissia');
     assert.ok(result.subtitles[0].content.includes('manual reviewed episode seven'));
-    assert.equal(result.subtitles[0].episodeConfirmed,false);
-    assert.equal(result.needs_manual_subtitle_choice,true);
+    assert.equal(result.subtitles[0].episodeConfirmed,true);
+    assert.equal(result.needs_manual_subtitle_choice,false);
+    assert.deepEqual(rows[0].confirmed_episodes,[]);
   });
 });
 test('automatic route continues an explicitly selected reviewed set with the configured source start',async()=>{
@@ -461,3 +471,46 @@ test('Postgres selects only current exact work links and relevant confirmed epis
   }
 });
 
+
+test('reviewed default follows a filename family and explicit replacement persists across episodes',async()=>{
+  for(const layout of ['loose','zip']) {
+    const entries=Object.fromEntries([1,2,3].flatMap(ep=>[[`${ep}화.srt`,srt(`Korean reviewed ${ep}`)],
+      [`s1${String(ep).padStart(2,'0')}.srt`,srt(`compact reviewed ${ep}`)],
+      [`${String(ep).padStart(2,'0')}.srt`,srt(`bare reviewed ${ep}`)]]));
+    const rows=layout==='loose'?loose('Reviewed default '+layout,entries):pack('reviewed-default-'+layout,entries);
+    const before=JSON.stringify(rows);
+    await withAutomaticRoute(rows,async get=>{
+      const first=await get(1);assert.equal(first.count,1);assert.equal(first.needs_manual_subtitle_choice,false);
+      assert.ok(first.bundle_assignment);
+      const next=await get(2);assert.equal(next.count,1);
+      assert.equal(next.subtitles[0].sourceBundleKey,first.subtitles[0].sourceBundleKey);
+      assert.equal(next.needs_manual_subtitle_choice,false);
+      const all=await storage.getReviewedSubtitles(request({source:layout==='loose'?'anissia':'aniall',manualSearch:true}));
+      assert.ok(all.subtitles.some(s=>s.content.includes('compact reviewed 1')));
+      const chosen=all.subtitles.find(s=>s.content.includes('compact reviewed 1'));
+      const bundle=require('../src/app/api/anime/subtitle-bundle/route.ts'),{NextRequest}=require('next/server');
+      const response=await bundle.PUT(new NextRequest('http://localhost/api/anime/subtitle-bundle',{method:'PUT',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({animeId:'re_review-test',provider:chosen.sourceProvider,bundleKey:chosen.sourceBundleKey,fileId:chosen.reviewedFileId})}));
+      assert.equal(response.status,200);
+      for(const ep of [2,3]) {
+        const changed=await get(ep);assert.equal(changed.count,1);assert.equal(changed.needs_manual_subtitle_choice,false);
+        assert.ok(changed.subtitles[0].content.includes(`compact reviewed ${ep}`));
+      }
+    });
+    assert.equal(JSON.stringify(rows),before);
+  }
+});
+
+test('reviewed filename tracks keep parenthesized and release-labelled episodes together with legacy scope compatibility',()=>{
+  const identity=require('../src/lib/subtitleLocalIdentity.ts');
+  for(const filenames of [['Show S1 (1).srt','Show S1 (2).srt'],['Show - 01 (1280x720).srt','Show - 02 (1280x720).srt']]) {
+    const files=pack('track-normalization-'+filenames[0],Object.fromEntries(filenames.map(name=>[name,srt(name)])));
+    const keys=files.map(storage.reviewedBundleKey);assert.equal(keys[0],keys[1]);
+    const scope=identity.parseBundleScope(keys[0]);
+    const legacy=identity.bundleScopeKey({...scope,track:undefined});
+    assert.ok(identity.parseBundleScope(legacy));assert.equal(identity.bundleMatchesAssignment(legacy,keys[0]),true);
+    assert.equal(identity.bundleScopesOverlap(legacy,keys[0]),true);
+  }
+  const row={...loose('Short path long identity',{'01.srt':srt('long path track')})[0],member_path:'긴 경로'.repeat(100)+'/01.srt'};
+  assert.ok(identity.parseBundleScope(storage.reviewedBundleKey(row)));
+});
