@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, realpath, stat, writeFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { getDb, initDb } from "@/lib/db";
 import { getLocalSubtitleNameEntries, refreshLocalSubtitleNameIndex } from "@/lib/localSubtitleNameIndex";
@@ -148,8 +148,8 @@ export async function saveAdminSubtitleLink(values: {
   if (!safeSubtitlePath(values.relativePath, values.type) || !parseWorkId(values.animeId) ||
     !KINDS.includes(values.kind) || !Number.isInteger(values.season) || values.season < 1 || values.season > 99)
     throw new Error("파일·작품·시즌 정보를 확인해 주세요.");
-  if (!(await verifiedLocalEntry(values.relativePath, values.type)))
-    throw new Error("Pi에 해당 폴더/ZIP이 없거나 접근할 수 없습니다.");
+  const current = await verifiedLocalEntry(values.relativePath, values.type);
+  if (!current) throw new Error("Pi에 해당 폴더/ZIP이 없거나 접근할 수 없습니다.");
   const id = parseWorkId(values.animeId)!;
   const sql = await ensureSubtitleLinksTable();
   const rows = await sql`SELECT payload FROM anime_catalog_entries WHERE source=${id.source} AND source_record_id=${id.id} LIMIT 1`;
@@ -157,14 +157,67 @@ export async function saveAdminSubtitleLink(values: {
   const payload = rows[0].payload;
   const title = String(payload?.title_ko || payload?.title_english || payload?.title_native ||
     payload?.title_romaji || id.id).slice(0, 300);
-  await sql`INSERT INTO anime_admin_subtitle_links (
-    relative_path, entry_type, anime_id, work_title, subtitle_kind, season, updated_by
-  ) VALUES (${values.relativePath},${values.type},${values.animeId},${title},${values.kind},${values.season},${values.admin})
-  ON CONFLICT(relative_path) DO UPDATE SET
-    entry_type=EXCLUDED.entry_type, anime_id=EXCLUDED.anime_id, work_title=EXCLUDED.work_title,
-    subtitle_kind=EXCLUDED.subtitle_kind, season=EXCLUDED.season, updated_by=EXCLUDED.updated_by,
-    updated_at=CURRENT_TIMESTAMP`;
-  return { relativePath: values.relativePath, animeId: values.animeId, title };
+
+  const sourceRoot = values.relativePath.split("/")[0];
+  const destinationRoot = path.join(storageRoot(), sourceRoot);
+  const target = await allocateCanonicalFolder(destinationRoot, title,
+    values.type === "folder" ? current.full : undefined);
+
+  // Preflight: never rename a folder holding somebody else's stored links or
+  // legacy per-account player assignment. Those pointers would become stale.
+  if (values.type === "folder" && target.full !== current.full) {
+    const nested = await sql`SELECT relative_path FROM anime_admin_subtitle_links
+      WHERE relative_path LIKE ${values.relativePath + "/%"} AND relative_path != ${values.relativePath} LIMIT 1`;
+    if (nested.length) throw new Error("하위 ZIP에 다른 DB 연결이 있어 폴더명을 변경할 수 없습니다.");
+    const users = await sql`SELECT 1 FROM subtitle_bundle_assignments
+      WHERE provider=${sourceRoot.replace("_subtitles", "")}
+        AND bundle_key LIKE ${"%" + values.relativePath.split("/")[1] + "%"} LIMIT 1`;
+    if (users.length) throw new Error("다른 계정의 자막 묶음 지정이 있는 폴더라 이동할 수 없습니다. 새 폴더에 복사한 후 연결해 주세요.");
+  }
+
+  let moved = false, extracted = false;
+  try {
+    if (values.type === "zip") {
+      // Existing Pi ZIP: extract a fresh copy into the canonical work folder,
+      // retaining the original archive unchanged for recovery.
+      await extractZipAsFolder(await readFile(current.full), target.full);
+      extracted = true;
+    } else if (target.full !== current.full) {
+      await rename(current.full, target.full);
+      moved = true;
+    }
+    const relativePath = [sourceRoot, path.basename(target.full)].join("/");
+    const former = values.relativePath;
+    // Two work IDs may not silently claim the same physical folder.
+    const owners = await sql`SELECT relative_path,anime_id FROM anime_admin_subtitle_links
+      WHERE relative_path IN (${relativePath},${former}) FOR UPDATE`;
+    const newOwner = owners.find(row => row.relative_path === relativePath);
+    if (newOwner && newOwner.anime_id !== values.animeId && former !== relativePath)
+      throw new Error("같은 폴더에 다른 작품 연결이 있습니다.");
+
+    await sql.begin(async tx => {
+      await tx`DELETE FROM anime_admin_subtitle_links WHERE relative_path=${former}`;
+      await tx`INSERT INTO anime_admin_subtitle_links (
+        relative_path, entry_type, anime_id, work_title, subtitle_kind, season, updated_by
+      ) VALUES (${relativePath},'folder',${values.animeId},${title},${values.kind},${values.season},${values.admin})
+      ON CONFLICT(relative_path) DO UPDATE SET
+        entry_type=EXCLUDED.entry_type, anime_id=EXCLUDED.anime_id, work_title=EXCLUDED.work_title,
+        subtitle_kind=EXCLUDED.subtitle_kind, season=EXCLUDED.season, updated_by=EXCLUDED.updated_by,
+        updated_at=CURRENT_TIMESTAMP`;
+    });
+    try { await refreshLocalSubtitleNameIndex(storageRoot()); }
+    catch (error) { console.warn("[Admin subtitle index refresh deferred]", error); }
+    return { relativePath, type: "folder" as const, animeId: values.animeId, title };
+  } catch (error) {
+    // Never delete an existing Pi archive on failure.
+    if (moved) {
+      try { await rename(target.full, current.full); } catch (rollback) {
+        console.error("[Admin subtitle folder rename rollback failed]", rollback);
+      }
+    }
+    if (extracted) await rm(target.full, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 export async function deleteAdminSubtitleLink(relativePath: string) {
@@ -172,45 +225,119 @@ export async function deleteAdminSubtitleLink(relativePath: string) {
   await sql`DELETE FROM anime_admin_subtitle_links WHERE relative_path=${relativePath}`;
 }
 
-const cleanName = (raw: string) => raw.normalize("NFKC").replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
-  .replace(/\s+/g, " ").replace(/^\.+|\.+$/g, "").slice(0, 110).trim() || "자막";
+const cleanName = (raw: string) => raw.normalize("NFKC").replace(/[<>:"/\\|?*\\x00-\\x1f]/g, "_")
+  .replace(/\\s+/g, " ").replace(/^\\.+|\\.+$/g, "").slice(0, 110).trim() || "자막";
 export function safeUploadSegments(value: unknown): string[] | null {
-  if (typeof value !== "string" || value.length > 700 || value.startsWith("/") || value.includes("\\") || value.includes("\0"))
+  if (typeof value !== "string" || value.length > 700 || value.startsWith("/") ||
+    value.includes("\\\\") || value.includes("\\0"))
     return null;
   const parts = value.split("/");
-  if (parts.length < 1 || parts.length > 8 || parts.some(p => !p || p === "." || p === ".." || p.startsWith(".") || p.length > 180))
+  if (parts.length < 1 || parts.length > 8 ||
+    parts.some(p => !p || p === "." || p === ".." || p.startsWith(".") || p.length > 180))
     return null;
   return parts.map(cleanName);
 }
 
-/** Uploaded files are sandboxed under a unique Anissia-local work folder. */
+async function exists(target: string): Promise<boolean> {
+  try { await lstat(target); return true; }
+  catch (error: any) { if (error.code === "ENOENT") return false; throw error; }
+}
+
+/** Use exactly the DB title unless already occupied; then add a safe suffix. */
+export async function allocateCanonicalFolder(providerRoot: string, dbTitle: string, current?: string) {
+  const base = cleanName(dbTitle);
+  for (let n = 1; n <= 999; n++) {
+    const name = n === 1 ? base : base + " (" + n + ")";
+    const full = path.join(providerRoot, name);
+    if (full === current || !(await exists(full))) return { full, name };
+  }
+  throw new Error("같은 작품명의 폴더가 너무 많습니다.");
+}
+
+/** Extract bounded subtitle-only ZIP entries. Reject unsafe members, never overwrite. */
+export async function extractZipAsFolder(bytes: Buffer, destination: string) {
+  const { zip, entries } = inspectSubtitleArchive(bytes);
+  const names = entries.map(entry => safeUploadSegments(entry.filename));
+  if (names.some(name => !name)) throw new Error("ZIP 안에 안전하지 않은 경로가 있습니다.");
+  const seen = new Set<string>();
+  for (const parts of names as string[][]) {
+    const relative = parts.join("/");
+    if (seen.has(relative)) throw new Error("ZIP 안에 중복된 자막 파일명이 있습니다.");
+    seen.add(relative);
+  }
+  await mkdir(destination, { recursive: false });
+  try {
+    for (let i = 0; i < entries.length; i++) {
+      const rel = names[i] as string[];
+      const full = path.join(destination, ...rel);
+      await mkdir(path.dirname(full), { recursive: true });
+      await writeFile(full, zip.getEntries()[entries[i].index].getData(), { flag: "wx" });
+    }
+  } catch (error) {
+    await rm(destination, { force: true, recursive: true });
+    throw error;
+  }
+  return entries.length;
+}
+
+/** ZIP uploads are extracted upon receipt; uploaded folders keep relative paths.
+ * Both get a temporary name until the final DB work title is known.
+ */
 export async function uploadAdminSubtitles(files: Array<{ name: string; bytes: Buffer }>, label: string) {
   if (!files.length || files.length > 120) throw new Error("파일은 한 번에 120개까지 가능합니다.");
-  if (files.some(f => !safeUploadSegments(f.name) || f.bytes.length < 1 || f.bytes.length > (f.name.toLowerCase().endsWith('.zip') ? 32 : 16) * 1024 * 1024) ||
+  if (files.some(f => !safeUploadSegments(f.name) || f.bytes.length < 1 ||
+      f.bytes.length > (f.name.toLowerCase().endsWith(".zip") ? 32 : 16) * 1024 * 1024) ||
     files.reduce((n, f) => n + f.bytes.length, 0) > 48 * 1024 * 1024)
     throw new Error("파일 경로 또는 업로드 용량이 허용 범위를 넘었습니다.");
-  if (files.some(f => !/\.(?:zip|ass|ssa|smi|srt|vtt)$/i.test(f.name))) throw new Error("자막 및 ZIP만 업로드할 수 있어요.");
-  for (const file of files.filter(f => /\.zip$/i.test(f.name))) {
-    if (!file.bytes.subarray(0, 2).equals(Buffer.from("PK"))) throw new Error("ZIP 파일 형식을 확인해 주세요.");
-    inspectSubtitleArchive(file.bytes);
-  }
-  const folder = cleanName(label) + " (수동-" + randomUUID().slice(0, 8) + ")";
+  if (files.some(f => !/\\.(?:zip|ass|ssa|smi|srt|vtt)$/i.test(f.name)))
+    throw new Error("자막 및 ZIP만 업로드할 수 있어요.");
   const root = storageRoot();
   const providerRoot = path.join(root, "anissia_subtitles");
   await mkdir(providerRoot, { recursive: true });
   const actualProviderRoot = await realpath(providerRoot);
   if (!actualProviderRoot.startsWith((await realpath(root)) + path.sep))
     throw new Error("자막 저장소 경로를 확인해 주세요.");
+
+  const folder = cleanName(label) + " (수동-" + randomUUID().slice(0, 8) + ")";
   const dest = path.join(actualProviderRoot, folder);
   await mkdir(dest, { recursive: false });
-  for (const file of files) {
-    const segments = safeUploadSegments(file.name)!;
-    const relative = path.join(dest, ...segments);
-    await mkdir(path.dirname(relative), { recursive: true });
-    await writeFile(relative, file.bytes, { flag: "wx" });
+  let count = 0;
+  try {
+    for (const file of files) {
+      const segments = safeUploadSegments(file.name)!;
+      if (/\\.zip$/i.test(file.name)) {
+        if (!file.bytes.subarray(0, 2).equals(Buffer.from("PK")))
+          throw new Error("ZIP 파일 형식이 올바르지 않습니다.");
+        const basename = cleanName(path.basename(file.name).replace(/\\.zip$/i, ""));
+        // Multiple uploaded ZIPs stay separated by release name; a single ZIP
+        // is unpacked straight into its pending work directory.
+        const parent = files.length === 1 ? dest : path.join(dest, ...segments.slice(0,-1), basename);
+        if (parent === dest) {
+          const { zip, entries } = inspectSubtitleArchive(file.bytes);
+          for (const entry of entries) {
+            const member = safeUploadSegments(entry.filename);
+            if (!member) throw new Error("ZIP 내부 파일 경로가 올바르지 않습니다.");
+            const full = path.join(dest, ...member);
+            await mkdir(path.dirname(full), { recursive: true });
+            await writeFile(full, zip.getEntries()[entry.index].getData(), { flag: "wx" });
+            count++;
+          }
+        } else count += await extractZipAsFolder(file.bytes, parent);
+      } else {
+        const full = path.join(dest, ...segments);
+        await mkdir(path.dirname(full), { recursive: true });
+        await writeFile(full, file.bytes, { flag: "wx" });
+        count++;
+      }
+    }
+    if (!count) throw new Error("유효한 자막이 없습니다.");
+  } catch (error) {
+    await rm(dest, { recursive: true, force: true });
+    throw error;
   }
-  await refreshLocalSubtitleNameIndex(root);
-  return { relativePath: "anissia_subtitles/" + folder, type: "folder" as const, count: files.length };
+  try { await refreshLocalSubtitleNameIndex(root); }
+  catch (error) { console.warn("[Admin ZIP extraction index refresh deferred]", error); }
+  return { relativePath: "anissia_subtitles/" + folder, type: "folder" as const, count };
 }
 
 async function collectSubtitleFiles(rootDir: string) {
