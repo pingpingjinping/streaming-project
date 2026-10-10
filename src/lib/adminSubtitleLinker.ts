@@ -22,10 +22,14 @@ const storageRoot = () => path.resolve(process.env.SUBTITLE_STORAGE_DIR || path.
 
 export function parseWorkId(value: unknown): { source: string; id: string } | null {
   if (typeof value !== "string" || value.length > 150) return null;
-  const match = /^(ani_([1-9]\d*)|re_([a-zA-Z0-9_-]+)|db_(AniList|Onnada)_([a-zA-Z0-9_-]+))$/.exec(value);
-  return match ? match[2] ? { source: "Anissia", id: match[2] }
-    : match[3] ? { source: "ReAnime", id: match[3] }
-      : { source: match[4], id: match[5] } : null;
+  const anissia=/^ani_([1-9]\d*)$/.exec(value);
+  if(anissia)return {source:"Anissia",id:anissia[1]};
+  const reanime=/^re_([a-zA-Z0-9_-]+)$/.exec(value);
+  if(reanime)return {source:"ReAnime",id:reanime[1]};
+  const anikoto=/^ak_([a-zA-Z0-9_-]+)$/.exec(value);
+  if(anikoto)return {source:"Anikoto",id:anikoto[1]};
+  const db=/^db_(AniList|Onnada)_([a-zA-Z0-9_-]+)$/.exec(value);
+  return db?{source:db[1],id:db[2]}:null;
 }
 
 export function safeSubtitlePath(value: unknown, type: unknown): value is string {
@@ -120,21 +124,28 @@ function compatibleSourceRows(a:any,b:any):boolean {
 /** Search by title, expand only reviewed ID edges, then hydrate member titles.
  * This is admin-only and executes on explicit search, not on each keystroke.
  */
-export async function findCatalogWorks(q: string) {
+export async function findCatalogWorks(q: string, exactAnimeId?: string) {
   const query=q.normalize("NFKC").trim().slice(0,120);
-  if(query.length<2)return [];
+  const exact=exactAnimeId?parseWorkId(exactAnimeId):null;
+  if(query.length<2&&!exact)return [];
   const sql=getDb();if(!sql)return [];
   const escaped=query.replace(/[\\%_]/g,"\\$&");
   const pattern="%"+escaped+"%";
+  const exactCore=exact&&exact.source!=="Anikoto"
+    ? sql`SELECT source,source_record_id,payload FROM anime_catalog_entries
+      WHERE source=${exact.source} AND source_record_id=${exact.id} LIMIT 1` : null;
+  const exactAk=exact&&exact.source==="Anikoto"
+    ? sql`SELECT anikoto_id,payload FROM anime_anikoto_catalog
+      WHERE anikoto_id=${exact.id} LIMIT 1` : null;
   const [matched,akMatched,korean,rematches,manual,crossRe,anilinks]=await Promise.all([
-    sql`SELECT source,source_record_id,payload FROM anime_catalog_entries
+    exactCore || sql`SELECT source,source_record_id,payload FROM anime_catalog_entries
       WHERE source IN ('Anissia','ReAnime','AniList','Onnada')
         AND (source_record_id=${query}
           OR CONCAT_WS(' ',payload->>'title_ko',payload->>'title_native',
             payload->>'title_romaji',payload->>'title_english') ILIKE ${pattern})
       ORDER BY CASE source WHEN 'Anissia' THEN 0 WHEN 'ReAnime' THEN 1 ELSE 2 END,
         payload->>'year' DESC NULLS LAST LIMIT 120`,
-    sql`SELECT anikoto_id,payload FROM anime_anikoto_catalog
+    exactAk || sql`SELECT anikoto_id,payload FROM anime_anikoto_catalog
       WHERE anikoto_id=${query} OR CONCAT_WS(' ',payload->>'title',payload->>'name',
         payload->>'title_english',payload->>'english_title',
         payload->>'title_romaji',payload->>'title_native') ILIKE ${pattern}
@@ -187,7 +198,7 @@ export async function findCatalogWorks(q: string) {
   };
   const preliminary=buildReviewedWorkGroups({seeds,catalog:[
     ...matched.map(sourceWork),...akMatched.map(row=>sourceWork({...row,source:"Anikoto"}))],
-    ...evidence,limit:100});
+    ...evidence,limit:100,hydrateMissing:true});
   const refs=[...new Set(preliminary.flatMap(group=>group.members)
     .filter(m=>m.source!=="Anikoto").map(m=>m.source+":"+m.id))];
   const akIds=[...new Set(preliminary.flatMap(group=>group.members)
@@ -257,7 +268,9 @@ export async function saveAdminSubtitleLink(values: {
   if (!current) throw new Error("Pi에 해당 폴더/ZIP이 없거나 접근할 수 없습니다.");
   const id = parseWorkId(values.animeId)!;
   const sql = await ensureSubtitleLinksTable();
-  const rows = await sql`SELECT payload FROM anime_catalog_entries WHERE source=${id.source} AND source_record_id=${id.id} LIMIT 1`;
+  const rows = id.source==="Anikoto"
+    ? await sql`SELECT payload FROM anime_anikoto_catalog WHERE anikoto_id=${id.id} LIMIT 1`
+    : await sql`SELECT payload FROM anime_catalog_entries WHERE source=${id.source} AND source_record_id=${id.id} LIMIT 1`;
   if (!rows.length) throw new Error("작품 DB에 존재하지 않는 ID입니다.");
   const payload = rows[0].payload;
   const title = String(payload?.title_ko || payload?.title_english || payload?.title_native ||
