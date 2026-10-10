@@ -225,11 +225,11 @@ export async function deleteAdminSubtitleLink(relativePath: string) {
   await sql`DELETE FROM anime_admin_subtitle_links WHERE relative_path=${relativePath}`;
 }
 
-const cleanName = (raw: string) => raw.normalize("NFKC").replace(/[<>:"/\\|?*\\x00-\\x1f]/g, "_")
-  .replace(/\\s+/g, " ").replace(/^\\.+|\\.+$/g, "").slice(0, 110).trim() || "자막";
+const cleanName = (raw: string) => raw.normalize("NFKC").replace(/[<>:"\/\\|?*\x00-\x1f]/g, "_")
+  .replace(/\s+/g, " ").replace(/^\.+|\.+$/g, "").slice(0, 110).trim() || "자막";
 export function safeUploadSegments(value: unknown): string[] | null {
   if (typeof value !== "string" || value.length > 700 || value.startsWith("/") ||
-    value.includes("\\\\") || value.includes("\\0"))
+    value.includes("\\") || value.includes("\0"))
     return null;
   const parts = value.split("/");
   if (parts.length < 1 || parts.length > 8 ||
@@ -289,7 +289,7 @@ export async function uploadAdminSubtitles(files: Array<{ name: string; bytes: B
       f.bytes.length > (f.name.toLowerCase().endsWith(".zip") ? 32 : 16) * 1024 * 1024) ||
     files.reduce((n, f) => n + f.bytes.length, 0) > 48 * 1024 * 1024)
     throw new Error("파일 경로 또는 업로드 용량이 허용 범위를 넘었습니다.");
-  if (files.some(f => !/\\.(?:zip|ass|ssa|smi|srt|vtt)$/i.test(f.name)))
+  if (files.some(f => !/\.(?:zip|ass|ssa|smi|srt|vtt)$/i.test(f.name)))
     throw new Error("자막 및 ZIP만 업로드할 수 있어요.");
   const root = storageRoot();
   const providerRoot = path.join(root, "anissia_subtitles");
@@ -305,10 +305,10 @@ export async function uploadAdminSubtitles(files: Array<{ name: string; bytes: B
   try {
     for (const file of files) {
       const segments = safeUploadSegments(file.name)!;
-      if (/\\.zip$/i.test(file.name)) {
+      if (/\.zip$/i.test(file.name)) {
         if (!file.bytes.subarray(0, 2).equals(Buffer.from("PK")))
           throw new Error("ZIP 파일 형식이 올바르지 않습니다.");
-        const basename = cleanName(path.basename(file.name).replace(/\\.zip$/i, ""));
+        const basename = cleanName(path.basename(file.name).replace(/\.zip$/i, ""));
         // Multiple uploaded ZIPs stay separated by release name; a single ZIP
         // is unpacked straight into its pending work directory.
         const parent = files.length === 1 ? dest : path.join(dest, ...segments.slice(0,-1), basename);
