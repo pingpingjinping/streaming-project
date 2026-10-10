@@ -169,7 +169,7 @@ export default function SubtitleLinkManager() {
               className="block w-full text-xs text-slate-300"/>}
           <p className="text-xs text-slate-400">
             {source === "folder" ? "폴더 내부 경로를 보존해서 올려. Chrome/Whale/Edge에서 폴더 선택 지원." : "ZIP은 압축 해제 없이 그대로 저장해."}
-            {" "}한 번에 최대 120파일 · 총 48MB · 개별 16MB.
+            {" "}한 번에 최대 120파일 · 총 48MB · ZIP 최대 32MB · 일반 파일 16MB.
           </p>
           <button type="button" disabled={busy || !uploaded.length} onClick={()=>void upload()}
             className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold disabled:opacity-50">
