@@ -193,6 +193,23 @@ def load_anikoto_rows(database,entry_rows,catalog_rows):
 
 anikoto_catalog,anikoto_targets,anikoto_lookup=load_anikoto_rows(db,entries,catalog)
 
+release_reviewed = []
+release_members = []
+if db.execute("SELECT 1 FROM sqlite_master WHERE name='pi_reviewed_work_groups' AND type='table'").fetchone():
+    present = set()
+    for group in db.execute("SELECT * FROM pi_reviewed_work_groups ORDER BY group_id"):
+        members = json.loads(group['members_json'])
+        if not isinstance(members,list) or len(members)<2:
+            raise SystemExit("Malformed Pi-reviewed release group")
+        release_reviewed.append(group)
+        for member in members:
+            if not member.startswith('ak_'):
+                if member in present:
+                    raise SystemExit("Overlapping Pi-reviewed release groups: " + member)
+                present.add(member)
+            release_members.append((member,group['group_id']))
+
+
 stream = io.StringIO()
 stream.write('''\nBEGIN;
 CREATE TABLE IF NOT EXISTS anime_catalog_entries (
@@ -244,12 +261,23 @@ CREATE TABLE IF NOT EXISTS anime_anikoto_work_lookup (
 );
 CREATE INDEX IF NOT EXISTS idx_anime_anikoto_lookup_work
  ON anime_anikoto_work_lookup(source,source_record_id);
+CREATE TABLE IF NOT EXISTS anime_release_reviewed_work_groups (
+ group_id TEXT PRIMARY KEY, reviewed_month VARCHAR(7) NOT NULL,
+ title TEXT NOT NULL, kind TEXT NOT NULL, season INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS anime_release_reviewed_work_group_members (
+ member_id TEXT NOT NULL, group_id TEXT NOT NULL REFERENCES anime_release_reviewed_work_groups(group_id),
+ PRIMARY KEY(member_id,group_id)
+);
+CREATE INDEX IF NOT EXISTS idx_release_reviewed_members_group
+ ON anime_release_reviewed_work_group_members(group_id);
 CREATE TEMP TABLE catalog_alias_stage (
  normalized_title VARCHAR(512),original_title TEXT,korean_title TEXT
 );
 TRUNCATE anime_catalog_entries, anime_unmatched_review, anime_korean_catalog,
  anime_reanime_matches, anime_monthly_match_candidates, anime_anikoto_catalog,
- anime_anikoto_work_targets, anime_anikoto_work_lookup;
+ anime_anikoto_work_targets, anime_anikoto_work_lookup,
+ anime_release_reviewed_work_group_members, anime_release_reviewed_work_groups;
 COPY anime_catalog_entries (source,source_record_id,payload) FROM STDIN WITH (FORMAT csv);
 ''')
 writer=csv.writer(stream,lineterminator='\n')
@@ -288,6 +316,12 @@ for row in anikoto_lookup:
       row['anikoto_episode_end'] if row['anikoto_episode_end'] is not None else '\\N',
       row['target_episode_start'] if row['target_episode_start'] is not None else '\\N',
       row['target_episode_end'] if row['target_episode_end'] is not None else '\\N'))
+stream.write('\\.\nCOPY anime_release_reviewed_work_groups (group_id,reviewed_month,title,kind,season) FROM STDIN WITH (FORMAT csv);\n')
+for row in release_reviewed:
+    writer.writerow((row['group_id'],row['reviewed_month'],row['title'],row['kind'],row['season']))
+stream.write('\\.\nCOPY anime_release_reviewed_work_group_members (member_id,group_id) FROM STDIN WITH (FORMAT csv);\n')
+for member,group_id in release_members:
+    writer.writerow((member,group_id))
 stream.write('\\.\nCOPY catalog_alias_stage (normalized_title,original_title,korean_title) FROM STDIN WITH (FORMAT csv);\n')
 for alias in aliases:writer.writerow(alias)
 stream.write('''\\.
@@ -303,4 +337,4 @@ cmd=['docker','compose','exec','-T','db','sh','-c',
 result=subprocess.run(cmd,input=stream.getvalue(),text=True,check=False)
 if result.returncode:
     raise SystemExit(f'Import failed (exit {result.returncode}); transaction rolled back.')
-print(f'Imported {len(entries)} source records {source_counts}, {len(catalog)} Korean titles, {len(reanime_matches)} ReAnime links ({sum(r["anissiaNo"] is not None for r in reanime_matches)} direct subtitles), {len(monthly_candidates)} scored new-work candidates, {len(aliases)} aliases and {len(reviews)} review items; Anikoto {len(anikoto_catalog)} accepted works, {len(anikoto_targets)} target rows, {len(anikoto_lookup)} verified lookup rows. Existing stream links kept.')
+print(f'Imported {len(entries)} source records {source_counts}, {len(catalog)} Korean titles, {len(reanime_matches)} ReAnime links ({sum(r["anissiaNo"] is not None for r in reanime_matches)} direct subtitles), {len(monthly_candidates)} scored new-work candidates, {len(aliases)} aliases and {len(reviews)} review items; Anikoto {len(anikoto_catalog)} accepted works, {len(anikoto_targets)} target rows, {len(anikoto_lookup)} verified lookup rows. Imported {len(release_reviewed)} durable Pi-reviewed source groups; existing administrator/local stream links kept.')

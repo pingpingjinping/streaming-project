@@ -193,7 +193,19 @@ export async function findCatalogWorks(q: string, exactAnimeId?: string) {
       });
     }
   }
+  const releaseRows=await sql`SELECT member_id,group_id FROM anime_release_reviewed_work_group_members
+    ORDER BY group_id,member_id`.catch((error: any)=>{
+    if(error?.code==="42P01")return [];
+    throw error;
+  });
+  const releases=new Map<string,string[]>();
+  for(const row of releaseRows) {
+    const gid=String(row.group_id);
+    if(!releases.has(gid))releases.set(gid,[]);
+    releases.get(gid)!.push(String(row.member_id));
+  }
   const evidence={
+    release:[...releases.values()].map(members=>({members})),
     korean:korean.map(row=>({source:String(row.source) as Source,id:String(row.source_record_id),
       status:String(row.status||""),anilistId:String(row.anilist_id||""),
       reanimeId:String(row.reanime_id||"")})),
