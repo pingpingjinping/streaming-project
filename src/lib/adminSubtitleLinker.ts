@@ -224,12 +224,15 @@ export async function getAdminLinkedSubtitles(animeId: string, episode: number, 
   if (!parseWorkId(animeId)) return [];
   const links = await getAdminSubtitleLinks(animeId);
   const results: Array<{name: string; orig_filename: string; content: string; format: "ASS" | "VTT";
-    is_ass: boolean; sourceProvider: "anissia"; sourceMatchedTitle: string;
+    is_ass: boolean; sourceProvider: "anissia" | "aniall" | "naver"; sourceMatchedTitle: string;
     localArchive: boolean; episodeConfirmed: boolean; verifiedMatch: boolean; adminLinked: boolean}> = [];
   for (const link of links.slice(0, 12)) {
     const verified = await verifiedLocalEntry(link.relativePath, link.type);
     if (!verified) continue;
     const request = { episode, sourceEpisode, season: link.season };
+    const provider = link.relativePath.split("/")[0].replace("_subtitles","") as "anissia" | "aniall" | "naver";
+    // The administrator explicitly selected this work's season.
+    const seasonEvidence = readEpisodeEvidence(link.season + "기");
     const files = link.type === "folder" ? await collectSubtitleFiles(verified.full) : [verified.full];
     for (const file of files.slice(0, 60)) {
       try {
@@ -238,22 +241,23 @@ export async function getAdminLinkedSubtitles(animeId: string, episode: number, 
         if (/\.zip$/i.test(file)) {
           const { zip, entries } = inspectSubtitleArchive(await readFile(file));
           // The linked work/season is explicit; each member must still prove its episode.
-          const selected = selectEpisodeEntries(entries, request, [],
+          const selected = selectEpisodeEntries(entries, request,
+            [seasonEvidence, readEpisodeEvidence(path.basename(file), true)],
             episode === 1 && ["movie", "ova", "special"].includes(link.kind));
           for (const entry of selected.slice(0, 10)) {
             const parsed = decodeSubtitleFile(zip.getEntries()[entry.index].getData(), entry.filename);
             if (parsed?.content) results.push({...parsed, name: "[DB 연결] " + entry.filename,
-              sourceProvider: "anissia", sourceMatchedTitle: link.title,
+              sourceProvider: provider, sourceMatchedTitle: link.title,
               localArchive: true, episodeConfirmed: true, verifiedMatch: true, adminLinked: true});
           }
         } else if (EXT.test(file)) {
           const filename = path.relative(verified.full, file);
           const evidence = readEpisodeEvidence(filename, true);
           if (evidence.conflict || evidence.range || evidence.multipleSeasons || evidence.episodes.length !== 1 ||
-            !selectEpisodeEntries([{ filename }], request).length) continue;
+            !selectEpisodeEntries([{ filename }], request, [seasonEvidence]).length) continue;
           const parsed = decodeSubtitleFile(await readFile(file), filename);
           if (parsed?.content) results.push({...parsed, name: "[DB 연결] " + filename,
-            sourceProvider: "anissia", sourceMatchedTitle: link.title,
+            sourceProvider: provider, sourceMatchedTitle: link.title,
             localArchive: true, episodeConfirmed: true, verifiedMatch: true, adminLinked: true});
         }
         if (results.length >= 15) return results;
