@@ -32,9 +32,16 @@ const sql = (strings,...params)=>{
   ]);
   throw Error("Unexpected SQL " + query);
 };
+const directCode = ts.transpileModule(
+  fs.readFileSync(path.join(__dirname, "../src/lib/catalogDirectPlayback.ts"),"utf8"),
+  {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}
+).outputText;
+const directHelpers={};
+new Function("exports",directCode)(directHelpers);
 const output={};
 new Function("require","exports",code)(
-  id=>id==="@/lib/db"?{getDb:()=>sql}:{}, output,
+  id=>id==="@/lib/db"?{getDb:()=>sql}:
+    id==="@/lib/catalogDirectPlayback"?directHelpers:{}, output,
 );
 const {searchManualSubtitleLinks,mergeManualSubtitleSearchResults}=output;
 
@@ -66,6 +73,7 @@ test("A Cloudflare card matching any member ID is not duplicated",()=>{
   assert.equal(combined.length,1);
   assert.equal(combined[0].id,"db_AniList_101");
   assert.equal(combined[0].source_name,"Pi 자막 연결");
+  assert.equal(combined[0].detail_url,"/anime/re_tora1");
 });
 
 test("Cloudflare misses are added without removing remote result pages",()=>{
