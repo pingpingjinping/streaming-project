@@ -31,12 +31,12 @@ const sql=(parts,...params)=>{
 };
 const obj={};
 new Function("exports","require",code)(obj,id=>{
-  if(id==="./db")return {getDb:()=>sql};
-  if(id==="./providers/reanime")return {getReanimeArtwork:async id=>{
+  if(id==="@/lib/db"||id==="./db")return {getDb:()=>sql};
+  if(id==="@/lib/providers/reanime"||id==="./providers/reanime")return {getReanimeArtwork:async id=>{
     artwork.push("re:"+id);
     return id==="toradora-2008"?{poster:"https://img.example/reanime/toradora.jpg"}:null;
   }};
-  if(id==="./providers/anikoto")return {getAnimeDetail:async id=>{
+  if(id==="@/lib/providers/anikoto"||id==="./providers/anikoto")return {getAnimeDetail:async id=>{
     artwork.push("ak:"+id);return {poster:"https://img.example/anikoto.jpg"};
   }};
   throw Error(id);
