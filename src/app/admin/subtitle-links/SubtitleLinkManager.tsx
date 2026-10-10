@@ -42,11 +42,14 @@ export default function SubtitleLinkManager() {
   const folderRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    // Directory upload is an optional browser capability (Chrome/Whale/Edge).
-    folderRef.current?.setAttribute("webkitdirectory", "");
-    folderRef.current?.setAttribute("directory", "");
     void Promise.all([loadFiles(""), loadLinks()]);
   }, []);
+  useEffect(() => {
+    // Browser directory selection (Chrome/Whale/Edge), mounted only in folder mode.
+    if (source !== "folder") return;
+    folderRef.current?.setAttribute("webkitdirectory", "");
+    folderRef.current?.setAttribute("directory", "");
+  }, [source]);
 
   async function loadFiles(q: string) {
     try {
