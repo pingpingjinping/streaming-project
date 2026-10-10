@@ -203,9 +203,10 @@ if db.execute("SELECT 1 FROM sqlite_master WHERE name='pi_reviewed_work_groups' 
             raise SystemExit("Malformed Pi-reviewed release group")
         release_reviewed.append(group)
         for member in members:
-            if member in present:
-                raise SystemExit("Overlapping Pi-reviewed release groups: " + member)
-            present.add(member)
+            if not member.startswith('ak_'):
+                if member in present:
+                    raise SystemExit("Overlapping Pi-reviewed release groups: " + member)
+                present.add(member)
             release_members.append((member,group['group_id']))
 
 
@@ -265,7 +266,8 @@ CREATE TABLE IF NOT EXISTS anime_release_reviewed_work_groups (
  title TEXT NOT NULL, kind TEXT NOT NULL, season INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS anime_release_reviewed_work_group_members (
- member_id TEXT PRIMARY KEY, group_id TEXT NOT NULL REFERENCES anime_release_reviewed_work_groups(group_id)
+ member_id TEXT NOT NULL, group_id TEXT NOT NULL REFERENCES anime_release_reviewed_work_groups(group_id),
+ PRIMARY KEY(member_id,group_id)
 );
 CREATE INDEX IF NOT EXISTS idx_release_reviewed_members_group
  ON anime_release_reviewed_work_group_members(group_id);
