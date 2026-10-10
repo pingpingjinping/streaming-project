@@ -25,8 +25,14 @@ export async function GET(request: NextRequest) {
   const mode = params.get("mode") || "links";
   const q = (params.get("q") || "").slice(0, 150);
   try {
-    const result = mode === "files" ? await browseLocalEntries(q)
-      : mode === "works" ? await findCatalogWorks(q)
+    if (mode === "files") {
+      const startedAt = Date.now();
+      const result = await browseLocalEntries(q);
+      return NextResponse.json({ success: true, items: result.items, total: result.total,
+        elapsedMs: Date.now() - startedAt,
+      }, { headers: { "Cache-Control": "no-store" } });
+    }
+    const result = mode === "works" ? await findCatalogWorks(q)
       : mode === "links" ? await getAdminSubtitleLinks() : null;
     if (!result) return respond("조회 모드를 확인해 주세요.", 400);
     return NextResponse.json({ success: true, items: result }, { headers: { "Cache-Control": "no-store" } });
