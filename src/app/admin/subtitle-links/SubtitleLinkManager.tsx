@@ -92,7 +92,7 @@ export default function SubtitleLinkManager() {
       uploaded.forEach(file => form.append("files", file));
       const data = await jsonRequest("/api/admin/subtitle-links/upload", { method: "POST", body: form });
       setSelected({ relativePath: data.item.relativePath, type: "folder", name: data.item.relativePath.split("/").pop(), source: "anissia" });
-      setNotice(data.item.count + "개 파일을 Pi에 저장했어. 이제 아래 작품을 선택해 연결할 수 있어.");
+      setNotice(data.item.count + "개 자막을 Pi에 저장했어. ZIP은 압축 해제됐어. DB 작품을 연결하면 폴더명도 자동 변경돼.");
       setUploaded([]);
       await loadFiles("");
     } catch (e) { setError(e instanceof Error ? e.message : "자막 업로드에 실패했습니다."); }
@@ -102,13 +102,16 @@ export default function SubtitleLinkManager() {
     if (!selected || !work || busy) return;
     setBusy(true); setNotice(""); setError("");
     try {
-      await jsonRequest("/api/admin/subtitle-links", {
+      const result = await jsonRequest("/api/admin/subtitle-links", {
         method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ relativePath: selected.relativePath, type: selected.type,
           animeId: work.animeId, kind, season }),
       });
-      setNotice("연결 완료! Pi의 파일은 그대로 두고 관리자 공용 DB에 연결 정보를 저장했어.");
-      await loadLinks();
+      setSelected({ relativePath: result.item.relativePath, type: "folder",
+        name: result.item.relativePath.split("/").pop(), source: selected.source });
+      setNotice("DB 연결 완료! 자막을 " + result.item.title + " 폴더로 정리했어. " +
+        (selected.type === "zip" ? "원본 Pi ZIP은 별도로 유지돼." : ""));
+      await Promise.all([loadLinks(), loadFiles(keyword)]);
     } catch (e) { setError(e instanceof Error ? e.message : "연결에 실패했습니다."); }
     finally { setBusy(false); }
   }
@@ -148,7 +151,7 @@ export default function SubtitleLinkManager() {
           <button type="button" onClick={()=>loadFiles(keyword)} className="rounded-lg bg-purple-600 px-3 py-2 text-sm"><Search className="inline h-4 w-4"/> 검색</button>
           <button type="button" disabled={busy} onClick={()=>void refreshIndex()} className="rounded-lg border border-white/20 px-3 py-2 text-xs">Pi 목록 새로고침</button>
         </div>
-        <p className="text-xs text-slate-400">애니시아·AniAll·Naver 폴더 아래의 기존 ZIP 및 폴더를 보여줘. 폴더 내부 자막·ZIP도 연결 대상에 포함돼.</p>
+        <p className="text-xs text-slate-400">애니시아·AniAll·Naver의 기존 폴더/ZIP 지원. 연결 시 폴더 이름은 DB 작품명으로 변경하고, ZIP은 별도 폴더에 풀어. 다른 사용자의 저장된 자막 지정과 충돌하는 폴더는 이동하지 않아.</p>
         <div className="max-h-72 space-y-1 overflow-y-auto rounded-lg border border-white/10 bg-slate-950/70 p-2">
           {files.length ? files.map(item => <button key={item.relativePath} type="button"
             onClick={()=>setSelected(item)}
@@ -168,7 +171,7 @@ export default function SubtitleLinkManager() {
             <input type="file" ref={folderRef} multiple onChange={e=>setUploaded(Array.from(e.target.files || []))}
               className="block w-full text-xs text-slate-300"/>}
           <p className="text-xs text-slate-400">
-            {source === "folder" ? "폴더 내부 경로를 보존해서 올려. Chrome/Whale/Edge에서 폴더 선택 지원." : "ZIP은 압축 해제 없이 그대로 저장해."}
+            {source === "folder" ? "폴더 내부 경로를 보존해서 올려. Chrome/Whale/Edge에서 폴더 선택 지원." : "ZIP은 압축을 풀어 자막 파일로 저장해."}
             {" "}한 번에 최대 120파일 · 총 48MB · ZIP 최대 32MB · 일반 파일 16MB.
           </p>
           <button type="button" disabled={busy || !uploaded.length} onClick={()=>void upload()}
@@ -215,7 +218,7 @@ export default function SubtitleLinkManager() {
         {busy ? <Loader2 className="mr-2 inline h-4 w-4 animate-spin"/> : <Link2 className="mr-2 inline h-4 w-4"/>}
         자막 ↔ 작품 DB 연결 저장
       </button>
-      <p className="text-xs text-slate-500">작품 ID·시즌을 명시적으로 저장해. 번호가 확실한 자막만 재생 시 자동 연결하며, 회차가 모호한 자막은 임의로 지정하지 않아.</p>
+      <p className="text-xs text-slate-500">저장 시 폴더명을 DB 작품명으로 변경해. 기존 Pi ZIP을 선택하면 새 작품명 폴더에 압축을 풀고 원본 ZIP은 보존해. 같은 이름의 폴더가 있으면 (2), (3)으로 구별하며, 확실한 회차만 자동 연결해.</p>
     </section>
 
     {(notice || error) && <p role="status" className={`rounded-lg p-3 text-xs ${error?"bg-rose-950/50 text-rose-200":"bg-emerald-950/50 text-emerald-200"}`}>{error || notice}</p>}
