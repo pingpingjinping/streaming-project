@@ -6,6 +6,7 @@ import HistoryList, { HistoryItem } from "@/components/HistoryList";
 import ReanimeFeedFallback from "@/components/ReanimeFeedFallback";
 import AnissiaDbSearchFallback from "@/components/AnissiaDbSearchFallback";
 import { prepareAnissiaApiSearch } from "@/lib/anissiaSearchStages";
+import { searchCloudflareAnimeFirst } from "@/lib/cloudflareAnimeSearch";
 import AnikotoCatalogFilters from "@/components/AnikotoCatalogFilters";
 import { cookies } from "next/headers";
 import {
@@ -157,8 +158,12 @@ export default async function HomePage({
     const results = await Promise.allSettled(
       sources.map(async (source) => {
         if (source === 'anissia') {
-          // Fast upstream API first. If its visible results are empty, the
-          // client searches the local multilingual subtitle DB after the page renders.
+          // Cloudflare D1 first. Only a miss/error/timeout checks the live
+          // Anissia API; the pre-existing client DB fallback handles an empty API.
+          if (searchScope === "current") {
+            const cloudflare = await searchCloudflareAnimeFirst(normalizedQuery, page, captionsOnly);
+            if (cloudflare) return { source, result: cloudflare };
+          }
           const fast = await getProvider('anissia').searchAnime(normalizedQuery, page);
           return { source, result: prepareAnissiaApiSearch(fast, captionsOnly).result };
         }
@@ -1223,13 +1228,20 @@ export default async function HomePage({
           <>
             {/* Anime Grid */}
             {items.length > 0 ? (
-              <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-                {items.map((anime, idx) => (
-                  <AnimeCard key={`${anime.id}-${idx}`} anime={anime} />
-                ))}
-              </div>
+              <>
+                <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+                  {items.map((anime, idx) => (
+                    <AnimeCard key={`${anime.id}-${idx}`} anime={anime} />
+                  ))}
+                </div>
+              </>
             ) : needsAnissiaDbFallback ? (
-              <AnissiaDbSearchFallback key={q + ":" + captionsOnly} keyword={q} captionsOnly={captionsOnly} initialPage={page} />
+              <AnissiaDbSearchFallback
+                key={`${q}:${captionsOnly}:${page}`}
+                keyword={q}
+                captionsOnly={captionsOnly}
+                initialPage={page}
+              />
             ) : activeSource === "reanime" && !linkedOnly && tab !== "favorites" ? (
               <ReanimeFeedFallback tab={tab} q={q} genre={genre} page={page} />
             ) : (
