@@ -18,7 +18,7 @@ const context = vm.createContext({
     if (id === "server-only") return {};
     if (id === "node:crypto") return crypto;
     if (id === "node:fs/promises") return require(id);
-    if (id === "node:path") return path;
+    if (id === "node:path") return { ...path, default: path };
     if (id === "@/lib/subtitleUpload") return { inspectSubtitleArchive: bytes => {
       const names = JSON.parse(bytes.toString("utf8").replace(/^PK/, ""));
       return { entries: names.map((filename,index)=>({index,filename})),
