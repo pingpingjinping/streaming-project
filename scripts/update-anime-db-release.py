@@ -26,6 +26,9 @@ REGISTRY_STATE_FILE = Path.home() / ".local/state/streaming-project/anime-db-rev
 CATALOG_SCHEMA_STATE_FILE = Path.home() / ".local/state/streaming-project/anime-db-catalog-import-schema-version"
 REGISTRY_SCHEMA_STATE_FILE = Path.home() / ".local/state/streaming-project/anime-db-registry-import-schema-version"
 IMPORT_SCHEMA_VERSION = "3"
+# Independent catalog schema version: new release-reviewed IDs require a replay
+# even when the catalog asset SHA-256 has not changed since the previous import.
+CATALOG_IMPORT_SCHEMA_VERSION = "4"
 
 
 def has_reviewed_registry(db_path):
@@ -232,7 +235,7 @@ def metadata_digest(asset):
     return value.removeprefix("sha256:") if value.startswith("sha256:") else ""
 
 
-def is_current(asset, digest_state, schema_state):
+def is_current(asset, digest_state, schema_state, required_schema=IMPORT_SCHEMA_VERSION):
     digest = metadata_digest(asset)
     previous = read_state(digest_state)
     schema_previous = read_state(schema_state)
@@ -240,7 +243,7 @@ def is_current(asset, digest_state, schema_state):
         digest
         and previous
         and hmac.compare_digest(previous, digest)
-        and hmac.compare_digest(schema_previous, IMPORT_SCHEMA_VERSION)
+        and hmac.compare_digest(schema_previous, required_schema)
     )
 
 
@@ -284,7 +287,7 @@ def main():
     want_catalog = not args.registry_only
     want_registry = not args.catalog_only
 
-    catalog_current = is_current(catalog_asset, STATE_FILE, CATALOG_SCHEMA_STATE_FILE)
+    catalog_current = is_current(catalog_asset, STATE_FILE, CATALOG_SCHEMA_STATE_FILE, CATALOG_IMPORT_SCHEMA_VERSION)
     registry_source_asset = registry_asset or catalog_asset
     registry_current = is_current(
         registry_source_asset, REGISTRY_STATE_FILE, REGISTRY_SCHEMA_STATE_FILE
@@ -330,7 +333,7 @@ def main():
             if not args.dry_run:
                 run_catalog_importer(catalog_db, repo)
                 write_state(STATE_FILE, catalog_digest)
-                write_state(CATALOG_SCHEMA_STATE_FILE, IMPORT_SCHEMA_VERSION)
+                write_state(CATALOG_SCHEMA_STATE_FILE, CATALOG_IMPORT_SCHEMA_VERSION)
                 print(
                     f"Imported catalog asset updated {catalog_asset.get('updated_at')}."
                 )
