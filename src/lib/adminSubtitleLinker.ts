@@ -7,6 +7,7 @@ import { inspectSubtitleArchive } from "@/lib/subtitleUpload";
 import { decodeSubtitleFile } from "@/lib/subtitles";
 import { readEpisodeEvidence, selectEpisodeEntries } from "@/lib/subtitleEpisodes";
 import { subtitleScope } from "@/lib/subtitleLocalIdentity";
+import { buildReviewedWorkGroups, type WorkRef, type Source, type SourceWork } from "@/lib/adminSubtitleWorkGroups";
 
 const PROVIDERS = ["anissia", "aniall", "naver"] as const;
 const EXT = /\.(?:ass|ssa|smi|srt|vtt)$/i;
@@ -21,10 +22,14 @@ const storageRoot = () => path.resolve(process.env.SUBTITLE_STORAGE_DIR || path.
 
 export function parseWorkId(value: unknown): { source: string; id: string } | null {
   if (typeof value !== "string" || value.length > 150) return null;
-  const match = /^(ani_([1-9]\d*)|re_([a-zA-Z0-9_-]+)|db_(AniList|Onnada)_([a-zA-Z0-9_-]+))$/.exec(value);
-  return match ? match[2] ? { source: "Anissia", id: match[2] }
-    : match[3] ? { source: "ReAnime", id: match[3] }
-      : { source: match[4], id: match[5] } : null;
+  const anissia=/^ani_([1-9]\d*)$/.exec(value);
+  if(anissia)return {source:"Anissia",id:anissia[1]};
+  const reanime=/^re_([a-zA-Z0-9_-]+)$/.exec(value);
+  if(reanime)return {source:"ReAnime",id:reanime[1]};
+  const anikoto=/^ak_([a-zA-Z0-9_-]+)$/.exec(value);
+  if(anikoto)return {source:"Anikoto",id:anikoto[1]};
+  const db=/^db_(AniList|Onnada)_([a-zA-Z0-9_-]+)$/.exec(value);
+  return db?{source:db[1],id:db[2]}:null;
 }
 
 export function safeSubtitlePath(value: unknown, type: unknown): value is string {
@@ -72,6 +77,14 @@ export async function ensureSubtitleLinksTable() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       )`;
       await sql`CREATE INDEX IF NOT EXISTS idx_anime_admin_subtitle_links_work ON anime_admin_subtitle_links(anime_id)`;
+      await sql`CREATE TABLE IF NOT EXISTS anime_admin_subtitle_link_members (
+        relative_path TEXT NOT NULL REFERENCES anime_admin_subtitle_links(relative_path)
+          ON DELETE CASCADE ON UPDATE CASCADE,
+        anime_id VARCHAR(150) NOT NULL,
+        PRIMARY KEY (relative_path, anime_id)
+      )`;
+      await sql`CREATE INDEX IF NOT EXISTS idx_anime_admin_subtitle_link_members_work
+        ON anime_admin_subtitle_link_members(anime_id)`;
     })().catch(error => {
       subtitleLinkSchemaReady = null;
       throw error;
@@ -81,27 +94,139 @@ export async function ensureSubtitleLinksTable() {
   return sql;
 }
 
-export async function findCatalogWorks(q: string) {
-  const query = q.normalize("NFKC").trim().slice(0, 120);
-  if (query.length < 2) return [];
-  const sql = getDb();
-  if (!sql) return [];
-  const escaped = query.replace(/[\\%_]/g, "\\$&");
-  const pattern = "%" + escaped + "%";
-  const rows = await sql`SELECT source, source_record_id, payload
-    FROM anime_catalog_entries
-    WHERE source IN ('Anissia','ReAnime','AniList','Onnada')
-      AND (source_record_id = ${query} OR
-        CONCAT_WS(' ',payload->>'title_ko',payload->>'title_native',payload->>'title_romaji',payload->>'title_english') ILIKE ${pattern})
-    ORDER BY CASE source WHEN 'Anissia' THEN 0 WHEN 'ReAnime' THEN 1 ELSE 2 END,
-      payload->>'year' DESC NULLS LAST
-    LIMIT 40`;
-  return rows.map(row => {
-    const source = String(row.source), id = String(row.source_record_id);
-    const animeId = source === "Anissia" ? "ani_" + id : source === "ReAnime" ? "re_" + id : "db_" + source + "_" + id;
-    return { animeId, source, title: String(row.payload?.title_ko || row.payload?.title_english ||
-      row.payload?.title_native || row.payload?.title_romaji || id), year: row.payload?.year || "" };
-  });
+function sourceWork(row: any): SourceWork {
+  const source=String(row.source) as Source, id=String(row.source_record_id || row.anikoto_id);
+  const payload=typeof row.payload==="object" && row.payload!==null ? row.payload : {};
+  const title=String(payload.title_ko || payload.title || payload.name ||
+    payload.title_english || payload.english_title || payload.title_native ||
+    payload.title_romaji || payload.romaji_title || id);
+  return {source,id,animeId:source==="Anissia"?"ani_"+id:source==="ReAnime"?"re_"+id
+    :source==="Anikoto"?"ak_"+id:"db_"+source+"_"+id,
+    title,year:String(payload.year || payload.release_year || ""),
+    format:String(payload.format || "")};
+}
+function jsonField(raw: unknown): any {
+  if(raw && typeof raw==="object")return raw;
+  if(typeof raw==="string")try{return JSON.parse(raw)}catch{}
+  return {};
+}
+const normalizedIdentityTitle=(v:unknown)=>String(v||"").normalize("NFKC").toLocaleLowerCase("en")
+  .replace(/[^\p{L}\p{N}]/gu,"");
+function compatibleSourceRows(a:any,b:any):boolean {
+  const ay=String(a.year||""),by=String(b.year||"");
+  const af=String(a.format||"").toUpperCase(),bf=String(b.format||"").toUpperCase();
+  if((ay && by && ay!==by) || (af && bf && af!==bf))return false;
+  const titles=(row:any)=>new Set(["title_ko","title_native","title_romaji","title_english"]
+    .map(k=>normalizedIdentityTitle(row[k])).filter(t=>t.length>=4));
+  const t1=titles(a),t2=titles(b);
+  if(![...t1].some(t=>t2.has(t)))return false;
+  const count=(row:any)=>{
+    const meta=jsonField(row.source_metadata_json);
+    const value=meta.episodes||meta.episodes_total||meta.onnada_episodes;
+    const n=Number(value);return Number.isInteger(n)&&n>0?n:0;
+  };
+  const ac=count(a),bc=count(b);
+  return !ac || !bc || ac===bc;
+}
+
+/** Search by title, expand only reviewed ID edges, then hydrate member titles.
+ * This is admin-only and executes on explicit search, not on each keystroke.
+ */
+export async function findCatalogWorks(q: string, exactAnimeId?: string) {
+  const query=q.normalize("NFKC").trim().slice(0,120);
+  const exact=exactAnimeId?parseWorkId(exactAnimeId):null;
+  if(query.length<2&&!exact)return [];
+  const sql=getDb();if(!sql)return [];
+  const escaped=query.replace(/[\\%_]/g,"\\$&");
+  const pattern="%"+escaped+"%";
+  await initDb();
+  const exactCore=exact&&exact.source!=="Anikoto"
+    ? sql`SELECT source,source_record_id,payload FROM anime_catalog_entries
+      WHERE source=${exact.source} AND source_record_id=${exact.id} LIMIT 1` : exact ? Promise.resolve([]) : null;
+  const exactAk=exact&&exact.source==="Anikoto"
+    ? sql`SELECT anikoto_id,payload FROM anime_anikoto_catalog
+      WHERE anikoto_id=${exact.id} LIMIT 1` : exact ? Promise.resolve([]) : null;
+  const [matched,akMatched,korean,rematches,manual,crossRe,anilinks]=await Promise.all([
+    exactCore || sql`SELECT source,source_record_id,payload FROM anime_catalog_entries
+      WHERE source IN ('Anissia','ReAnime','AniList','Onnada')
+        AND (source_record_id=${query}
+          OR CONCAT_WS(' ',payload->>'title_ko',payload->>'title_native',
+            payload->>'title_romaji',payload->>'title_english') ILIKE ${pattern})
+      ORDER BY CASE source WHEN 'Anissia' THEN 0 WHEN 'ReAnime' THEN 1 ELSE 2 END,
+        payload->>'year' DESC NULLS LAST LIMIT 120`,
+    exactAk || sql`SELECT anikoto_id,payload FROM anime_anikoto_catalog
+      WHERE anikoto_id=${query} OR CONCAT_WS(' ',payload->>'title',payload->>'name',
+        payload->>'title_english',payload->>'english_title',
+        payload->>'title_romaji',payload->>'title_native') ILIKE ${pattern}
+      LIMIT 40`,
+    sql`SELECT source,source_record_id,payload->>'status' AS status,
+        payload->>'anilistId' AS anilist_id,payload->>'reanimeId' AS reanime_id
+      FROM anime_korean_catalog WHERE payload->>'status' IN ('검토된 사항','자동확정')`,
+    sql`SELECT reanime_id,anissia_no,review_status FROM anime_reanime_matches
+      WHERE anissia_no IS NOT NULL AND review_status IN ('검토된 사항','자동확정')`,
+    sql`SELECT reanime_id,anissia_no FROM anime_work_match_overrides`,
+    sql`SELECT source_record_id,payload FROM anime_catalog_entries
+      WHERE source='ReAnime' AND payload->>'cross_source_ids_json' LIKE '%anilist_ids%'`,
+    sql`SELECT source,source_record_id,anikoto_id,link_status,mapping_kind
+      FROM anime_anikoto_work_lookup
+      WHERE link_status IN ('reviewed','automatic','multi_reviewed')`,
+  ]);
+  const seeds:WorkRef[]=[...matched.map(x=>({source:String(x.source) as Source,id:String(x.source_record_id)})),
+    ...akMatched.map(x=>({source:"Anikoto" as const,id:String(x.anikoto_id)}))];
+  if(!seeds.length)return [];
+  // A declared AniList ID from ReAnime alone is not enough to prove identity.
+  const cross:Array<{reanimeId:string;anilistId:string;compatible:boolean}>=[];
+  const wantedIds=[...new Set(crossRe.flatMap(row=>{
+    const parsed=jsonField(row.payload?.cross_source_ids_json);
+    return Array.isArray(parsed.anilist_ids)?parsed.anilist_ids.map(String):[];
+  }))].filter(id=>id.length && id.length<100);
+  const anilist=wantedIds.length?await sql`SELECT source_record_id,payload FROM anime_catalog_entries
+    WHERE source='AniList' AND source_record_id=ANY(${wantedIds}::text[])`:[];
+  const byAni=new Map(anilist.map(row=>[String(row.source_record_id),row.payload]));
+  for(const row of crossRe) {
+    const parsed=jsonField(row.payload?.cross_source_ids_json);
+    const ids=Array.isArray(parsed.anilist_ids)?parsed.anilist_ids:[];
+    for(const id of ids.slice(0,12)) {
+      const aid=String(id),other=byAni.get(aid);
+      if(other && compatibleSourceRows(row.payload,other))cross.push({
+        reanimeId:String(row.source_record_id),anilistId:aid,compatible:true,
+      });
+    }
+  }
+  const evidence={
+    korean:korean.map(row=>({source:String(row.source) as Source,id:String(row.source_record_id),
+      status:String(row.status||""),anilistId:String(row.anilist_id||""),
+      reanimeId:String(row.reanime_id||"")})),
+    reanime:rematches.map(row=>({reanimeId:String(row.reanime_id),
+      anissiaNo:Number(row.anissia_no),reviewStatus:String(row.review_status)})),
+    manual:manual.map(row=>({reanimeId:String(row.reanime_id),anissiaNo:Number(row.anissia_no)})),
+    cross,
+    anikoto:anilinks.map(row=>({anikotoId:String(row.anikoto_id),
+      target:{source:String(row.source) as Source,id:String(row.source_record_id)},
+      status:String(row.link_status),mappingKind:String(row.mapping_kind||"")}))
+  };
+  const preliminary=buildReviewedWorkGroups({seeds,catalog:[
+    ...matched.map(sourceWork),...akMatched.map(row=>sourceWork({...row,source:"Anikoto"}))],
+    ...evidence,limit:100,hydrateMissing:true});
+  const refs=[...new Set(preliminary.flatMap(group=>group.members)
+    .filter(m=>m.source!=="Anikoto").map(m=>m.source+":"+m.id))];
+  const akIds=[...new Set(preliminary.flatMap(group=>group.members)
+    .filter(m=>m.source==="Anikoto").map(m=>m.id))];
+  const [expanded,akExpanded]=await Promise.all([
+    refs.length?sql`SELECT source,source_record_id,payload FROM anime_catalog_entries
+      WHERE (source||':'||source_record_id)=ANY(${refs}::text[])`:Promise.resolve([]),
+    akIds.length?sql`SELECT anikoto_id,payload FROM anime_anikoto_catalog
+      WHERE anikoto_id=ANY(${akIds}::text[])`:Promise.resolve([]),
+  ]);
+  const groups=buildReviewedWorkGroups({seeds,catalog:[
+    ...expanded.map(sourceWork),
+    ...akExpanded.map(row=>sourceWork({...row,source:"Anikoto"}))],
+    ...evidence,limit:100});
+  const order=new Map(seeds.map((ref,i)=>[ref.source+":"+ref.id,i]));
+  return groups.sort((a,b)=>{
+    const rank=(group:typeof a)=>Math.min(...group.members.map(m=>order.get(m.source+":"+m.id)??9999));
+    return rank(a)-rank(b)||a.title.localeCompare(b.title,"ko");
+  }).slice(0,60);
 }
 
 export async function browseLocalEntries(q = "") {
@@ -133,7 +258,11 @@ export async function browseLocalEntries(q = "") {
 
 export async function getAdminSubtitleLinks(animeId?: string) {
   const sql = await ensureSubtitleLinksTable();
-  const rows = animeId ? await sql`SELECT * FROM anime_admin_subtitle_links WHERE anime_id=${animeId} ORDER BY updated_at DESC LIMIT 200`
+  const rows = animeId ? await sql`SELECT l.* FROM anime_admin_subtitle_links l
+      WHERE l.anime_id=${animeId} OR EXISTS (
+        SELECT 1 FROM anime_admin_subtitle_link_members m
+        WHERE m.relative_path=l.relative_path AND m.anime_id=${animeId})
+      ORDER BY l.updated_at DESC LIMIT 200`
     : await sql`SELECT * FROM anime_admin_subtitle_links ORDER BY updated_at DESC LIMIT 300`;
   return rows.map(r => ({
     relativePath: String(r.relative_path), type: String(r.entry_type) as EntryType,
@@ -152,11 +281,22 @@ export async function saveAdminSubtitleLink(values: {
   if (!current) throw new Error("Pi에 해당 폴더/ZIP이 없거나 접근할 수 없습니다.");
   const id = parseWorkId(values.animeId)!;
   const sql = await ensureSubtitleLinksTable();
-  const rows = await sql`SELECT payload FROM anime_catalog_entries WHERE source=${id.source} AND source_record_id=${id.id} LIMIT 1`;
+  const rows = id.source==="Anikoto"
+    ? await sql`SELECT payload FROM anime_anikoto_catalog WHERE anikoto_id=${id.id} LIMIT 1`
+    : await sql`SELECT payload FROM anime_catalog_entries WHERE source=${id.source} AND source_record_id=${id.id} LIMIT 1`;
   if (!rows.length) throw new Error("작품 DB에 존재하지 않는 ID입니다.");
   const payload = rows[0].payload;
-  const title = String(payload?.title_ko || payload?.title_english || payload?.title_native ||
+  let title = String(payload?.title_ko || payload?.title || payload?.name ||
+    payload?.title_english || payload?.title_native ||
     payload?.title_romaji || id.id).slice(0, 300);
+  const reviewedGroups=await findCatalogWorks(id.id,values.animeId);
+  const reviewedGroup=reviewedGroups.find(group=>group.members.some(member=>member.animeId===values.animeId));
+  if(!reviewedGroup)throw new Error("선택한 작품의 확정 연결 정보를 다시 확인해 주세요.");
+  title=reviewedGroup.title.slice(0,300);
+  // Multi-target Anikoto URL must not implicitly attach unrelated seasons.
+  const memberIds=[...new Set(reviewedGroup.members
+    .filter(member=>!reviewedGroup.multiAnikotoIds.includes(member.animeId))
+    .map(member=>member.animeId).concat(values.animeId))];
 
   const sourceRoot = values.relativePath.split("/")[0];
   const destinationRoot = path.join(storageRoot(), sourceRoot);
@@ -204,6 +344,9 @@ export async function saveAdminSubtitleLink(values: {
         entry_type=EXCLUDED.entry_type, anime_id=EXCLUDED.anime_id, work_title=EXCLUDED.work_title,
         subtitle_kind=EXCLUDED.subtitle_kind, season=EXCLUDED.season, updated_by=EXCLUDED.updated_by,
         updated_at=CURRENT_TIMESTAMP`;
+      await tx`DELETE FROM anime_admin_subtitle_link_members WHERE relative_path=${relativePath}`;
+      for(const memberId of memberIds)await tx`INSERT INTO anime_admin_subtitle_link_members(relative_path,anime_id)
+        VALUES(${relativePath},${memberId}) ON CONFLICT DO NOTHING`;
     });
     try { await refreshLocalSubtitleNameIndex(storageRoot()); }
     catch (error) { console.warn("[Admin subtitle index refresh deferred]", error); }

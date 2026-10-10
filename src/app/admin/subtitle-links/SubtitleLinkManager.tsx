@@ -5,7 +5,12 @@ import Link from "next/link";
 import { ArrowLeft, FolderOpen, HardDrive, Link2, Loader2, Search, UploadCloud, Unlink2 } from "lucide-react";
 
 type LocalEntry = { relativePath: string; type: "folder" | "zip"; name: string; source: string };
-type Work = { animeId: string; title: string; source: string; year: string };
+type Work = { animeId: string; title: string; year: string;
+  members: Array<{animeId:string;source:string;id:string;title:string;year:string}>;
+  multiAnikotoIds: string[] };
+const sourceLabels: Record<string,string> = {
+  Anissia:"애니시아",ReAnime:"ReAnime",AniList:"AniList",Onnada:"온나다",Anikoto:"Anikoto",
+};
 type ExistingLink = {
   relativePath: string; type: "folder" | "zip"; animeId: string; title: string;
   kind: string; season: number; updatedAt: string;
@@ -194,14 +199,37 @@ export default function SubtitleLinkManager() {
           className="min-w-0 flex-1 rounded-lg border border-white/15 bg-slate-950 px-3 py-2 text-sm"/>
         <button type="submit" className="rounded-lg bg-purple-600 px-4 py-2 text-sm">검색</button>
       </form>
-      <div className="max-h-60 space-y-1 overflow-y-auto">
+      <div className="max-h-80 space-y-2 overflow-y-auto">
         {works.map(item=><button key={item.animeId} type="button" onClick={()=>setWork(item)}
-          className={`flex w-full flex-wrap items-center justify-between gap-2 rounded-lg p-2 text-left text-xs hover:bg-white/10 ${work?.animeId===item.animeId?"bg-purple-600/30":"bg-slate-950/40"}`}>
-          <span>{item.title} <span className="text-slate-500">{item.year}</span></span>
-          <span className="font-mono text-slate-400">{item.animeId}</span>
+          className={`w-full rounded-xl border px-3 py-3 text-left transition hover:border-purple-400/60 ${work?.animeId===item.animeId
+            ?"border-purple-400 bg-purple-600/20":"border-white/10 bg-slate-950/40"}`}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm font-semibold text-white">{item.title}
+              <span className="ml-2 text-xs font-normal text-slate-500">{item.year}</span>
+            </span>
+            <span className="text-[10px] text-slate-400">
+              {item.members.length > 1 ? item.members.length + "개 DB 연결 묶음" : "독립 작품"}
+            </span>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {item.members.map(member=><span key={member.animeId}
+              className={`rounded-md border px-2 py-1 text-[10px] ${item.multiAnikotoIds.includes(member.animeId)
+                ?"border-amber-500/25 bg-amber-500/10 text-amber-200"
+                :"border-sky-500/20 bg-sky-500/10 text-sky-200"}`}
+              title={member.title + (item.multiAnikotoIds.includes(member.animeId)?" · 다중 시즌 연결":"")}>
+              {sourceLabels[member.source] || member.source} · {member.id}
+              {item.multiAnikotoIds.includes(member.animeId)?" (다중)":""}
+            </span>)}
+          </div>
         </button>)}
+        {!works.length && <p className="p-3 text-xs text-slate-500">제목 또는 ID를 검색하면 확정된 동일 작품 DB끼리 묶어 보여줘.</p>}
       </div>
-      {work && <p className="text-xs text-emerald-300">선택: {work.title} ({work.animeId})</p>}
+      {work && <div className="rounded-lg border border-emerald-500/20 bg-emerald-950/30 p-3 text-xs text-emerald-200">
+        선택: {work.title} · {work.members.length || 1}개 출처
+        <p className="mt-1 text-[11px] text-slate-300">
+          확정된 연결 ID는 함께 저장돼. Anikoto 다중 시즌 연결은 다른 시즌과 합쳐지지 않아.
+        </p>
+      </div>}
       <div className="flex flex-wrap items-center gap-2">
         <label className="text-xs text-slate-300">자막 종류
           <select value={kind} onChange={e=>setKind(e.target.value)} className="ml-2 rounded-lg border border-white/15 bg-slate-950 px-2 py-2 text-white">
@@ -231,7 +259,9 @@ export default function SubtitleLinkManager() {
             <div className="mt-1 break-all text-slate-400">{item.relativePath}</div>
             <div className="mt-1 text-slate-500">{item.type==="folder"?"폴더":"ZIP"} · {kinds.find(k=>k[0]===item.kind)?.[1] || item.kind} · {item.season}기</div>
           </div>
-          <button type="button" disabled={busy} onClick={()=>{setSelected({relativePath:item.relativePath,type:item.type,name:item.relativePath.split("/").pop()||"",source:item.relativePath.split("/")[0]});setKind(item.kind);setSeason(item.season);setWork({animeId:item.animeId,title:item.title,source:"",year:""});setNotice("위 선택 상태로 불러왔어. 수정 후 연결 저장을 누르면 돼.");}}
+          <button type="button" disabled={busy} onClick={()=>{setSelected({relativePath:item.relativePath,type:item.type,name:item.relativePath.split("/").pop()||"",source:item.relativePath.split("/")[0]});setKind(item.kind);setSeason(item.season);setWork({animeId:item.animeId,title:item.title,year:"",members:[{
+              animeId:item.animeId,source:"",id:item.animeId,title:item.title,year:""
+            }],multiAnikotoIds:[]});setNotice("위 선택 상태로 불러왔어. 수정 후 연결 저장을 누르면 돼.");}}
             className="rounded-lg border border-white/20 px-3 py-2 text-xs">수정</button>
           <button type="button" disabled={busy} onClick={()=>void removeLink(item)}
             className="rounded-lg border border-rose-500/30 px-3 py-2 text-xs text-rose-300"><Unlink2 className="mr-1 inline h-3.5 w-3.5"/>해제</button>
