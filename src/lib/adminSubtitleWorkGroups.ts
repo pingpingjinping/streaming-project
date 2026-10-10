@@ -37,13 +37,23 @@ export function buildReviewedWorkGroups(input: {
     if(a.source==="Anikoto"||b.source==="Anikoto")return;
     const x=find(idOf(a)),y=find(idOf(b));if(x!==y)parents.set(y,x);
   };
+  const manualRe=new Set(input.manual.map(x=>x.reanimeId));
+  const manualAn=new Set(input.manual.map(x=>String(x.anissiaNo)));
   for(const row of input.korean) {
     if(!accepted(row.status))continue;
     if(row.anilistId)union(row,{source:"AniList",id:row.anilistId});
-    if(row.reanimeId)union(row,{source:"ReAnime",id:row.reanimeId});
+    // A manual ReAnime↔Anissia correction must not be undone by a stale
+    // imported catalog edge.
+    if(row.reanimeId) {
+      const fromAnissia=row.source==="Anissia";
+      const claimedByDifferentAnissia=fromAnissia && manualAn.has(row.id) &&
+        !input.manual.some(m=>String(m.anissiaNo)===row.id && m.reanimeId===row.reanimeId);
+      const claimedByDifferentReanime=fromAnissia && manualRe.has(row.reanimeId) &&
+        !input.manual.some(m=>String(m.anissiaNo)===row.id && m.reanimeId===row.reanimeId);
+      if(!claimedByDifferentAnissia&&!claimedByDifferentReanime)
+        union(row,{source:"ReAnime",id:row.reanimeId});
+    }
   }
-  const manualRe=new Set(input.manual.map(x=>x.reanimeId));
-  const manualAn=new Set(input.manual.map(x=>String(x.anissiaNo)));
   for(const r of input.reanime) {
     if(!accepted(r.reviewStatus) || !r.anissiaNo || manualRe.has(r.reanimeId) ||
       manualAn.has(String(r.anissiaNo)))continue;
