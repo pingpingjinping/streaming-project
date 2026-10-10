@@ -31,7 +31,6 @@ export default function DbSearchPoster({animeId,title,poster}:{animeId:string;ti
   const [visible,setVisible]=useState(false);
   const [requested,setRequested]=useState(false);
   const target=useRef<HTMLDivElement>(null);
-  const attempted=useRef(new Set<string>());
   useEffect(()=>{
     const el=target.current;
     if(!el)return;
@@ -43,10 +42,10 @@ export default function DbSearchPoster({animeId,title,poster}:{animeId:string;ti
     return ()=>observer.disconnect();
   },[]);
   useEffect(()=>{
-    setSrc(poster);setFailed(false);setRequested(false);attempted.current=new Set();
+    setSrc(poster);setFailed(false);setRequested(false);
   },[animeId,poster]);
   useEffect(()=>{
-    if(!visible||requested||src)return;
+    if(!visible||requested||src || !/^(?:ani_\d+|re_[A-Za-z0-9_-]+|ak_[A-Za-z0-9_-]+|db_(?:AniList|Onnada)_[A-Za-z0-9_-]+)$/.test(animeId))return;
     setRequested(true);
     let active=true;
     enqueue({
@@ -71,7 +70,6 @@ export default function DbSearchPoster({animeId,title,poster}:{animeId:string;ti
         className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
         style={{objectPosition:"center 25%"}}
         onError={()=>{
-          attempted.current.add(src);
           setFailed(true);
           if(!requested){setSrc("");setRequested(false);}
         }}/>
