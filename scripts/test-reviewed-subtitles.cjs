@@ -73,6 +73,36 @@ test('loose filename episode numbers never create exact candidates, including so
   assert.equal(candidates.manual.length,2);
   assert.deepEqual(rows.map(r => r.confirmed_episodes),[[],[],[]]);
 });
+test('an explicitly selected loose set follows numbered episodes and continues without choosing its OAD',async()=>{
+  const rows=loose('Selected reviewed TV set',{'01.srt':srt('selected first'),'02.srt':srt('selected next'),
+    'OAD.srt':srt('separate selected OAD')});findRows(rows);
+  const bundleKey=storage.reviewedBundleKey(rows[0]);
+  for(const [episode,text] of [[1,'selected first'],[2,'selected next']]){
+    const result=await storage.getReviewedSubtitles(request({episode,sourceEpisode:episode,source:'anissia',bundleKey}));
+    assert.equal(result.subtitles.length,1);assert.ok(result.subtitles[0].content.includes(text));
+    assert.equal(result.subtitles[0].episodeConfirmed,true);assert.equal(result.needsManualChoice,false);
+    assert.equal(result.subtitles[0].sourceBundleKey,bundleKey);
+  }
+  const browsing=await storage.getReviewedSubtitles(request({source:'anissia',bundleKey,manualSearch:true}));
+  assert.ok(browsing.subtitles.every(s=>!s.episodeConfirmed));
+  assert.deepEqual(rows.map(r=>r.confirmed_episodes),[[],[],[]]);
+});
+test('selected loose sets apply the source episode start once and keep variants and unknown episodes manual',async()=>{
+  const rows=loose('Selected reviewed source numbering',{'13.srt':srt('source thirteen'),'14.srt':srt('source fourteen')});
+  findRows(rows);const bundleKey=storage.reviewedBundleKey(rows[0]);
+  for(const [episode,sourceEpisode,text] of [[1,13,'source thirteen'],[2,14,'source fourteen']]){
+    const result=await storage.getReviewedSubtitles(request({episode,sourceEpisode,source:'anissia',bundleKey}));
+    assert.equal(result.subtitles.length,1);assert.ok(result.subtitles[0].content.includes(text));
+    assert.equal(result.needsManualChoice,false);
+  }
+  const variants=loose('Selected reviewed variants',{'13.srt':srt('first variant'),'13ns.srt':srt('second variant')});
+  findRows(variants);
+  const competing=await storage.getReviewedSubtitles(request({sourceEpisode:13,source:'anissia',bundleKey:storage.reviewedBundleKey(variants[0])}));
+  assert.equal(competing.subtitles.length,2);assert.equal(competing.needsManualChoice,true);
+  const unknown=loose('Selected reviewed unknown',{'subtitle.srt':srt('no episode evidence')});findRows(unknown);
+  const unresolved=await storage.getReviewedSubtitles(request({source:'anissia',bundleKey:storage.reviewedBundleKey(unknown[0])}));
+  assert.equal(unresolved.subtitles[0].episodeConfirmed,false);assert.equal(unresolved.needsManualChoice,true);
+});
 test('an OAD-only reviewed work remains available manually without mixing it into the main TV work', async () => {
   const rows=loose('ISUCA OAD work with original folder title',{'isuca OAD.smi':srt('only reviewed OAD work')});
   rows[0].work_title_ko='ISUCA (이스카)';rows[0].target_source='ReAnime';rows[0].target_id='isuca-ova';
@@ -274,19 +304,19 @@ test('weekly loose AniAll files coexist with archive folders, applying start onc
 });
 
 
-async function withAutomaticRoute(rows, run) {
+async function withAutomaticRoute(rows, run, options={}) {
   const patches=[];
   const patch=(obj,key,value)=>{ patches.push([obj,key,obj[key]]); obj[key]=value; };
   const subtitles=require('../src/lib/subtitles.ts');
   const reanime=require('../src/lib/reanimeMatches.ts');
   const local=require('../src/lib/subtitleStorage.ts');
   patch(db,'getDb',()=>async()=>rows);
-  patch(db,'getSubtitleEpisodeStart',async()=>null);
+  patch(db,'getSubtitleEpisodeStart',async()=>options.sourceEpisodeStart || null);
   patch(db,'getSubtitleRejections',async()=>[]);
   patch(db,'getSubtitleSourcePriority',async()=> 'aniall');
   patch(db,'getAniAllMatches',async()=>[]);
   patch(db,'getManualSubtitleLink',async()=>null);
-  patch(db,'getSubtitleBundleAssignment',async()=>null);
+  patch(db,'getSubtitleBundleAssignment',async()=>options.bundleAssignment || null);
   patch(db,'getSubtitleBundleAssignments',async()=>[]);
   patch(db,'getSubtitleCreatorPreference',async()=>null);
   patch(db,'getSubtitleEpisodeOverrides',async()=>[]);
@@ -349,6 +379,19 @@ test('automatic route exposes a new loose reviewed file as a manual choice witho
     assert.equal(result.subtitles[0].episodeConfirmed,false);
     assert.equal(result.needs_manual_subtitle_choice,true);
   });
+});
+test('automatic route continues an explicitly selected reviewed set with the configured source start',async()=>{
+  const rows=loose('Route selected loose set',{'13.srt':srt('route selected first'),'14.srt':srt('route selected next')});
+  const assignment={provider:'anissia',bundleKey:storage.reviewedBundleKey(rows[0]),label:'selected reviewed set'};
+  await withAutomaticRoute(rows,async get=>{
+    for(const [episode,text] of [[1,'route selected first'],[2,'route selected next']]){
+      const result=await get(episode);
+      assert.equal(result.count,1);assert.ok(result.subtitles[0].content.includes(text));
+      assert.equal(result.subtitles[0].bundleAssigned,true);
+      assert.equal(result.needs_manual_subtitle_choice,false);
+    }
+  },{bundleAssignment:assignment,sourceEpisodeStart:13});
+  assert.deepEqual(rows.map(r=>r.confirmed_episodes),[[],[]]);
 });
 
 test('Postgres selects only current exact work links and relevant confirmed episodes', {skip:!process.env.REVIEWED_TEST_DATABASE_URL}, async () => {

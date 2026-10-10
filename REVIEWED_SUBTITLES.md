@@ -13,8 +13,12 @@ accepted as reviewed candidates.
 The new dataset has work review but no confirmed episode rows. It appears in
 local recommendations/manual search and retains dataset/PID identity for explicit
 file choices, bundle assignments, native-player reads, and episode exceptions.
-Filename episode numbers remain suggestions requiring manual selection, including
-OVA/specials and competing variants. Reading never writes episode confirmations.
+Without a selected set, filename episode numbers remain manual suggestions. After
+the user explicitly selects a reviewed set, playback uses the existing filename
+episode algorithm, including the configured start episode and continuation into
+the next episode. OVA/specials stay in their selected work slice, and unknown
+episodes or competing variants still require a choice. Broad manual searches do
+not grant automatic episode status. Reading never writes episode confirmations.
 Registered loose files cannot bypass these checks through the old automatic
 filename reader; existing weekly files and explicit folder assignments keep their
 existing behavior. Apply the published one-time dataset SQL separately from the

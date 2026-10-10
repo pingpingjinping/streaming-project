@@ -245,11 +245,13 @@ export async function readReviewedFile(file: ReviewedFile) {
 }
 
 /** Confirmed episode rows win. Otherwise use the existing conservative filename algorithm. */
-export function reviewedEpisodeCandidates(files: ReviewedFile[], episode: number, sourceEpisode: number, season: number | null) {
-  // The new package has work review only. Filename numbers are suggestions,
-  // never new episode confirmations or automatic playback assignments.
-  const loose = files.filter(f => fileDataset(f) === LOOSE_REVIEWED_DATASET);
-  files = files.filter(f => fileDataset(f) !== LOOSE_REVIEWED_DATASET);
+export function reviewedEpisodeCandidates(files: ReviewedFile[], episode: number, sourceEpisode: number, season: number | null,
+  allowLooseFilenameMatching = false) {
+  // Work review alone leaves filename numbers as manual suggestions. An
+  // explicitly selected set uses the same episode algorithm as existing sets;
+  // this playback decision never writes reviewed episode confirmations.
+  const loose = allowLooseFilenameMatching ? [] : files.filter(f => fileDataset(f) === LOOSE_REVIEWED_DATASET);
+  files = allowLooseFilenameMatching ? files : files.filter(f => fileDataset(f) !== LOOSE_REVIEWED_DATASET);
   const confirmed = files.filter(f => f.confirmed_episodes.length === 1 && Number(f.confirmed_episodes[0]) === episode);
   const unassigned = files.filter(f => f.confirmed_episodes.length === 0);
   const filenameRows = unassigned.map(f => ({ ...f, filename: f.member_path }));
@@ -310,7 +312,10 @@ export async function getReviewedSubtitles(input: { animeId: string; episode: nu
   const expectedKind = scope?.kind || (files.length && files.every(f => fileDataset(f) === LOOSE_REVIEWED_DATASET)
     && looseKinds.size === 1 ? [...looseKinds][0] : subtitleScope('',files[0]?.work_title_ko || '').kind);
   const eligible = input.manualSearch ? files : files.filter(f => subtitleScope(f.member_path,f.work_title_ko).kind === expectedKind);
-  const { exact, manual } = reviewedEpisodeCandidates(eligible, input.episode, input.sourceEpisode, scope?.season || input.season);
+  const selectedLooseSet = !input.manualSearch && input.source === 'anissia'
+    && scope?.type === 'reviewed' && scope.dataset === LOOSE_REVIEWED_DATASET;
+  const { exact, manual } = reviewedEpisodeCandidates(eligible, input.episode, input.sourceEpisode,
+    scope?.season || input.season, selectedLooseSet);
   const results: Array<NonNullable<Awaited<ReturnType<typeof readReviewedFile>>> & { episode: number; episodeConfirmed: boolean }> = [];
   const seen = new Set<string>();
   const load = async (rows: ReviewedFile[], confirmed: boolean) => {
