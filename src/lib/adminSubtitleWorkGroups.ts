@@ -24,7 +24,7 @@ export function buildReviewedWorkGroups(input: {
   seeds: WorkRef[]; catalog: SourceWork[];
   korean: KoreanLink[]; reanime: ReanimeLink[]; manual: ManualLink[];
   cross: CrossLink[]; anikoto: AnikotoLink[];
-  limit?: number;
+  limit?: number; hydrateMissing?: boolean;
 }): WorkGroup[] {
   const parents = new Map<string,string>();
   const find = (key:string):string => {
@@ -75,12 +75,12 @@ export function buildReviewedWorkGroups(input: {
   const hydrated=new Map(input.catalog.map(row=>[idOf(row),row]));
   // Preserve known verified source IDs while initial search results are being
   // expanded; a second pass hydrates those IDs with real catalog titles.
-  for(const key of parents.keys())if(!hydrated.has(key)) {
+  for(const key of (input.hydrateMissing?parents.keys():[]))if(!hydrated.has(key)) {
     const cut=key.indexOf(":");
     const source=key.slice(0,cut) as Source,id=key.slice(cut+1);
     if(source!=="Anikoto")hydrated.set(key,{source,id,animeId:canonical(source,id),title:id,year:""});
   }
-  for(const key of links.keys()) {
+  for(const key of (input.hydrateMissing?links.keys():[])) {
     const id=key.slice(3);
     if(!hydrated.has("Anikoto:"+id))hydrated.set("Anikoto:"+id,{
       source:"Anikoto",id,animeId:key,title:id,year:"",
