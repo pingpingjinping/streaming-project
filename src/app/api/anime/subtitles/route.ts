@@ -29,6 +29,7 @@ import { getReviewedSubtitles } from "@/lib/reviewedSubtitleStorage";
 import { getReanimeMatch } from "@/lib/reanimeMatches";
 import { bundleScopeKey, bundleMatchesAssignment, parseBundleScope, bundleScopesOverlap, refineLocalBundleAssignment } from "@/lib/subtitleLocalIdentity";
 import {resolveSubtitleOverride, distinctLocalSubtitles} from "@/lib/subtitleOverrides";
+import { getAdminLinkedSubtitles } from "@/lib/adminSubtitleLinker";
 import { pruneVerifiedSubtitleCache } from "@/lib/subtitleCache";
 
 async function pruneLocalCache(animeId: string, episode: number, subtitles: Array<{content: string; format: string}>) {
@@ -212,6 +213,24 @@ export async function GET(request: NextRequest) {
       await pruneLocalCache(animeIdParam, ep, uploaded);
       return NextResponse.json({ success: true, anime_title: title, episode: ep, count: uploaded.length,
         subtitles: uploaded, creators: [] }, { headers: { "Cache-Control": "no-store" } });
+    }
+    // Administrator-managed file-to-work mappings are shared and survive DB release
+    // refreshes. Keep personal bundle and creator choices untouched.
+    if (animeIdParam && !bundleAssignment && !creatorPreference) {
+      try {
+        const adminLinked = (await getAdminLinkedSubtitles(animeIdParam, ep, sourceEpisode))
+          .filter(sub => !isRejected(sub.sourceProvider, sub.name));
+        if (adminLinked.length) {
+          return NextResponse.json({
+            success: true, anime_title: title, episode: ep,
+            count: adminLinked.length, subtitles: distinctLocalSubtitles(adminLinked),
+            creators: [], local_archive: true, admin_linked: true,
+            needs_manual_subtitle_choice: adminLinked.length > 1,
+          }, { headers: { "Cache-Control": "no-store" } });
+        }
+      } catch (error) {
+        console.warn("[Admin subtitle link lookup deferred]", error);
+      }
     }
     const resolvedTitle = await resolveKoreanTitle(title);
     const searchTarget = reanimeMatch?.koreanTitle || resolvedTitle || title;
