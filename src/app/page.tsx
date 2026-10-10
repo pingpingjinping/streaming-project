@@ -1223,13 +1223,30 @@ export default async function HomePage({
           <>
             {/* Anime Grid */}
             {items.length > 0 ? (
-              <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-                {items.map((anime, idx) => (
-                  <AnimeCard key={`${anime.id}-${idx}`} anime={anime} />
-                ))}
-              </div>
+              <>
+                <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+                  {items.map((anime, idx) => (
+                    <AnimeCard key={`${anime.id}-${idx}`} anime={anime} />
+                  ))}
+                </div>
+                {q && activeSource === "anissia" && searchScope === "current" && (
+                  <AnissiaDbSearchFallback
+                    key={`${q}:${captionsOnly}:${page}`}
+                    keyword={q}
+                    captionsOnly={captionsOnly}
+                    initialPage={1}
+                    upstreamItems={items.map(item => ({ id: item.id, detail_url: item.detail_url }))}
+                  />
+                )}
+              </>
             ) : needsAnissiaDbFallback ? (
-              <AnissiaDbSearchFallback key={q + ":" + captionsOnly} keyword={q} captionsOnly={captionsOnly} initialPage={page} />
+              <AnissiaDbSearchFallback
+                key={`${q}:${captionsOnly}:${page}`}
+                keyword={q}
+                captionsOnly={captionsOnly}
+                initialPage={page}
+                upstreamItems={[]}
+              />
             ) : activeSource === "reanime" && !linkedOnly && tab !== "favorites" ? (
               <ReanimeFeedFallback tab={tab} q={q} genre={genre} page={page} />
             ) : (
