@@ -261,6 +261,7 @@ test('explicit subtitle selection passes source 13/25 and retains local 1/13 ext
     '@/lib/proxyGuard':{assertSafeProxyUrl:async()=>{}},
     '@/lib/subtitleStorage':{}, '@/lib/reviewedSubtitleStorage':{}, '@/lib/reanimeMatches':{},
     '@/lib/subtitleLocalIdentity':{}, '@/lib/subtitleOverrides':{}, '@/lib/subtitleCache':{},
+    '@/lib/adminSubtitleLinker':{getAdminLinkedSubtitles:async()=>[]},
   });
   for (const ep of [1,13]) {
     const result = await api.POST({json:async()=>({animeId:'ani_42',title:korean,episodeNumber:ep,
