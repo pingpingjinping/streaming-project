@@ -32,6 +32,10 @@ export default function SubtitleLinkManager() {
   const [source, setSource] = useState<UploadType>("pi");
   const [keyword, setKeyword] = useState("");
   const [files, setFiles] = useState<LocalEntry[]>([]);
+  const [fileSearching, setFileSearching] = useState(false);
+  const [fileTotal, setFileTotal] = useState<number | null>(null);
+  const [fileStatus, setFileStatus] = useState("Pi 목록을 불러오는 중…");
+  const fileRequestId = useRef(0);
   const [selected, setSelected] = useState<LocalEntry | null>(null);
   const [uploaded, setUploaded] = useState<File[]>([]);
   const [folderLabel, setFolderLabel] = useState("직접 받은 자막");
@@ -57,10 +61,29 @@ export default function SubtitleLinkManager() {
   }, [source]);
 
   async function loadFiles(q: string) {
+    const requestId = ++fileRequestId.current;
+    setFileSearching(true);
+    setFileStatus(q.trim() ? "Pi 폴더·ZIP 검색 중…" : "Pi 파일 목록 읽는 중… (최초 인덱스 생성 시 오래 걸릴 수 있어)");
+    setError("");
     try {
       const data = await jsonRequest("/api/admin/subtitle-links?mode=files&q=" + encodeURIComponent(q));
-      setFiles(data.items || []);
-    } catch (e) { setError(e instanceof Error ? e.message : "Pi 파일 목록을 불러오지 못했습니다."); }
+      if (requestId !== fileRequestId.current) return; // Don't overwrite a newer search.
+      const items: LocalEntry[] = data.items || [];
+      const total = typeof data.total === "number" ? data.total : items.length;
+      setFiles(items);
+      setFileTotal(total);
+      const seconds = typeof data.elapsedMs === "number" && data.elapsedMs >= 1000
+        ? " · " + (data.elapsedMs / 1000).toFixed(1) + "초" : "";
+      setFileStatus("검색 완료 · " + total.toLocaleString() + "개" +
+        (total > items.length ? " (처음 " + items.length + "개 표시)" : "") + seconds);
+    } catch (e) {
+      if (requestId !== fileRequestId.current) return;
+      const message = e instanceof Error ? e.message : "Pi 파일 목록을 불러오지 못했습니다.";
+      setFileStatus("Pi 파일/폴더 검색 실패");
+      setError(message);
+    } finally {
+      if (requestId === fileRequestId.current) setFileSearching(false);
+    }
   }
   async function loadLinks() {
     try {
@@ -77,13 +100,16 @@ export default function SubtitleLinkManager() {
     } catch (e) { setError(e instanceof Error ? e.message : "작품을 찾지 못했습니다."); }
   }
   async function refreshIndex() {
-    setBusy(true); setError("");
+    if (busy) return;
+    setBusy(true); setError(""); setFileStatus("Pi 인덱스 전체 갱신 중… (폴더가 많으면 오래 걸릴 수 있어)");
     try {
-      await jsonRequest("/api/admin/subtitle-index", { method: "POST" });
+      const data = await jsonRequest("/api/admin/subtitle-index", { method: "POST" });
       await loadFiles(keyword);
-      setNotice("Pi 자막 폴더·ZIP 목록을 다시 읽었어.");
-    } catch (e) { setError(e instanceof Error ? e.message : "Pi 인덱스 새로고침 실패"); }
-    finally { setBusy(false); }
+      setNotice("Pi 자막 인덱스 갱신 완료 · " + (data.index?.count ?? "?") + "개 항목 확인");
+    } catch (e) {
+      setFileStatus("Pi 인덱스 새로고침 실패");
+      setError(e instanceof Error ? e.message : "Pi 인덱스 새로고침 실패");
+    } finally { setBusy(false); }
   }
   async function upload() {
     if (!uploaded.length || !folderLabel.trim() || busy) return;
@@ -153,8 +179,19 @@ export default function SubtitleLinkManager() {
           <input className="min-w-44 flex-1 rounded-lg border border-white/15 bg-slate-950 px-3 py-2 text-sm"
             placeholder="Pi 폴더명 또는 ZIP 파일명 (공란이면 전체)" value={keyword}
             onChange={e=>setKeyword(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")void loadFiles(keyword);}}/>
-          <button type="button" onClick={()=>loadFiles(keyword)} className="rounded-lg bg-purple-600 px-3 py-2 text-sm"><Search className="inline h-4 w-4"/> 검색</button>
-          <button type="button" disabled={busy} onClick={()=>void refreshIndex()} className="rounded-lg border border-white/20 px-3 py-2 text-xs">Pi 목록 새로고침</button>
+          <button type="button" onClick={()=>void loadFiles(keyword)} className="rounded-lg bg-purple-600 px-3 py-2 text-sm">
+            {fileSearching ? <Loader2 className="inline h-4 w-4 animate-spin"/> : <Search className="inline h-4 w-4"/>} 검색
+          </button>
+          <button type="button" disabled={busy || fileSearching} onClick={()=>void refreshIndex()}
+            className="rounded-lg border border-white/20 px-3 py-2 text-xs disabled:opacity-50">
+            {busy ? <Loader2 className="mr-1 inline h-3.5 w-3.5 animate-spin"/> : null}Pi 목록 새로고침
+          </button>
+        </div>
+        <div aria-live="polite" role="status" className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
+          {fileSearching || busy ? <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-300"/> : null}
+          <span>{fileStatus}</span>
+          {!fileSearching && fileTotal !== null && fileTotal === 0 ?
+            <span className="text-amber-300"> · 상위 폴더 경로 또는 ZIP 이름으로 검색해 봐.</span> : null}
         </div>
         <p className="text-xs text-slate-400">애니시아·AniAll·Naver의 기존 폴더/ZIP 지원. 연결 시 폴더 이름은 DB 작품명으로 변경하고, ZIP은 별도 폴더에 풀어. 다른 사용자의 저장된 자막 지정과 충돌하는 폴더는 이동하지 않아.</p>
         <div className="max-h-72 space-y-1 overflow-y-auto rounded-lg border border-white/10 bg-slate-950/70 p-2">
@@ -164,7 +201,7 @@ export default function SubtitleLinkManager() {
             {item.type === "folder" ? <FolderOpen className="h-4 w-4 shrink-0"/> : <HardDrive className="h-4 w-4 shrink-0"/>}
             <span className="min-w-0 flex-1 break-all">{item.relativePath}</span>
             <span className="shrink-0 text-[10px] text-slate-500">{item.type==="folder"?"폴더":"ZIP"}</span>
-          </button>) : <p className="px-2 py-4 text-center text-xs text-slate-500">결과가 없어. Pi 목록 새로고침으로 인덱스를 갱신할 수 있어.</p>}
+          </button>) : <p className="px-2 py-4 text-center text-xs text-slate-500">{fileSearching ? "Pi 파일 목록을 찾고 있어…" : "검색 결과가 없어. Pi 목록 새로고침으로 인덱스를 갱신할 수 있어."}</p>}
         </div>
       </> : <>
         <div className="space-y-2">
