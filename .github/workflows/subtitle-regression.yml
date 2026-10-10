@@ -55,6 +55,7 @@ jobs:
       - run: python -m unittest discover -s scripts -p test_weekly_aniall.py -v
       - run: python -m unittest discover -s scripts -p test_catalog_core.py -v
       - run: python -m unittest discover -s scripts -p test_export_reviewed_subtitle_links.py -v
+      - run: python -m unittest discover -s scripts -p test_export_db_search_posters.py -v
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
