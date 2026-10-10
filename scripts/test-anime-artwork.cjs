@@ -8,6 +8,11 @@ function load(file,deps={},globals={}) {
     '@/components/AnissiaDbSearchFallback': { default: () => null },
     '@/lib/anissiaSearchStages': { prepareAnissiaApiSearch: (result) => ({result, needsDbFallback: result.items.length === 0}) },
     '@/lib/cloudflareAnimeSearch': { searchCloudflareAnimeFirst: async () => null },
+    '@/lib/animeSearchMode': {
+      resolveAnimeSearchMode: (source, scope, mode) => source === 'anissia' && scope === 'current' && mode !== 'page' ? 'db' : 'page',
+      shouldQueryCloudflare: mode => mode === 'db',
+      shouldUseLocalDbFallback: mode => mode === 'db',
+    },
     ...deps,
   };
   deps={'./provisionalWorkMatches':{getProvisionalWorkMatches:async()=>[]},'./workMatchOverrides':matchOverrides,
