@@ -236,30 +236,36 @@ export default function Navbar() {
           aria-busy={isSearching}
           className="flex flex-1 max-w-sm sm:max-w-lg mx-auto sm:mx-4 gap-1.5 min-w-0"
         >
-          <select
-            aria-label="검색 사이트 범위"
-            value={searchScope}
-            disabled={isSearching}
-            onChange={(e) => setSearchScope(e.target.value as "current" | "all")}
-            className={`max-w-[92px] shrink-0 rounded-full border bg-slate-900/80 px-2 py-1.5 text-[10px] sm:text-xs text-slate-300 outline-none transition ${
-              isSearching
-                ? "cursor-wait border-purple-400/60"
-                : "border-purple-500/20 focus:border-purple-500"
-            }`}
-          >
-            <option value="current">현재 사이트</option>
-            <option value="all">전체 사이트</option>
-          </select>
-          {activeSource === "anissia" && searchScope === "current" && (
+          {activeSource === "anissia" ? (
             <select
               aria-label="애니시아 검색 방식"
-              value={searchMode}
+              value={searchScope === "all" ? "all" : searchMode}
               disabled={isSearching}
-              onChange={(e) => setSearchMode(e.target.value as AnimeSearchMode)}
-              className="max-w-[88px] shrink-0 rounded-full border border-purple-500/25 bg-slate-900/80 px-1.5 py-1.5 text-[10px] font-semibold text-purple-200 outline-none focus:border-purple-500 sm:text-xs"
+              onChange={(e) => {
+                const value = e.target.value;
+                if (value === "all") {
+                  setSearchScope("all");
+                } else {
+                  setSearchScope("current");
+                  setSearchMode(value as AnimeSearchMode);
+                }
+              }}
+              className="max-w-[108px] shrink-0 rounded-full border border-purple-500/30 bg-slate-900/80 px-1.5 py-1.5 text-[10px] font-semibold text-purple-200 outline-none focus:border-purple-500 sm:text-xs"
             >
               <option value="db">DB 검색</option>
               <option value="page">페이지 검색</option>
+              <option value="all">전체 사이트</option>
+            </select>
+          ) : (
+            <select
+              aria-label="검색 사이트 범위"
+              value={searchScope}
+              disabled={isSearching}
+              onChange={(e) => setSearchScope(e.target.value as "current" | "all")}
+              className="max-w-[92px] shrink-0 rounded-full border border-purple-500/20 bg-slate-900/80 px-2 py-1.5 text-[10px] text-slate-300 outline-none focus:border-purple-500 sm:text-xs"
+            >
+              <option value="current">현재 사이트</option>
+              <option value="all">전체 사이트</option>
             </select>
           )}
           <div className="relative min-w-0 flex-1">
