@@ -260,6 +260,25 @@ test('TV and non-sponsored filename variants retain their episode', () => {
   assert.deepEqual(readEpisodeEvidence('Seihantai - 13_tv.smi', true).episodes, [13]);
   assert.deepEqual(readEpisodeEvidence('Show - 01ns.srt', true).episodes, [1]);
 });
+test('spaced sponsor markers identify the episode without using arbitrary trailing words', () => {
+  for (const [name, episode] of [
+    ['하느님의 메모장 page 01 NS.smi', 1], ['하느님의 메모장 page 11 NS.smi', 11],
+    ['Show - 12 S.srt', 12], ['Show - 13 TV.smi', 13],
+    ['Show - 11_NS.smi', 11], ['Show - 11 NS [1080p].smi', 11],
+  ]) assert.deepEqual(readEpisodeEvidence(name, true).episodes, [episode], name);
+  for (const name of ['Show 86 movie.smi', 'Show 11 abc.smi', 'Show S1 NS.smi'])
+    assert.deepEqual(readEpisodeEvidence(name, true).episodes, [], name);
+  const { entries } = inspectSubtitleArchive(zip({
+    '하느님의 메모장 page 01 NS.srt': 'NS one',
+    '하느님의 메모장 page 11 NS.srt': 'NS eleven',
+  }));
+  assert.deepEqual(automaticArchiveAssignments(entries, '하느님의 메모장.zip', 1, null).map(a => a.episode), [1, 11]);
+  const result = extractSubtitleFromBuffer(zip({
+    '하느님의 메모장 page 01 NS.srt': 'wrong NS one',
+    '하느님의 메모장 page 11 NS.srt': 'correct NS eleven',
+  }), 11, '하느님의 메모장.zip', true, 1);
+  assert.ok(result?.content.includes('correct NS eleven'));
+});
 test('a slash in an anchor label does not hide the first conflicting episode', async () => {
   const page = 'https://blog.example.com/12', file = 'https://files.example.com/12.srt';
   const html = `<title>작품 12화</title><div class="post-body"><a href="${file}">1화 / 12화</a></div>`;
