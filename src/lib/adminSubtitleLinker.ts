@@ -7,6 +7,7 @@ import { inspectSubtitleArchive } from "@/lib/subtitleUpload";
 import { decodeSubtitleFile } from "@/lib/subtitles";
 import { readEpisodeEvidence, selectEpisodeEntries } from "@/lib/subtitleEpisodes";
 import { subtitleScope } from "@/lib/subtitleLocalIdentity";
+import { buildReviewedWorkGroups, type WorkRef, type Source, type SourceWork } from "@/lib/adminSubtitleWorkGroups";
 
 const PROVIDERS = ["anissia", "aniall", "naver"] as const;
 const EXT = /\.(?:ass|ssa|smi|srt|vtt)$/i;
@@ -81,27 +82,131 @@ export async function ensureSubtitleLinksTable() {
   return sql;
 }
 
+function sourceWork(row: any): SourceWork {
+  const source=String(row.source) as Source, id=String(row.source_record_id || row.anikoto_id);
+  const payload=typeof row.payload==="object" && row.payload!==null ? row.payload : {};
+  const title=String(payload.title_ko || payload.title || payload.name ||
+    payload.title_english || payload.english_title || payload.title_native ||
+    payload.title_romaji || payload.romaji_title || id);
+  return {source,id,animeId:source==="Anissia"?"ani_"+id:source==="ReAnime"?"re_"+id
+    :source==="Anikoto"?"ak_"+id:"db_"+source+"_"+id,
+    title,year:String(payload.year || payload.release_year || ""),
+    format:String(payload.format || "")};
+}
+function jsonField(raw: unknown): any {
+  if(raw && typeof raw==="object")return raw;
+  if(typeof raw==="string")try{return JSON.parse(raw)}catch{}
+  return {};
+}
+const normalizedIdentityTitle=(v:unknown)=>String(v||"").normalize("NFKC").toLocaleLowerCase("en")
+  .replace(/[^\p{L}\p{N}]/gu,"");
+function compatibleSourceRows(a:any,b:any):boolean {
+  const ay=String(a.year||""),by=String(b.year||"");
+  const af=String(a.format||"").toUpperCase(),bf=String(b.format||"").toUpperCase();
+  if((ay && by && ay!==by) || (af && bf && af!==bf))return false;
+  const titles=(row:any)=>new Set(["title_ko","title_native","title_romaji","title_english"]
+    .map(k=>normalizedIdentityTitle(row[k])).filter(t=>t.length>=4));
+  const t1=titles(a),t2=titles(b);
+  if(![...t1].some(t=>t2.has(t)))return false;
+  const count=(row:any)=>{
+    const meta=jsonField(row.source_metadata_json);
+    const value=meta.episodes||meta.episodes_total||meta.onnada_episodes;
+    const n=Number(value);return Number.isInteger(n)&&n>0?n:0;
+  };
+  const ac=count(a),bc=count(b);
+  return !ac || !bc || ac===bc;
+}
+
+/** Search by title, expand only reviewed ID edges, then hydrate member titles.
+ * This is admin-only and executes on explicit search, not on each keystroke.
+ */
 export async function findCatalogWorks(q: string) {
-  const query = q.normalize("NFKC").trim().slice(0, 120);
-  if (query.length < 2) return [];
-  const sql = getDb();
-  if (!sql) return [];
-  const escaped = query.replace(/[\\%_]/g, "\\$&");
-  const pattern = "%" + escaped + "%";
-  const rows = await sql`SELECT source, source_record_id, payload
-    FROM anime_catalog_entries
-    WHERE source IN ('Anissia','ReAnime','AniList','Onnada')
-      AND (source_record_id = ${query} OR
-        CONCAT_WS(' ',payload->>'title_ko',payload->>'title_native',payload->>'title_romaji',payload->>'title_english') ILIKE ${pattern})
-    ORDER BY CASE source WHEN 'Anissia' THEN 0 WHEN 'ReAnime' THEN 1 ELSE 2 END,
-      payload->>'year' DESC NULLS LAST
-    LIMIT 40`;
-  return rows.map(row => {
-    const source = String(row.source), id = String(row.source_record_id);
-    const animeId = source === "Anissia" ? "ani_" + id : source === "ReAnime" ? "re_" + id : "db_" + source + "_" + id;
-    return { animeId, source, title: String(row.payload?.title_ko || row.payload?.title_english ||
-      row.payload?.title_native || row.payload?.title_romaji || id), year: row.payload?.year || "" };
-  });
+  const query=q.normalize("NFKC").trim().slice(0,120);
+  if(query.length<2)return [];
+  const sql=getDb();if(!sql)return [];
+  const escaped=query.replace(/[\\%_]/g,"\\$&");
+  const pattern="%"+escaped+"%";
+  const [matched,akMatched,korean,rematches,manual,crossRe,anilinks]=await Promise.all([
+    sql`SELECT source,source_record_id,payload FROM anime_catalog_entries
+      WHERE source IN ('Anissia','ReAnime','AniList','Onnada')
+        AND (source_record_id=${query}
+          OR CONCAT_WS(' ',payload->>'title_ko',payload->>'title_native',
+            payload->>'title_romaji',payload->>'title_english') ILIKE ${pattern})
+      ORDER BY CASE source WHEN 'Anissia' THEN 0 WHEN 'ReAnime' THEN 1 ELSE 2 END,
+        payload->>'year' DESC NULLS LAST LIMIT 120`,
+    sql`SELECT anikoto_id,payload FROM anime_anikoto_catalog
+      WHERE anikoto_id=${query} OR CONCAT_WS(' ',payload->>'title',payload->>'name',
+        payload->>'title_english',payload->>'english_title',
+        payload->>'title_romaji',payload->>'title_native') ILIKE ${pattern}
+      LIMIT 40`,
+    sql`SELECT source,source_record_id,payload->>'status' AS status,
+        payload->>'anilistId' AS anilist_id,payload->>'reanimeId' AS reanime_id
+      FROM anime_korean_catalog WHERE payload->>'status' IN ('검토된 사항','자동확정')`,
+    sql`SELECT reanime_id,anissia_no,review_status FROM anime_reanime_matches
+      WHERE anissia_no IS NOT NULL AND review_status IN ('검토된 사항','자동확정')`,
+    sql`SELECT reanime_id,anissia_no FROM anime_work_match_overrides`,
+    sql`SELECT source_record_id,payload FROM anime_catalog_entries
+      WHERE source='ReAnime' AND payload->>'cross_source_ids_json' LIKE '%anilist_ids%'`,
+    sql`SELECT source,source_record_id,anikoto_id,link_status,mapping_kind
+      FROM anime_anikoto_work_lookup
+      WHERE link_status IN ('reviewed','automatic','multi_reviewed')`,
+  ]);
+  const seeds:WorkRef[]=[...matched.map(x=>({source:String(x.source) as Source,id:String(x.source_record_id)})),
+    ...akMatched.map(x=>({source:"Anikoto" as const,id:String(x.anikoto_id)}))];
+  if(!seeds.length)return [];
+  // A declared AniList ID from ReAnime alone is not enough to prove identity.
+  const cross:Array<{reanimeId:string;anilistId:string;compatible:boolean}>=[];
+  const wantedIds=[...new Set(crossRe.flatMap(row=>{
+    const parsed=jsonField(row.payload?.cross_source_ids_json);
+    return Array.isArray(parsed.anilist_ids)?parsed.anilist_ids.map(String):[];
+  }))].filter(id=>id.length && id.length<100);
+  const anilist=wantedIds.length?await sql`SELECT source_record_id,payload FROM anime_catalog_entries
+    WHERE source='AniList' AND source_record_id=ANY(${wantedIds}::text[])`:[];
+  const byAni=new Map(anilist.map(row=>[String(row.source_record_id),row.payload]));
+  for(const row of crossRe) {
+    const parsed=jsonField(row.payload?.cross_source_ids_json);
+    const ids=Array.isArray(parsed.anilist_ids)?parsed.anilist_ids:[];
+    for(const id of ids.slice(0,12)) {
+      const aid=String(id),other=byAni.get(aid);
+      if(other && compatibleSourceRows(row.payload,other))cross.push({
+        reanimeId:String(row.source_record_id),anilistId:aid,compatible:true,
+      });
+    }
+  }
+  const evidence={
+    korean:korean.map(row=>({source:String(row.source) as Source,id:String(row.source_record_id),
+      status:String(row.status||""),anilistId:String(row.anilist_id||""),
+      reanimeId:String(row.reanime_id||"")})),
+    reanime:rematches.map(row=>({reanimeId:String(row.reanime_id),
+      anissiaNo:Number(row.anissia_no),reviewStatus:String(row.review_status)})),
+    manual:manual.map(row=>({reanimeId:String(row.reanime_id),anissiaNo:Number(row.anissia_no)})),
+    cross,
+    anikoto:anilinks.map(row=>({anikotoId:String(row.anikoto_id),
+      target:{source:String(row.source) as Source,id:String(row.source_record_id)},
+      status:String(row.link_status),mappingKind:String(row.mapping_kind||"")}))
+  };
+  const preliminary=buildReviewedWorkGroups({seeds,catalog:[
+    ...matched.map(sourceWork),...akMatched.map(row=>sourceWork({...row,source:"Anikoto"}))],
+    ...evidence,limit:100});
+  const refs=[...new Set(preliminary.flatMap(group=>group.members)
+    .filter(m=>m.source!=="Anikoto").map(m=>m.source+":"+m.id))];
+  const akIds=[...new Set(preliminary.flatMap(group=>group.members)
+    .filter(m=>m.source==="Anikoto").map(m=>m.id))];
+  const [expanded,akExpanded]=await Promise.all([
+    refs.length?sql`SELECT source,source_record_id,payload FROM anime_catalog_entries
+      WHERE (source||':'||source_record_id)=ANY(${refs}::text[])`:Promise.resolve([]),
+    akIds.length?sql`SELECT anikoto_id,payload FROM anime_anikoto_catalog
+      WHERE anikoto_id=ANY(${akIds}::text[])`:Promise.resolve([]),
+  ]);
+  const groups=buildReviewedWorkGroups({seeds,catalog:[
+    ...expanded.map(sourceWork),
+    ...akExpanded.map(row=>sourceWork({...row,source:"Anikoto"}))],
+    ...evidence,limit:100});
+  const order=new Map(seeds.map((ref,i)=>[ref.source+":"+ref.id,i]));
+  return groups.sort((a,b)=>{
+    const rank=(group:typeof a)=>Math.min(...group.members.map(m=>order.get(m.source+":"+m.id)??9999));
+    return rank(a)-rank(b)||a.title.localeCompare(b.title,"ko");
+  }).slice(0,60);
 }
 
 export async function browseLocalEntries(q = "") {
