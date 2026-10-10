@@ -259,10 +259,20 @@ export async function getAdminLinkedSubtitles(animeId: string, episode: number, 
               localArchive: true, episodeConfirmed: true, verifiedMatch: true, adminLinked: true});
           }
         } else if (EXT.test(file)) {
-          const filename = path.relative(verified.full, file);
-          const evidence = readEpisodeEvidence(filename, true);
-          if (evidence.conflict || evidence.range || evidence.multipleSeasons || evidence.episodes.length !== 1 ||
-            !selectEpisodeEntries([{ filename }], request, [seasonEvidence]).length) continue;
+          const filename = path.relative(verified.full, file).split(path.sep).join("/");
+          const basename = path.basename(file);
+          const evidence = readEpisodeEvidence(basename, true);
+          // Some manually downloaded sets put unnumbered filenames inside a
+          // numbered episode directory, e.g. 1화/main.srt. Never override
+          // contradictory evidence in the filename itself.
+          const parent = filename.split("/").slice(0,-1).reverse()
+            .map(part => readEpisodeEvidence(part, true))
+            .find(e => e.episodes.length > 0 || e.multipleSeasons || e.conflict);
+          if (evidence.conflict || evidence.range || evidence.multipleSeasons ||
+            evidence.episodes.length > 1 || (!evidence.episodes.length && !parent?.episodes.length) ||
+            !selectEpisodeEntries([{ filename: basename }], request,
+              [seasonEvidence, ...(parent ? [parent] : [])], Boolean(!evidence.episodes.length && parent?.episodes.length === 1)).length)
+            continue;
           const parsed = decodeSubtitleFile(await readFile(file), filename);
           if (parsed?.content) results.push({...parsed, name: "[DB 연결] " + filename,
             sourceProvider: provider, sourceMatchedTitle: link.title,
