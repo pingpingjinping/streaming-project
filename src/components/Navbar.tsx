@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Film, Search, Loader2, LogIn, LogOut, User, Globe, Settings, Users, ChevronDown, RefreshCw, Link2 } from "lucide-react";
 import BaseUrlSettingsModal from "./BaseUrlSettingsModal";
 import SourceSelectModal, { StreamingSource } from "./SourceSelectModal";
+import { resolveAnimeSearchMode, type AnimeSearchMode } from "@/lib/animeSearchMode";
 
 interface CurrentUser {
   id: number;
@@ -17,6 +18,7 @@ interface CurrentUser {
 export default function Navbar() {
   const [keyword, setKeyword] = useState("");
   const [searchScope, setSearchScope] = useState<"current" | "all">("current");
+  const [searchMode, setSearchMode] = useState<AnimeSearchMode>("db");
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -38,7 +40,9 @@ export default function Navbar() {
     if (match && (match[1] === "anissia" || match[1] === "ohli24" || match[1] === "linkkf" || match[1] === "reanime" || match[1] === "anikoto")) {
       setActiveSource(match[1] as StreamingSource);
     }
-    setSearchScope(new URLSearchParams(window.location.search).get("scope") === "all" ? "all" : "current");
+    const params = new URLSearchParams(window.location.search);
+    setSearchScope(params.get("scope") === "all" ? "all" : "current");
+    setSearchMode(params.get("search_mode") === "page" ? "page" : "db");
   }, []);
 
   // 외부 클릭 시 드롭다운 닫기
@@ -185,7 +189,10 @@ export default function Navbar() {
     const scopeParam = searchScope === "all" ? "&scope=all" : "";
     const linkedParam=activeSource==='reanime' && searchScope!=='all'
       && new URLSearchParams(window.location.search).get('linked')==='1'?'&linked=1':'';
-    const target = `/?tab=search&q=${encodeURIComponent(query)}${scopeParam}${linkedParam}`;
+    const mode = resolveAnimeSearchMode(activeSource, searchScope, searchMode);
+    const modeParam = activeSource === "anissia" && searchScope === "current"
+      ? `&search_mode=${mode}` : "";
+    const target = `/?tab=search&q=${encodeURIComponent(query)}${scopeParam}${linkedParam}${modeParam}`;
 
     setIsSearching(true);
     if (searchSafetyTimerRef.current) clearTimeout(searchSafetyTimerRef.current);
@@ -243,6 +250,18 @@ export default function Navbar() {
             <option value="current">현재 사이트</option>
             <option value="all">전체 사이트</option>
           </select>
+          {activeSource === "anissia" && searchScope === "current" && (
+            <select
+              aria-label="애니시아 검색 방식"
+              value={searchMode}
+              disabled={isSearching}
+              onChange={(e) => setSearchMode(e.target.value as AnimeSearchMode)}
+              className="max-w-[88px] shrink-0 rounded-full border border-purple-500/25 bg-slate-900/80 px-1.5 py-1.5 text-[10px] font-semibold text-purple-200 outline-none focus:border-purple-500 sm:text-xs"
+            >
+              <option value="db">DB 검색</option>
+              <option value="page">페이지 검색</option>
+            </select>
+          )}
           <div className="relative min-w-0 flex-1">
             <input
               type="text"
@@ -446,7 +465,12 @@ export default function Navbar() {
       isOpen={isSourceModalOpen}
       onClose={() => setIsSourceModalOpen(false)}
       currentSource={activeSource}
-      onSourceChange={(newSource) => setActiveSource(newSource)}
+      onSourceChange={(newSource) => {
+        setActiveSource(newSource);
+        // A new site starts with its normal page search.
+        // Returning to Anissia defaults to the Cloudflare DB index.
+        setSearchMode("db");
+      }}
     />
 
     {/* 도메인 설정 모달 */}
