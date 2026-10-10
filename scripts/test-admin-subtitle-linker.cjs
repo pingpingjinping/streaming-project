@@ -142,6 +142,12 @@ test("Pi search includes parent folder paths for nested ZIP archives", async () 
       "naver_subtitles/슬라임 극장판"
     ].sort());
     assert.equal((await browseLocalEntries("히다마리")).total, 1);
+    // Regression: a doubled-backslash Unicode category regex dropped every
+    // Korean letter, turning all Korean searches into an empty filter.
+    assert.equal((await browseLocalEntries("슬라임")).total, 3);
+    assert.equal((await browseLocalEntries("토라도라")).total, 0);
+    assert.equal((await browseLocalEntries("없는애니")).items.length, 0);
+    assert.equal((await browseLocalEntries("스케치")).total, 1);
   } finally {
     testNameEntries = [];
     if (previous === undefined) delete process.env.SUBTITLE_STORAGE_DIR;
