@@ -41,6 +41,10 @@ export default function SubtitleLinkManager() {
   const [folderLabel, setFolderLabel] = useState("직접 받은 자막");
   const [workQuery, setWorkQuery] = useState("");
   const [works, setWorks] = useState<Work[]>([]);
+  const [workSearching, setWorkSearching] = useState(false);
+  const [workStatus, setWorkStatus] = useState("작품명이나 DB ID를 입력하고 검색해 줘.");
+  const [workError, setWorkError] = useState("");
+  const workRequestId = useRef(0);
   const [work, setWork] = useState<Work | null>(null);
   const [kind, setKind] = useState("main");
   const [season, setSeason] = useState(1);
@@ -93,11 +97,43 @@ export default function SubtitleLinkManager() {
   }
   async function searchWorks(event: React.FormEvent) {
     event.preventDefault();
-    setError("");
+    const q = workQuery.trim();
+    const requestId = ++workRequestId.current;
+    setNotice(""); // A previous Pi index refresh is NOT a DB search response.
+    setWorkError("");
+    setWork(null);
+    setWorks([]); // Never leave stale DB results visible for a different query.
+    if (q.length < 2) {
+      setWorkStatus("검색어를 2글자 이상 입력해 줘.");
+      setWorkSearching(false);
+      return;
+    }
+    setWorkSearching(true);
+    setWorkStatus("5개 작품 DB 검색·확정 연결 묶음 확인 중…");
+    const started = Date.now();
     try {
-      const data = await jsonRequest("/api/admin/subtitle-links?mode=works&q=" + encodeURIComponent(workQuery));
-      setWorks(data.items || []);
-    } catch (e) { setError(e instanceof Error ? e.message : "작품을 찾지 못했습니다."); }
+      // Prevent indefinite browser spinner on Pi/Postgres outages.
+      const response = await fetch("/api/admin/subtitle-links?mode=works&q=" + encodeURIComponent(q),
+        { cache: "no-store", signal: AbortSignal.timeout(45000) });
+      const data = await response.json();
+      if (requestId !== workRequestId.current) return;
+      if (!response.ok || !data.success) throw new Error(data.message || "작품 DB 검색 요청 실패");
+      const items: Work[] = Array.isArray(data.items) ? data.items : [];
+      setWorks(items);
+      const seconds = typeof data.elapsedMs === "number" ? data.elapsedMs / 1000
+        : (Date.now() - started) / 1000;
+      setWorkStatus("DB 검색 완료 · " + items.length.toLocaleString() +
+        "개 작품 묶음 · " + seconds.toFixed(1) + "초");
+    } catch (e) {
+      if (requestId !== workRequestId.current) return;
+      const message = e instanceof Error && e.name === "TimeoutError"
+        ? "45초 안에 응답이 없어 종료했어. Pi DB 부하 또는 서버 로그를 확인해 줘."
+        : e instanceof Error ? e.message : "DB 작품 검색 실패";
+      setWorkError(message);
+      setWorkStatus("DB 검색 실패");
+    } finally {
+      if (requestId === workRequestId.current) setWorkSearching(false);
+    }
   }
   async function refreshIndex() {
     if (busy) return;
@@ -234,8 +270,19 @@ export default function SubtitleLinkManager() {
         <input value={workQuery} onChange={e=>setWorkQuery(e.target.value)}
           placeholder="한글·영어·일본어 제목 / DB ID"
           className="min-w-0 flex-1 rounded-lg border border-white/15 bg-slate-950 px-3 py-2 text-sm"/>
-        <button type="submit" className="rounded-lg bg-purple-600 px-4 py-2 text-sm">검색</button>
+        <button type="submit" className="rounded-lg bg-purple-600 px-4 py-2 text-sm">
+          {workSearching ? <Loader2 className="mr-1 inline h-4 w-4 animate-spin" /> :
+            <Search className="mr-1 inline h-4 w-4" />}
+          검색
+        </button>
       </form>
+      <div role="status" aria-live="polite" className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
+        {workSearching && <Loader2 className="h-4 w-4 animate-spin text-violet-300" />}
+        <span>{workStatus}</span>
+      </div>
+      {workError && <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-950/40 p-3 text-xs text-rose-200">
+        {workError}
+      </div>}
       <div className="max-h-80 space-y-2 overflow-y-auto">
         {works.map(item=><button key={item.animeId} type="button" onClick={()=>setWork(item)}
           className={`w-full rounded-xl border px-3 py-3 text-left transition hover:border-purple-400/60 ${work?.animeId===item.animeId
@@ -259,7 +306,11 @@ export default function SubtitleLinkManager() {
             </span>)}
           </div>
         </button>)}
-        {!works.length && <p className="p-3 text-xs text-slate-500">제목 또는 ID를 검색하면 확정된 동일 작품 DB끼리 묶어 보여줘.</p>}
+        {!works.length && <p className="p-3 text-xs text-slate-500">
+          {workSearching ? "DB 작품을 찾고 확정 연결을 확인하는 중…" :
+            workError ? "검색 실패. 위 오류 메시지를 확인해 줘." :
+            "검색 결과가 없거나 아직 검색하지 않았어."}
+        </p>}
       </div>
       {work && <div className="rounded-lg border border-emerald-500/20 bg-emerald-950/30 p-3 text-xs text-emerald-200">
         선택: {work.title} · {work.members.length || 1}개 출처
