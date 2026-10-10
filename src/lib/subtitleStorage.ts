@@ -305,8 +305,8 @@ function anissiaTrackIdentity(creator: string, archiveFilename: string, entryFil
   const entryEpisode=entryEvidence.episodes.length===1 ? entryEvidence.episodes[0] : episodeFromSubtitleFilename(entryFilename);
   const normalizedEntry = entryEpisode === episode ? normalizeSubtitleTrackFilename(entryFilename, episode) : "";
   const trackKey = [normalizeBlogTitle(creator), normalizeBlogTitle(normalizedArchive), normalizeBlogTitle(normalizedEntry)].join("|");
-  const entryTrack = normalizedEntry.match(/\{ep\}([a-z][a-z0-9._-]*)$/i)?.[1] || "";
-  const archiveTrack = normalizedArchive.match(/(?:\{ep\}|\{range\})([a-z][a-z0-9._-]*)$/i)?.[1] || "";
+  const entryTrack = normalizedEntry.match(/\{ep\}[\s._-]*([a-z][a-z0-9._-]*)$/i)?.[1] || "";
+  const archiveTrack = normalizedArchive.match(/(?:\{ep\}|\{range\})[\s._-]*([a-z][a-z0-9._-]*)$/i)?.[1] || "";
   const variant = entryTrack || archiveTrack;
   const trackLabel = /^ns$/i.test(variant) ? "논스폰서판"
     : /^s$/i.test(variant) ? "스폰서판"

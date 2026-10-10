@@ -61,7 +61,7 @@ export function readEpisodeEvidence(value: string, filename = false, filePath = 
     // a year, a Drive ID, or a season token as the episode.
     const bracket = filename ? [...clean.matchAll(/\[\s*0*(\d{1,3})\s*\]/g)] : [];
     episodes.push(...bracket.map(m => Number(m[1])));
-    const tail = clean.match(/(?:^|[\s_\-])0*(\d{1,3})(?:v\d+|[._-]?[A-Za-z]{1,3})?\s*(?:END|완결|끝)?\s*(?:\([^)]*\)|\[[^\]]*\])*\s*$/i);
+    const tail = clean.match(/(?:^|[\s_\-])0*(\d{1,3})(?:v\d+|[._-]?[A-Za-z]{1,3}|[\s._-]+(?:ns|s|tv))?\s*(?:END|완결|끝)?\s*(?:\([^)]*\)|\[[^\]]*\])*\s*$/i);
     if (tail) episodes.push(Number(tail[1]));
     // Some subtitle sets number episodes as "Title S1 (1).smi". Only use
     // a trailing parenthesis when the filename has no stronger episode token;

@@ -86,7 +86,12 @@ export function bundleScopesOverlap(first:string,second:string):boolean {
 }
 
 function normalizedLocalTrack(track:string):string {
-  return track.split('|').map((part,index)=>index===1 || index===2 ? part.replace(/미완성$/,'') : part).join('|');
+  return track.split('|').map((part,index)=>index===1 || index===2
+    ? part.replace(/미완성$/,'')
+      // Older page-number tracks kept spaced NS episode numbers or a stray 화.
+      // Normalize only filename components, retaining creator/source and variant.
+      .replace(/page(?:ep|\d{1,3})(?:화|회|편|話)?(ns|s|tv)?$/i,'pageep$1')
+    : part).join('|');
 }
 const unknownLocalCreator=(value:string)=>!value || value==='로컬파일';
 
@@ -138,7 +143,11 @@ export function normalizeSubtitleTrackFilename(filename: string, episode: number
     .replace(/(?:^|[^a-z\d])(s[1-9])\d{2}(?=$|[^a-z\d])/gi,'$1{ep}')
     .replace(/\b(s\s*0*\d{1,2}\s*e\s*)0*\d{1,4}(?!\d)/gi,'$1{ep}');
   const patterns = [
+    // A page-numbered release may append 화 on only one episode. This is the
+    // same numbering style, unlike separate bare-number and N화 release sets.
+    new RegExp("(\\bpage\\s+)0*" + episode + "(?:\\s*(?:화|회|편|話))?(?=$|[\\s._-]*(?:ns|s|tv)$)", "i"),
     new RegExp("(^|[\\s_-])0*" + episode + "(?=__\\d+$)"),
+    new RegExp("(^|[\\s_-])0*" + episode + "(?=[\\s._-]+(?:ns|s|tv)$)", "i"),
     new RegExp("(^|[\\s_-])0*" + episode + "(?=[A-Za-z][A-Za-z0-9._-]*$)"),
     new RegExp("(^|[^a-z\\d])(?:episode|ep|e|#)\\s*0*" + episode + "(?!\\d)", "i"),
     new RegExp("((?:제|第\\s*)?0*)" + episode + "(\\s*(?:화|회|편|話))"),
