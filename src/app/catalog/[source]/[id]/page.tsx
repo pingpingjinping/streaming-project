@@ -5,12 +5,14 @@ import { getDb } from '@/lib/db';
 import { loadSubtitleCatalog } from '@/lib/koreanSubtitleCatalog';
 import { notFound, redirect } from 'next/navigation';
 import { directCatalogPlaybackHref } from '@/lib/catalogDirectPlayback';
+import { anikotoSeasonHref, getPreferredAnikotoSeason } from '@/lib/preferredAnikotoSeason';
+import PreferredSeasonButton from '@/components/PreferredSeasonButton';
 
 export default async function CatalogWorkPage({ params, searchParams }: {
   params: Promise<{ source: string; id: string }>;
   searchParams: Promise<{ view?: string }>;
 }) {
-  await requireAuth();
+  const user = await requireAuth();
   const { source, id } = await params;
   if (!['AniList','Onnada','ReAnime','Anissia'].includes(source) || !id || id.length > 160) notFound();
   const sql = getDb();
@@ -43,11 +45,18 @@ export default async function CatalogWorkPage({ params, searchParams }: {
   try { posts = await sql`SELECT DISTINCT post_id,blog_title FROM anime_aniall_matches
     WHERE ref_source=${source} AND ref_source_id=${id} ORDER BY post_id`; }
   catch (error: any) { if (error?.code !== '42P01') throw error; }
-  let streams: Array<{anikoto_id:string;link_status:string}> = [];
-  try { streams = await sql`SELECT DISTINCT anikoto_id,link_status FROM anime_anikoto_work_lookup
+  let streams: Array<{anikoto_id:string;link_status:string;target_order:number}> = [];
+  try { streams = await sql`SELECT DISTINCT anikoto_id,link_status,target_order FROM anime_anikoto_work_lookup
     WHERE source=${source} AND source_record_id=${id}
       AND link_status IN ('automatic','reviewed','multi_reviewed') ORDER BY anikoto_id`; }
   catch (error: any) { if (error?.code !== '42P01') throw error; }
+
+  const preferredMap = new Map<string,number|null>();
+  for (const id of [...new Set(streams.map(row=>row.anikoto_id))]) {
+    preferredMap.set(id,await getPreferredAnikotoSeason(user.username,id));
+  }
+  const selectedStream = streams.find(row=>Number(row.target_order)===preferredMap.get(row.anikoto_id));
+  const preferredHref = selectedStream && anikotoSeasonHref(selectedStream.anikoto_id,Number(selectedStream.target_order));
 
   // Catalog-only pages are informational. A known, single playable source
   // should open the ordinary work page immediately, preserving a manual
@@ -60,7 +69,7 @@ export default async function CatalogWorkPage({ params, searchParams }: {
         FROM anime_admin_subtitle_link_members
         WHERE relative_path=ANY(${paths}::text[])`;
     }
-    const target = directCatalogPlaybackHref(
+    const target = preferredHref || directCatalogPlaybackHref(
       manualMembers.map(row => row.anime_id), streams,
     );
     if (target) redirect(target);
@@ -71,8 +80,18 @@ export default async function CatalogWorkPage({ params, searchParams }: {
       <h1 className="text-2xl font-bold">{work.title}</h1>
       <p className="mt-2 text-sm text-slate-400">{[work.year,work.format,`자막 파일 ${work.fileCount}개`,work.postCount ? `자막 글 ${work.postCount}개` : ''].filter(Boolean).join(' · ')}</p>
       <div className="mt-6 flex flex-wrap gap-3">
-        {streams.map(row => <Link key={row.anikoto_id} href={'/anime/ak_' + row.anikoto_id}
-          className="rounded-xl bg-purple-600 px-4 py-2">Anikoto 작품 보기</Link>)}
+        {streams.map(row => {
+          const href=anikotoSeasonHref(row.anikoto_id,Number(row.target_order));
+          if(!href)return null;
+          return <div key={row.anikoto_id+'-'+row.target_order}
+            className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-slate-900/70 p-3">
+            <span className="text-xs text-slate-300">{work.title} · 연결 시즌 {row.target_order}</span>
+            <Link href={href} className="rounded-lg bg-slate-700 px-3 py-2 text-xs hover:bg-slate-600">이 시즌 보기</Link>
+            <PreferredSeasonButton anikotoId={row.anikoto_id}
+              order={Number(row.target_order)} href={href}
+              currentPreferred={preferredMap.get(row.anikoto_id)===Number(row.target_order)} />
+          </div>;
+        })}
         {!streams.length && <p className="text-sm text-slate-400">연결된 영상이 아직 없습니다. 자막 작품 정보는 아래에서 확인할 수 있습니다.</p>}
       </div>
       <h2 className="mt-8 text-lg font-bold">연결된 자막</h2>

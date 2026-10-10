@@ -219,6 +219,14 @@ function pageDeps() {
     '@/lib/auth': {requireAuth:async()=>({username:'viewer'}),getCurrentUserId:async()=>'viewer'},
     '@/lib/db': {getSubtitleEpisodeStart:async()=>13,getAnimeHistoryMap:async()=>({}),getManualStreamSourceById:async()=>null},
     '@/lib/providers': {getProviderByAnimeId:()=>anissia()},
+    '@/lib/preferredAnikotoSeason': {
+      anikotoSeasonHref:()=>null,
+      filterSeasonEpisodes:episodes=>({episodes,filtered:false}),
+      getAnikotoSeasons:async()=>[],
+      getPreferredAnikotoSeason:async()=>null,
+      validSeasonOrder:n=>typeof n==='number'&&Number.isInteger(n)&&n>0,
+    },
+    '@/components/PreferredSeasonButton':'PreferredSeasonButton',
     '@/lib/resolvers/videoResolver': {resolveAnissiaStream:async (...args)=>{
       calls.push(args); return {success:true,embed_url:'https://video.example/13',server_sources:[]};
     }},

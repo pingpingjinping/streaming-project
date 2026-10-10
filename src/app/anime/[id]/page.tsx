@@ -12,19 +12,21 @@ import Link from "next/link";
 import LocalizedAnimeTitle from "@/components/LocalizedAnimeTitle";
 import { notFound } from "next/navigation";
 import { Play, Film, Calendar, CheckCircle2 } from "lucide-react";
+import {anikotoSeasonHref,filterSeasonEpisodes,getAnikotoSeasons,getPreferredAnikotoSeason,validSeasonOrder} from "@/lib/preferredAnikotoSeason";
+import PreferredSeasonButton from "@/components/PreferredSeasonButton";
 
 export default async function AnimeDetailPage({
   params,
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ dub?: string }>;
+  searchParams: Promise<{ dub?: string; season?: string }>;
 }) {
   const user = await requireAuth();
   const currentUserId = await getCurrentUserId();
 
   const { id } = await params;
-  const { dub } = await searchParams;
+  const { dub, season: seasonQuery } = await searchParams;
   const isDub = dub === "1";
 
   const provider = getProviderByAnimeId(id);
@@ -45,8 +47,19 @@ export default async function AnimeDetailPage({
     notFound();
   }
 
+  const isAnikoto = id.startsWith("ak_");
+  const anikotoId = isAnikoto ? id.slice(3) : "";
+  const [seasonOptions, savedOrder] = isAnikoto
+    ? await Promise.all([getAnikotoSeasons(anikotoId),getPreferredAnikotoSeason(user.username,anikotoId)])
+    : [[],null] as const;
+  const requestedOrder=seasonQuery && /^\d{1,3}$/.test(seasonQuery)?Number(seasonQuery):null;
+  const effectiveOrder=(validSeasonOrder(requestedOrder)?requestedOrder:null) ?? savedOrder ??
+    (seasonOptions.length===1?seasonOptions[0].order:null);
+  const currentSeason=seasonOptions.find(row=>row.order===effectiveOrder)||null;
+  const subResult=filterSeasonEpisodes(anime.sub_episodes,currentSeason);
+  const dubResult=filterSeasonEpisodes(anime.dub_episodes,currentSeason);
   const initialHistoryMap = await getAnimeHistoryMap(currentUserId, anime.id);
-  const episodes = isDub ? anime.dub_episodes : anime.sub_episodes;
+  const episodes = isDub ? dubResult.episodes : subResult.episodes;
 
   return (
     <div className="min-h-screen bg-[#0b0f19]">
@@ -118,11 +131,11 @@ export default async function AnimeDetailPage({
               <div className="mt-6 flex flex-wrap items-center gap-3">
                 {episodes.length > 0 && (
                   <Link
-                    href={`/watch/${anime.id}/1${isDub ? "?dub=1" : ""}`}
+                    href={`/watch/${anime.id}/${episodes[0].number}${isDub ? "?dub=1" : ""}`}
                     className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 px-6 py-3 font-bold text-white shadow-xl shadow-purple-600/30 transition hover:scale-105 active:scale-95 text-sm"
                   >
                     <Play className="h-4 w-4 fill-white" />
-                    1화 바로 시청
+                    {episodes[0].number}화 바로 시청
                   </Link>
                 )}
                 <FavoriteButton
@@ -135,6 +148,34 @@ export default async function AnimeDetailPage({
           </div>
         </div>
 
+        {seasonOptions.length>1 && <section className="mt-5 rounded-2xl border border-purple-500/25 bg-slate-900/60 p-4">
+          <h2 className="font-bold text-white">다른 시즌으로 이동</h2>
+          <p className="mt-1 text-xs text-slate-400">확정 연결된 시즌만 표시합니다. 우선 시즌은 계정에 저장되고, 다음에 이 영상을 열 때 적용됩니다.</p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {seasonOptions.map(item=>{
+              const href=anikotoSeasonHref(anikotoId,item.order);
+              if(!href)return null;
+              const active=currentSeason?.order===item.order;
+              return <div key={item.order} className={`rounded-xl border p-3 ${active?"border-purple-500/50 bg-purple-500/10":"border-white/10 bg-slate-950/50"}`}>
+                <p className="font-semibold text-sm text-white">{item.title}</p>
+                <p className="mt-1 text-xs text-slate-400">
+                  {item.year?item.year+" · ":""}연결 시즌 {item.order}
+                  {item.episodeStart && item.episodeEnd? ` · ${item.episodeStart}–${item.episodeEnd}화` : " · 회차 범위 미확정"}
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Link href={href} className="rounded-lg bg-slate-700 px-3 py-2 text-xs text-white hover:bg-slate-600">
+                    {active?"현재 시즌 보기":"다른 시즌으로 이동"}
+                  </Link>
+                  <PreferredSeasonButton anikotoId={anikotoId} order={item.order}
+                    href={href} currentPreferred={savedOrder===item.order} />
+                </div>
+              </div>;
+            })}
+          </div>
+          {currentSeason && !subResult.filtered &&
+            <p className="mt-3 text-xs text-amber-200">이 시즌의 회차 범위가 확인되지 않았거나 영상 회차와 일치하지 않아 전체 회차를 표시합니다.</p>}
+        </section>}
+
         <WorkMatchSetting animeId={anime.id} />
         <SubtitleEpisodeStartSetting animeId={anime.id} />
         <SubtitleBundleAssignmentSetting animeId={anime.id} animeTitle={anime.title} />
@@ -142,8 +183,8 @@ export default async function AnimeDetailPage({
         {/* Episodes Section (50-chunk ranges, sorting, jump search, watched badges) */}
         <EpisodeListSection
           animeId={anime.id}
-          subEpisodes={anime.sub_episodes}
-          dubEpisodes={anime.dub_episodes}
+          subEpisodes={subResult.episodes}
+          dubEpisodes={dubResult.episodes}
           initialIsDub={isDub}
           initialHistoryMap={initialHistoryMap}
         />
