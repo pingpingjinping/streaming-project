@@ -2,6 +2,7 @@ const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),ts=r
 const assert=require('node:assert/strict'),{test}=require('node:test');
 const root=path.join(__dirname,'..');
 function load(file,deps={},globals={}) {
+  deps={'../anikotoWorkOverrides':{getAnikotoWorkOverride:async()=>null},'./AnikotoWorkMatchSetting':()=>null,...deps};
   const exports={};
   const code=ts.transpileModule(fs.readFileSync(path.join(root,file),'utf8'),{
     compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText;
