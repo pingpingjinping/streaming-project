@@ -35,3 +35,16 @@ test('display formatting supports arbitrary minutes and seconds', () => {
   assert.equal(formatSyncTime(125), '2:05');
   assert.equal(formatSyncTime(0), '0:00');
 });
+
+test('external iframe player provides same sponsor UI and reads persistent per-episode breakpoint', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/components/IframePlayer.tsx'), 'utf8');
+  assert.match(source, /<SponsorSubtitleSyncModal/);
+  assert.match(source, /스폰서 이후 자막 싱크 설정/);
+  assert.match(source, /sponsor_sync_start/);
+  assert.match(source, /sponsor_sync_delay/);
+  assert.match(source, /mode: "sponsor"/);
+  // Both libass and the fallback HTML HUD use effective offset, not just button state.
+  assert.match(source, /const effectiveTime = time \+ effectiveSubtitleOffset\(/);
+  assert.match(source, /subtitleClockRef\.current = syncIframeSubtitleClock\(/);
+  assert.match(source, /getCurrentTime=\{\(\) => lastCurrentTimeRef\.current\}/);
+});
