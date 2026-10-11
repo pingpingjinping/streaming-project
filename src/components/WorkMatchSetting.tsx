@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import AnikotoWorkMatchSetting from './AnikotoWorkMatchSetting';
 type Item = {id:string;title:string;nativeTitle?:string;year?:number;format?:string;score?:number;reason?:string};
 export default function WorkMatchSetting({animeId,retryPlayback=false,onConnectionSaved}:{animeId:string;retryPlayback?:boolean;onConnectionSaved?:()=>void}) {
   const router = useRouter();
@@ -55,7 +56,7 @@ export default function WorkMatchSetting({animeId,retryPlayback=false,onConnecti
     }catch(error:any){setNotice(error.message);}finally{setBusy(false);}
   }
   if (!/^(re_|ani_)/.test(animeId)) return null;
-  return <section id="work-match-control" className="mt-5 rounded-2xl border border-purple-500/25 bg-slate-900/60 p-4 text-sm text-slate-300">
+  return <><section id="work-match-control" className="mt-5 rounded-2xl border border-purple-500/25 bg-slate-900/60 p-4 text-sm text-slate-300">
     <h2 className="font-bold text-white">작품 연결 {loaded && (manual?'· 수동 확정':candidate?'· 후보 연결':current?'· 확정 연결':'· 연결 없음')}</h2>
     <p className="mt-2">{animeId.startsWith('ani_')?'영상 작품':'자막 작품'}: {current?`${current.title}${current.year?' · '+current.year+'년':''}`:loaded?'연결 없음':'불러오는 중…'}</p>
     {candidate && <p className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-amber-200">후보 연결 · {reason}. 이 작품으로 임시 연결되어 있습니다. 제목과 시즌을 확인해 주세요.</p>}
@@ -74,5 +75,7 @@ export default function WorkMatchSetting({animeId,retryPlayback=false,onConnecti
       {manual && <button type="button" disabled={busy} onClick={()=>save()} className="mt-3 underline disabled:opacity-50">자동 매칭으로 되돌리기</button>}
     </>}
     {notice && <p role="status" className="mt-2 text-xs text-amber-200">{notice}</p>}
-  </section>;
+  </section>
+  <AnikotoWorkMatchSetting animeId={animeId} retryPlayback={retryPlayback}/>
+  </>;
 }
