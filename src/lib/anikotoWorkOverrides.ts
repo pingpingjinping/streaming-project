@@ -59,7 +59,8 @@ export async function saveAnikotoWorkOverride(anissiaNo: number, anikotoId: stri
       anikoto_episode_start,anikoto_episode_end,target_episode_start,target_episode_end
       FROM anime_anikoto_work_overrides
       WHERE anikoto_id=${anikotoId} AND anissia_no<>${anissiaNo}`;
-    if (other.length && !ranges.length) throw new Error("ambiguous_multi_season");
+    if (other.length && (ranges.length !== 1 || ranges[0].mapping_kind === "whole"))
+      throw new Error("ambiguous_multi_season");
     const range = ranges.length === 1 ? ranges[0] : null;
     if (ranges.length > 1) throw new Error("ambiguous_multi_season");
     const explicit = !!range && range.mapping_kind !== "whole";
