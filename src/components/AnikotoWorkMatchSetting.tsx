@@ -15,13 +15,14 @@ export default function AnikotoWorkMatchSetting({animeId,retryPlayback=false}:{
   const [busy,setBusy]=useState(false);
   const [notice,setNotice]=useState("");
   const [loaded,setLoaded]=useState(false);
+  const [canEdit,setCanEdit]=useState(false);
 
   async function read(q="") {
     const resp=await fetch("/api/anime/anikoto-work-match?animeId="+
       encodeURIComponent(animeId)+"&q="+encodeURIComponent(q),{cache:"no-store"});
     const data=await resp.json();
     if(!resp.ok)throw Error(data.message);
-    setManual(data.manual);setCurrent(data.current);setItems(data.candidates);
+    setManual(data.manual);setCurrent(data.current);setItems(data.candidates);setCanEdit(data.canEdit);
     setLoaded(true);
     return data;
   }
@@ -62,20 +63,20 @@ export default function AnikotoWorkMatchSetting({animeId,retryPlayback=false}:{
       onClick={async()=>{setBusy(true);try{await read();}catch(e:any){setNotice(e.message);}finally{setBusy(false);}}}
       className="mt-3 rounded-lg bg-purple-700 px-3 py-2">Anikoto 연결 확인</button>}
     {loaded && <p className="mt-2">현재 연결: {current?current.title:"없음"}</p>}
-    <form onSubmit={search} className="mt-3 flex gap-2">
+    {canEdit && <form onSubmit={search} className="mt-3 flex gap-2">
       <input aria-label="Anikoto 작품 검색" value={query} onChange={e=>setQuery(e.target.value)}
         placeholder="Anikoto 제목 또는 ID" className="min-w-0 flex-1 rounded-lg bg-slate-950 p-2" maxLength={160}/>
       <button disabled={busy||query.trim().length<2} className="rounded-lg bg-purple-600 px-3 disabled:opacity-50">검색</button>
-    </form>
-    <ul className="mt-3 space-y-2">{items.map(item=><li key={item.id}
+    </form>}
+    {canEdit && <ul className="mt-3 space-y-2">{items.map(item=><li key={item.id}
       className="flex items-center justify-between gap-3 rounded-lg bg-slate-950 p-3">
       <div><p>{item.title} {item.year&&" · "+item.year}</p>
       <p className="break-all text-xs text-slate-400">{item.id}</p></div>
       <button type="button" disabled={busy} onClick={()=>save(item.id)}
         className="shrink-0 rounded-lg bg-purple-600 px-3 py-2 disabled:opacity-50">
         {retryPlayback?"연결하고 재생":"이 작품으로 연결"}</button>
-    </li>)}</ul>
-    {manual&&<button type="button" disabled={busy} onClick={()=>save()}
+    </li>)}</ul>}
+    {canEdit && manual&&<button type="button" disabled={busy} onClick={()=>save()}
       className="mt-3 underline disabled:opacity-50">Anikoto 수동 연결 해제</button>}
     {notice&&<p role="status" className="mt-2 text-xs text-amber-200">{notice}</p>}
   </section>;
