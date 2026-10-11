@@ -65,7 +65,7 @@ def export_rows(project: pathlib.Path, runner=subprocess.run):
         if len(found) > 20000:
             raise ValueError("Manual work match export limit exceeded")
     anikoto = query_rows(project, ANIKOTO_QUERY, runner)
-    used_ani, used_ak = set(), set()
+    used_ani, ak_ranges = set(), {}
     validated_ak = []
     for row in anikoto:
         cols = {"anikoto_id", "anissia_no", "mapping_kind",
@@ -77,9 +77,9 @@ def export_rows(project: pathlib.Path, runner=subprocess.run):
         if (type(aid) is not int or not 1 <= aid <= 2147483647
                 or not isinstance(akid, str)
                 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,199}", akid)
-                or aid in used_ani or akid in used_ak):
+                or aid in used_ani):
             raise ValueError("Invalid or conflicting manual Anikoto work IDs")
-        used_ani.add(aid); used_ak.add(akid)
+        used_ani.add(aid)
         kind = row["mapping_kind"]
         values = [row[k] for k in ("anikoto_episode_start", "anikoto_episode_end",
                                    "target_episode_start", "target_episode_end")]
@@ -93,6 +93,14 @@ def export_rows(project: pathlib.Path, runner=subprocess.run):
                 raise ValueError("Invalid Anikoto season range")
         else:
             raise ValueError("Unknown Anikoto season mapping kind")
+        # One Anikoto URL can contain more than one season, but only
+        # explicit, non-overlapping reviewed source episode ranges can share it.
+        for previous in ak_ranges.get(akid, []):
+            if (kind != "range" or previous["mapping_kind"] != "range"
+                    or not (values[1] < previous["anikoto_episode_start"]
+                            or values[0] > previous["anikoto_episode_end"])):
+                raise ValueError("Overlapping manual Anikoto season mappings")
+        ak_ranges.setdefault(akid, []).append(row)
         validated_ak.append(row)
         if len(validated_ak) > 20000:
             raise ValueError("Manual Anikoto match export limit exceeded")
