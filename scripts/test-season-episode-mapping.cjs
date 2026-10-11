@@ -186,7 +186,7 @@ test('Anikoto administrator override takes priority without ReAnime and respects
   assert.equal(result[0].animeId,'ak_shared-range');
   assert.equal(result[0].linkStatus,'manual');
   assert.equal(result[0].episodeNumber,13);
-  assert.deepEqual(await links.getAnikotoPlaybackCandidates('ani_42',14,true),[]);
+  assert.equal((await links.getAnikotoPlaybackCandidates('ani_42',14,true)).length,0);
 });
 test('Anikoto whole and exact season-local fallback keep source-local episode 1', async () => {
   for (const linked of [[],[{animeId:'ak_season2',episodeNumber:1,mappingKind:'whole'}]]) {
