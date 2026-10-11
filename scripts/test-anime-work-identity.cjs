@@ -6,7 +6,7 @@ const {test} = require('node:test');
 const ts = require('typescript');
 const matchOverrides = {getWorkMatchOverrides:async()=>[],importedLinkIsOverridden:()=>false};
 function load(file, deps) {
-  deps={'../provisionalWorkMatches':{getReservedReanimeIdsForOtherWorks:async()=>new Set(),hasWorkMatchCandidates:async()=>false},'../workMatchOverrides':matchOverrides,'./workMatchOverrides':matchOverrides,'../reanimeMatches':{getConfirmedReanimeIdsForAnissia:async()=>new Map(),getEffectiveReanimeIdsForAnissia:async()=>new Map()},...deps};
+  deps={'../anikotoWorkOverrides':{getAnikotoWorkOverride:async()=>null},'../provisionalWorkMatches':{getReservedReanimeIdsForOtherWorks:async()=>new Set(),hasWorkMatchCandidates:async()=>false},'../workMatchOverrides':matchOverrides,'./workMatchOverrides':matchOverrides,'../reanimeMatches':{getConfirmedReanimeIdsForAnissia:async()=>new Map(),getEffectiveReanimeIdsForAnissia:async()=>new Map()},...deps};
   const exports = {};
   const code = ts.transpileModule(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), {
     compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true},
