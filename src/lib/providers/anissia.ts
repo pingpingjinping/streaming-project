@@ -9,9 +9,9 @@ import {
 } from "./types";
 import { ANISSIA_PREFIX, stripAnissiaId, toAnissiaId } from "./ids";
 import {getConfirmedReanimeIdsForAnissia} from "../reanimeMatches";
-import {getReanimeArtwork} from "./reanime";
-import { localEpisodeCount, toSourceEpisode } from "../episodeMapping";
-import { resolveAnissiaStream } from "../resolvers/videoResolver";
+import {getReanimeArtwork, getAnimeDetail as getReanimeDetail} from "./reanime";
+import { defaultSubtitleEpisodeStart, localEpisodeCount, reviewedVideoStart, toSourceEpisode, videoEpisodeList } from "../episodeMapping";
+import { parseSeason, resolveAnissiaStream } from "../resolvers/videoResolver";
 
 /** Parse Anissia episode labels without concatenating punctuation-separated digits.
  * Labels such as `24.9` are special/decimal episode notation, not episode 249.
@@ -850,6 +850,7 @@ class AnissiaProvider implements AnimeProvider {
   async getAnimeDetail(animeId: string, options: { subtitleEpisodeStart?: number | null } = {}): Promise<AnimeDetail | null> {
     const rawId = stripAnissiaId(animeId);
     const animeNo = parseInt(rawId, 10);
+    const subtitleEpisodeStart = options.subtitleEpisodeStart ?? defaultSubtitleEpisodeStart(animeId);
 
     if (isNaN(animeNo)) {
       return null;
@@ -873,7 +874,12 @@ class AnissiaProvider implements AnimeProvider {
       const captions = capRes.status === "fulfilled" && Array.isArray(capRes.value?.data) ? capRes.value.data : [];
 
       // 확정 ReAnime 메타데이터 우선, 없을 때 AniList 조회
-      const meta = await fetchAnissiaMeta(animeNo,animeData.originalSubject || animeData.subject);
+      const links = await getConfirmedReanimeIdsForAnissia([animeNo]);
+      const linkedId = links.get(animeNo);
+      const [meta, video] = await Promise.all([
+        fetchAnissiaMeta(animeNo,animeData.originalSubject || animeData.subject,links),
+        linkedId ? getReanimeDetail(linkedId).catch(() => null) : Promise.resolve(null),
+      ]);
 
       // 에피소드 목록 추출 (자막 등록된 에피소드 번호 파싱 또는 1부터 최대 번호까지)
       const epNumbers = new Set<number>();
@@ -899,10 +905,17 @@ class AnissiaProvider implements AnimeProvider {
       }
 
       // 최대 화수 계산
-      const maxEp = localEpisodeCount(epNumbers, options.subtitleEpisodeStart, meta?.totalEpisodes || 12);
+      const subtitleCount = localEpisodeCount(epNumbers, subtitleEpisodeStart, meta?.totalEpisodes || 12);
+      // Only an exact confirmed video link can extend a caption-derived list.
+      // Fuzzy AniList metadata remains a fallback, never expansion evidence.
+      const videoEpisodes = video?.video_available === true ? videoEpisodeList(video.sub_episodes,
+        reviewedVideoStart(animeId, video.id) ?? subtitleEpisodeStart,
+        parseSeason(animeData.subject) || parseSeason(animeData.originalSubject || ""),
+        parseSeason(video.title) || parseSeason(video.original_title || ""), meta?.totalEpisodes || subtitleCount) : [];
+      const maxEp = Math.max(subtitleCount, ...videoEpisodes.map(e => e.number));
       const subEpisodes: EpisodeItem[] = [];
       for (let i = 1; i <= Math.max(maxEp, 1); i++) {
-        const cap = captionMap.get(toSourceEpisode(i, options.subtitleEpisodeStart));
+        const cap = captionMap.get(toSourceEpisode(i, subtitleEpisodeStart));
         const watchUrl = cap
           ? `/watch/${animeId}/${i}?creator=${encodeURIComponent(cap.creator)}&sub_url=${encodeURIComponent(cap.website)}`
           : `/watch/${animeId}/${i}`;

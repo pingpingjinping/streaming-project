@@ -412,10 +412,21 @@ test('assignments and exceptions belong to the signed-in user',async()=>{
 function loadSettingsDb(sql) {
   const exports={},vm=require('node:vm');
   const code=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../src/lib/db.ts'),'utf8'),{compilerOptions}).outputText;
-  vm.runInNewContext(code,{exports,require:id=>id==='postgres'?()=>sql:id==='./subtitleLocalIdentity'?identity:require(id),
+  vm.runInNewContext(code,{exports,require:id=>id==='postgres'?()=>sql:id==='./subtitleLocalIdentity'?identity:id==='./episodeMapping'?require('../src/lib/episodeMapping.ts'):require(id),
     process:{env:{DATABASE_URL:'postgres://test'}},console,Buffer,setTimeout,clearTimeout});
   return exports;
 }
+
+test('Final Stage subtitle offset defaults to 21 without replacing a viewer override',async()=>{
+  let saved=null;
+  const db=loadSettingsDb(async parts=>String(parts).includes('SELECT start_episode')
+    ? saved===null?[]:[{start_episode:saved}] : []);
+  assert.equal(await db.getSubtitleEpisodeStart('viewer','ani_1346'),21);
+  assert.equal(await db.getSubtitleEpisodeStart('viewer','re_beatless-final-stage-tmwejf'),21);
+  assert.equal(await db.getSubtitleEpisodeStart('viewer','ani_42'),null);
+  saved=7;
+  assert.equal(await db.getSubtitleEpisodeStart('viewer','ani_1346'),7);
+});
 
 test('concurrent cold DB requests wait for one complete initialization',async()=>{
   const counts=new Map();let release;

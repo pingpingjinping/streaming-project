@@ -28,7 +28,7 @@ export default function AnissiaVideoSourceSelect({
     <section className="mb-4 rounded-2xl border border-slate-700/70 bg-slate-900/70 p-4">
       <div className="mb-3">
         <h2 className="text-sm font-bold text-white">영상 제공처</h2>
-        <p className="mt-1 text-xs text-slate-400">현재 사이트에서 재생이 안 되면 다른 제공처를 선택해 보세요.</p>
+        <p className="mt-1 text-xs text-slate-400">회차 목록은 재생 중인 영상 제공처에 맞춰 표시돼요. 추가 회차나 OVA 자막은 자막 선택에서 연결하거나 회차별 예외로 지정할 수 있어요.</p>
       </div>
       <div className="flex flex-wrap gap-2">
         {SOURCES.map((source) => {

@@ -1,8 +1,8 @@
 import { getReservedReanimeIdsForOtherWorks, hasWorkMatchCandidates } from '../provisionalWorkMatches';
 import { getWorkMatchOverrides } from "../workMatchOverrides";
 import { getEffectiveReanimeIdsForAnissia } from "../reanimeMatches";
-import { mapVideoEpisode, toLocalEpisode, videoEpisodeStart } from "../episodeMapping";
-import { AnimeDetail, EpisodeStreamInfo, ServerSource } from "../providers/types";
+import { mapVideoEpisode, reviewedVideoStart, toLocalEpisode, videoEpisodeList, videoEpisodeStart } from "../episodeMapping";
+import { AnimeDetail, EpisodeItem, EpisodeStreamInfo, ServerSource } from "../providers/types";
 import { reanimeProvider } from "../providers/reanime";
 import { linkkfProvider } from "../providers/linkkf";
 import { ohli24Provider } from "../providers/ohli24";
@@ -190,20 +190,32 @@ export async function resolveAnissiaStream(
   if (!jpTitle && relatedJapaneseTitles.length > 0) jpTitle = relatedJapaneseTitles[0];
 
   const targetSeason = parseSeason(korTitle) || parseSeason(jpTitle);
-  const videoEpisode = (detail: AnimeDetail | null): number | null => detail
-    ? mapVideoEpisode(episodeNumber, detail.sub_episodes.map((e) => e.number), subtitleEpisodeStart,
-        targetSeason, parseSeason(detail.title) || parseSeason(detail.original_title || ""), seasonEpisodeCount)
-    : null;
+  const episodeHint = (detail: AnimeDetail) => reviewedVideoStart(animeId || `ani_${anissiaId}`, detail.id) ?? subtitleEpisodeStart;
+  const videoEpisode = (detail: AnimeDetail | null): number | null => {
+    if (!detail) return null;
+    const numbers = detail.sub_episodes.map(e => e.number);
+    const sourceSeason = parseSeason(detail.title) || parseSeason(detail.original_title || "");
+    const start = videoEpisodeStart(numbers, episodeHint(detail), targetSeason, sourceSeason, seasonEpisodeCount);
+    return mapVideoEpisode(episodeNumber, numbers, episodeHint(detail), targetSeason, sourceSeason,
+      start && start > 1 ? seasonEpisodeCount : undefined);
+  };
   const recordLatestReanimeEpisode = (detail: AnimeDetail | null) => {
     if (!detail?.sub_episodes?.length) return;
     const episodes = detail.sub_episodes.map((e) => e.number);
-    const start = videoEpisodeStart(episodes, subtitleEpisodeStart, targetSeason,
+    const start = videoEpisodeStart(episodes, episodeHint(detail), targetSeason,
       parseSeason(detail.title) || parseSeason(detail.original_title || ""), seasonEpisodeCount);
     if (start === null) return;
     const latest = toLocalEpisode(Math.max(...episodes), start);
     if (latest !== null) latestAvailableEp = Math.max(latestAvailableEp || 0,
       seasonEpisodeCount ? Math.min(latest, seasonEpisodeCount) : latest);
   };
+
+  const playbackCatalog = (detail: AnimeDetail, source: NonNullable<EpisodeStreamInfo["video_source"]>, episodes?: EpisodeItem[]) => ({
+    video_source: source,
+    video_episodes: (episodes || videoEpisodeList(detail.sub_episodes, episodeHint(detail), targetSeason,
+      parseSeason(detail.title) || parseSeason(detail.original_title || ""), seasonEpisodeCount))
+      .map(e => ({ ...e, watch_url: `/watch/${animeId || `ani_${anissiaId}`}/${e.number}?video_source=${source}` })),
+  });
 
 
   // 최신 업로드 회차 번호 추적 (부족한 회차 안내용)
@@ -296,6 +308,7 @@ export async function resolveAnissiaStream(
 
             return {
               ...stream,
+              ...playbackCatalog(detail, "rean"),
               server_sources: serverSources,
             };
           }
@@ -316,17 +329,36 @@ export async function resolveAnissiaStream(
       // explicit episode ranges, so season 1/2 pages can share one Anikoto
       // source without exposing the other season's episode numbers.
       const linkedCandidates = animeId
-        ? await getAnikotoPlaybackCandidates(animeId, episodeNumber)
+        ? await getAnikotoPlaybackCandidates(animeId, episodeNumber, true)
         : [];
 
+      const linkedDetails = new Map<string, AnimeDetail>();
+      await Promise.allSettled([...new Set(linkedCandidates.map(c => c.animeId))].map(async id => {
+        const detail = await anikotoProvider.getAnimeDetail(id);
+        if (detail) linkedDetails.set(id, detail);
+      }));
+      const linkedEpisodes = new Map<number, EpisodeItem>();
       for (const linked of linkedCandidates) {
-        const detail = await anikotoProvider.getAnimeDetail(linked.animeId);
+        const detail = linkedDetails.get(linked.animeId);
+        if (!detail) continue;
+        const episodes = linked.mappingKind === "whole"
+          ? videoEpisodeList(detail.sub_episodes, episodeHint(detail), targetSeason,
+              parseSeason(detail.title) || parseSeason(detail.original_title || ""), seasonEpisodeCount)
+          : detail.sub_episodes.flatMap(e => {
+              if (linked.sourceStart === undefined || linked.targetStart === undefined || linked.targetEnd === undefined) return [];
+              const number = linked.targetStart + e.number - linked.sourceStart;
+              return number >= linked.targetStart && number <= linked.targetEnd
+                ? [{ ...e, number, title: e.title?.replace(/^\d+화/, `${number}화`) || `${number}화` }] : [];
+            });
+        for (const e of episodes) if (!linkedEpisodes.has(e.number)) linkedEpisodes.set(e.number, e);
+      }
+
+      for (const linked of linkedCandidates) {
+        if (linked.episodeNumber < 1) continue;
+        const detail = linkedDetails.get(linked.animeId);
         if (!detail?.sub_episodes?.length) continue;
 
-        const sourceEpisode = linked.mappingKind === "whole"
-          ? mapVideoEpisode(episodeNumber, detail.sub_episodes.map(e => e.number), subtitleEpisodeStart,
-              targetSeason, parseSeason(detail.title) || parseSeason(detail.original_title || ""), seasonEpisodeCount)
-          : linked.episodeNumber;
+        const sourceEpisode = linked.mappingKind === "whole" ? videoEpisode(detail) : linked.episodeNumber;
         const epItem = detail.sub_episodes.find(episode => episode.number === sourceEpisode);
         if (!epItem?.watch_url) continue;
 
@@ -334,6 +366,7 @@ export async function resolveAnissiaStream(
         if (stream && (stream.embed_url || stream.player_url || stream.m3u8_url)) {
           return {
             ...stream,
+            ...playbackCatalog(detail, "anikoto", linkedEpisodes.size ? [...linkedEpisodes.values()].sort((a,b) => a.number-b.number) : undefined),
             server_sources: stream.server_sources?.length
               ? stream.server_sources
               : [{ label: "Anikoto · DB 연결", player_url: epItem.watch_url, id: "anikoto" }],
@@ -369,18 +402,18 @@ export async function resolveAnissiaStream(
         // Recheck the detail page: a search label must not disguise a different
         // work. Complete titles preserve sequel, season, OVA and movie suffixes.
         if (!detail || ![detail.title, detail.original_title || ""].some(value => matchesIdentityTitle(value, aliases))) continue;
-        const sourceEpisode = mapVideoEpisode(episodeNumber, detail.sub_episodes.map(e => e.number), subtitleEpisodeStart,
-          targetSeason, parseSeason(detail.title) || parseSeason(detail.original_title || ""), seasonEpisodeCount);
+        const sourceEpisode = videoEpisode(detail);
         const epItem = detail.sub_episodes.find(episode => episode.number === sourceEpisode);
-        if (epItem?.watch_url) playable.push(epItem);
+        if (epItem?.watch_url) playable.push({ epItem, detail });
       }
       // Duplicate title matches need a reviewed DB link, not result-order luck.
       if (playable.length === 1) {
-        const epItem = playable[0];
+        const { epItem, detail } = playable[0];
         const stream = await anikotoProvider.getEpisodeStream(epItem.watch_url);
         if (stream && (stream.embed_url || stream.player_url || stream.m3u8_url)) {
           return {
             ...stream,
+            ...playbackCatalog(detail, "anikoto"),
             server_sources: stream.server_sources?.length
               ? stream.server_sources
               : [{ label: "Anikoto", player_url: epItem.watch_url, id: "anikoto" }],
@@ -431,6 +464,7 @@ export async function resolveAnissiaStream(
 
             return {
               ...stream,
+              ...playbackCatalog(detail, "linkkf"),
               server_sources: serverSources,
             };
           }
@@ -474,6 +508,7 @@ export async function resolveAnissiaStream(
 
               return {
                 ...stream,
+                ...playbackCatalog(detail, "ohli24"),
                 server_sources: serverSources,
               };
             }

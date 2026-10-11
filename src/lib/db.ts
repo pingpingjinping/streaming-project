@@ -1,4 +1,5 @@
 import postgres from "postgres";
+import { defaultSubtitleEpisodeStart } from "./episodeMapping";
 import {bundleScopesOverlap} from "./subtitleLocalIdentity";
 import { createHash } from "node:crypto";
 
@@ -481,7 +482,8 @@ export async function setSubtitleSourcePriority(value: SubtitleSourcePriority): 
 
 export async function getSubtitleEpisodeStart(userId: string, animeId: string): Promise<number | null> {
   const sql = getDb();
-  if (!sql || !userId || !animeId) return null;
+  const fallback = defaultSubtitleEpisodeStart(animeId);
+  if (!sql || !userId || !animeId) return fallback;
   await initDb();
   try {
     const rows = await sql`
@@ -489,10 +491,10 @@ export async function getSubtitleEpisodeStart(userId: string, animeId: string): 
       WHERE user_id = ${userId} AND anime_id = ${animeId}
       LIMIT 1
     `;
-    return rows[0] ? Number(rows[0].start_episode) : null;
+    return rows[0] ? Number(rows[0].start_episode) : fallback;
   } catch (e) {
     console.warn("[getSubtitleEpisodeStart warning]:", e);
-    return null;
+    return fallback;
   }
 }
 

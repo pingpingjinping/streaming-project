@@ -62,6 +62,7 @@ interface IframePlayerProps {
   initialSubtitle?: any;
   initialCreator?: string;
   initialSubUrl?: string;
+  videoSource?: string;
 }
 
 function formatTime(sec: number): string {
@@ -85,7 +86,9 @@ export default function IframePlayer({
   initialSubtitle,
   initialCreator = "",
   initialSubUrl = "",
+  videoSource,
 }: IframePlayerProps) {
+  const episodeUrl = (number: number | string) => `/watch/${animeId}/${number}${videoSource ? `?video_source=${encodeURIComponent(videoSource)}` : ""}`;
   const containerRef = useRef<HTMLDivElement>(null);
   const mediaFrameRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -1081,7 +1084,7 @@ export default function IframePlayer({
         <div className="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto shrink-0 border-t sm:border-t-0 border-white/5 pt-2 sm:pt-0">
           {linkPreEp && (
             <Link
-              href={`/watch/${animeId}/${linkPreEp}`}
+              href={episodeUrl(linkPreEp)}
               onClick={() => {
                 setNavigatingTarget("prev");
                 syncHistory(false);
@@ -1111,7 +1114,7 @@ export default function IframePlayer({
                   if (targetEp) {
                     setNavigatingTarget("select");
                     syncHistory(false);
-                    window.location.href = `/watch/${animeId}/${targetEp}`;
+                    window.location.href = episodeUrl(targetEp);
                   }
                 }}
                 className={`w-full appearance-none rounded-xl border border-purple-500/30 bg-slate-800/90 py-1.5 pl-3 pr-8 text-xs font-bold text-purple-200 outline-none transition focus:border-purple-400 cursor-pointer ${
@@ -1134,7 +1137,7 @@ export default function IframePlayer({
 
           {linkNextEp && (
             <Link
-              href={`/watch/${animeId}/${linkNextEp}`}
+              href={episodeUrl(linkNextEp)}
               onClick={() => {
                 setNavigatingTarget("next");
                 // Manual navigation is not proof that the current episode ended.

@@ -11,7 +11,7 @@ import { fetchCreatorSubtitle, resolveKoreanTitle } from "@/lib/subtitles";
 import { resolveAnissiaStream } from "@/lib/resolvers/videoResolver";
 import { getManualStreamSourceById, getSubtitleEpisodeStart } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
-import { toSourceEpisode, toLocalEpisode } from "@/lib/episodeMapping";
+import { attachEpisodeCaptions, toSourceEpisode, toLocalEpisode } from "@/lib/episodeMapping";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -103,7 +103,7 @@ export default async function WatchPage({
       : null;
 
   const provider = getProviderByAnimeId(id);
-  const anime = await provider.getAnimeDetail(id, { subtitleEpisodeStart: sourceEpisodeStart });
+  let anime = await provider.getAnimeDetail(id, { subtitleEpisodeStart: sourceEpisodeStart });
 
   // Provider 자체가 죽어 작품 상세를 못 읽어도 직접 링크는 사용할 수 있게 한다.
   if (!anime) {
@@ -175,11 +175,14 @@ export default async function WatchPage({
     );
   }
 
-  const epList = isDub ? anime.dub_episodes : anime.sub_episodes;
-  const matched = epList.find((e) => e.number === epNum);
+  let epList = isDub ? anime.dub_episodes : anime.sub_episodes;
+  let matched = epList.find((e) => e.number === epNum);
   const watchUrl = matched?.watch_url || "";
 
-  if (!watchUrl && !activeManual) {
+  // A verified video can contain additional episodes absent from the caption
+  // catalog. Resolve those numbers before rejecting them; season bounds remain.
+  const canResolveExtra = isAnissia && !isDub && (!sourceEpisodeStart || sourceEpisodeStart === 1 || requestedVideoSource) && epNum > 0 && epNum <= 10000;
+  if (!watchUrl && !activeManual && !canResolveExtra) {
     return (
       <div className="min-h-screen bg-[#0b0f19] pb-16">
         <Navbar />
@@ -200,6 +203,7 @@ export default async function WatchPage({
   const initialCreator = creator || matched?.creator_name || "";
   const sourceEpisode = toSourceEpisode(epNum, sourceEpisodeStart);
   const initialSubUrl = sub_url || matched?.caption_url || "";
+  const subtitleTitle = anime.title;
 
   const [providerStreamInfo, preloadedSub] = await Promise.all([
     activeManual
@@ -213,7 +217,7 @@ export default async function WatchPage({
             requestedVideoSource,
             id,
             sourceEpisodeStart,
-            anime.total_episodes
+            sourceEpisodeStart && sourceEpisodeStart > 1 ? anime.total_episodes : undefined
           )
         : provider.getEpisodeStream(watchUrl),
     (!isDub && initialSubUrl && initialSubUrl.startsWith("http"))
@@ -222,7 +226,7 @@ export default async function WatchPage({
             fetchCreatorSubtitle(
               initialCreator || "제작자",
               initialSubUrl,
-              resolved || anime.title,
+              resolved || subtitleTitle,
               sourceEpisode,
               4000,
               epNum,
@@ -236,6 +240,13 @@ export default async function WatchPage({
   const streamInfo = activeManual
     ? manualSourceToStream(activeManual)
     : providerStreamInfo;
+
+  if (isAnissia && !activeManual && !isDub && streamInfo?.video_episodes?.length) {
+    epList = attachEpisodeCaptions(streamInfo.video_episodes, anime.sub_episodes);
+    anime = { ...anime, sub_episodes: epList, total_episodes: epList.length };
+    matched = epList.find(e => e.number === epNum);
+  }
+  const activeVideoSource = streamInfo?.video_source || streamInfo?.server_sources?.[0]?.id || requestedVideoSource || (isAnissia ? "rean" : currentProviderSource);
 
   if (!streamInfo || (!streamInfo.m3u8_url && !streamInfo.embed_url)) {
     if (isReanime) {
@@ -339,11 +350,7 @@ export default async function WatchPage({
           <AnissiaVideoSourceSelect
             animeId={id}
             episodeNumber={epNum}
-            selectedSource={
-              isAnissia
-                ? providerStreamInfo?.server_sources?.[0]?.id || requestedVideoSource || "rean"
-                : requestedVideoSource || currentProviderSource
-            }
+            selectedSource={activeVideoSource}
             creator={initialCreator}
             subUrl={initialSubUrl}
             isDub={isDub}
@@ -372,6 +379,7 @@ export default async function WatchPage({
           streamType={isIframe ? "iframe" : "m3u8"}
           embedUrl={embedUrl}
           serverSources={streamInfo.server_sources}
+          videoSource={activeManual ? undefined : activeVideoSource}
           initialSubtitle={preloadedSub}
           initialCreator={initialCreator}
           initialSubUrl={initialSubUrl}
