@@ -1,4 +1,8 @@
 import importlib.util
+import io
+import os
+import shutil
+import subprocess
 import pathlib
 import sqlite3
 import tempfile
@@ -66,6 +70,53 @@ class SplitRegistryRuntimeTests(unittest.TestCase):
         row = self.db.execute(query).fetchone()
         self.assertEqual(row[14], 'slug')
 
+
+
+class CopyNullEncodingTests(unittest.TestCase):
+    def make_copy(self):
+        stream = io.StringIO()
+        registry_import.append_copy(
+            stream, 'subtitle_episode_stage', ['target_episode', 'status'],
+            [(None, 'hold'), (13, 'confirmed')],
+        )
+        return stream.getvalue()
+
+    def test_sql_null_marker_matches_csv_writer(self):
+        sql = self.make_copy()
+        # PostgreSQL's E'\\N' SQL literal decodes to a *single*
+        # backslash plus N, exactly what csv.writer emits for None.
+        # A plain '\\N' SQL literal has two backslashes in the
+        # default standard_conforming_strings mode and rejects NULL integers.
+        self.assertIn("WITH (FORMAT csv, NULL E'\\\\N');", sql)
+        self.assertIn("\\N,hold\n", sql)
+        self.assertIn("13,confirmed\n", sql)
+
+    @unittest.skipUnless(
+        os.environ.get('REVIEWED_TEST_DATABASE_URL') and shutil.which('psql'),
+        'A disposable PostgreSQL instance and psql are required',
+    )
+    def test_null_episode_number_imports_as_sql_null(self):
+        sql = (
+            "BEGIN;\n"
+            "CREATE TEMP TABLE subtitle_episode_stage "
+            "(target_episode INTEGER, status TEXT);\n"
+            + self.make_copy()
+            + "SELECT CASE WHEN count(*)=2 "
+            "AND count(*) FILTER "
+            "(WHERE target_episode IS NULL AND status='hold')=1 "
+            "AND count(*) FILTER "
+            "(WHERE target_episode=13 AND status='confirmed')=1 "
+            "THEN 'NULL_COPY_OK' ELSE 'NULL_COPY_BAD' END "
+            "FROM subtitle_episode_stage;\n"
+            "ROLLBACK;\n"
+        )
+        result = subprocess.run(
+            ['psql', '-X', '-v', 'ON_ERROR_STOP=1', '-t', '-A',
+             '-d', os.environ['REVIEWED_TEST_DATABASE_URL']],
+            input=sql, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('NULL_COPY_OK', result.stdout)
 
 if __name__ == '__main__':
     unittest.main()
