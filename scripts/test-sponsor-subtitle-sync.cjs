@@ -5,12 +5,12 @@ const assert = require('node:assert/strict');
 const {test} = require('node:test');
 const ts = require('typescript');
 
-const exports = {};
+const sandboxExports = {};
 const code = ts.transpileModule(fs.readFileSync(path.join(__dirname, '../src/lib/sponsorSubtitleSync.ts'), 'utf8'), {
   compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}
 }).outputText;
-vm.runInNewContext(code, {exports});
-const {effectiveSubtitleOffset: at, formatSyncTime} = exports;
+vm.runInNewContext(code, {exports: sandboxExports});
+const {effectiveSubtitleOffset: at, formatSyncTime} = sandboxExports;
 
 test('S/NS sponsor break applies additional delay only after the specified time', () => {
   const rule = {startSeconds: 630, delaySeconds: 10};
