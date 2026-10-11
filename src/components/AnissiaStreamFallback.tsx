@@ -3,6 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import AnissiaVideoSourceSelect from "@/components/AnissiaVideoSourceSelect";
+import WorkMatchSetting from "@/components/WorkMatchSetting";
 import {
   AlertCircle,
   ArrowLeft,
@@ -133,7 +134,7 @@ export default function AnissiaStreamFallback({
             <h3 className="text-lg font-bold text-white sm:text-xl">
               {maxAvailableEp && maxAvailableEp < episodeNumber
                 ? `${episodeNumber}화 영상 소스 등록 대기 중`
-                : "영상 스트림을 제공하지 않는 작품입니다"}
+                : "영상 소스를 연결하지 못했습니다"}
             </h3>
 
             <p className="mt-2 text-sm leading-relaxed text-slate-300">
@@ -176,6 +177,8 @@ export default function AnissiaStreamFallback({
           </div>
         </div>
       </div>
+
+      <WorkMatchSetting animeId={animeId} retryPlayback />
 
       {/* Subtitle Info & Direct Blog / Download Card */}
       {(initialCreator || initialSubUrl || preloadedSub) && (() => {

@@ -2,6 +2,9 @@ export interface AnimeListItem {
   id: string;
   title: string;
   original_title?: string;
+  // Provider identity, independent of a bundled translated display title.
+  identity_titles?: string[];
+  anilist_id?: number;
   poster: string;
   detail_url: string;
   remarks: string;
@@ -37,6 +40,8 @@ export interface EpisodeItem {
 export interface AnimeDetail {
   id: string;
   title: string;
+  identity_titles?: string[];
+  anilist_id?: number;
   poster: string;
   description: string;
   genres: string[];

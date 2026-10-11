@@ -1,4 +1,5 @@
 import WorkMatchBadge from "@/components/WorkMatchBadge";
+import WorkMatchSetting from "@/components/WorkMatchSetting";
 import Navbar from "@/components/Navbar";
 import Player from "@/components/Player";
 import ReanimeWatchFallback from "@/components/ReanimeWatchFallback";
@@ -170,6 +171,7 @@ export default async function WatchPage({
               위의 직접 스트림 링크에 다른 사이트의 embed/player 주소 또는 m3u8 주소를 추가해 재생할 수 있습니다.
             </p>
           </div>
+          <WorkMatchSetting animeId={id} retryPlayback />
         </main>
       </div>
     );
@@ -195,6 +197,7 @@ export default async function WatchPage({
               직접 스트림 링크를 추가하거나 작품 회차 목록으로 돌아가 주세요.
             </p>
           </div>
+          <WorkMatchSetting animeId={id} retryPlayback />
         </main>
       </div>
     );

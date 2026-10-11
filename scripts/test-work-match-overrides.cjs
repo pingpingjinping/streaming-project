@@ -4,9 +4,9 @@ const root=path.join(__dirname,'..');
 function load(file,deps={},globals={}) {
   const exports={};
   const code=ts.transpileModule(fs.readFileSync(path.join(root,file),'utf8'),{
-    compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText;
+    compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText;
   vm.runInNewContext(code,{exports,require:name=>name in deps?deps[name]:require(name),
-    console,URL,URLSearchParams,AbortSignal,Date,process,Buffer,...globals});return exports;
+    console,URL,URLSearchParams,AbortSignal,AbortController,Date,process,Buffer,...globals});return exports;
 }
 const manual=[{reanimeId:'fixed-season-2',anissiaNo:42,updatedBy:'admin'}];
 const overrideApi=(sql)=>load('src/lib/workMatchOverrides.ts',{'./db':{getDb:()=>sql,initDb:async()=>{}}});
@@ -86,7 +86,7 @@ function resolver(hasEpisode=true,confirmed=true,held=false) {
     '../provisionalWorkMatches':{getReservedReanimeIdsForOtherWorks:async()=>new Set(),hasWorkMatchCandidates:async()=>held},'../workMatchOverrides':{getWorkMatchOverrides:async()=>manual},
     '../episodeMapping':mapping,'../reanimeMatches':{getEffectiveReanimeIdsForAnissia:async()=>confirmed?new Map([[42,'fixed-season-2']]):new Map()},
     '../providers/reanime':{reanimeProvider:reanime},'../providers/anissia':{fetchAniListMeta:async()=>null},
-    '../providers/anikoto':{},'../providers/linkkf':{},'../providers/ohli24':{},'../anikotoLinks':{},'../animeWorkIdentity':{},
+    '../providers/anikoto':{},'../providers/linkkf':{},'../providers/ohli24':{},'../anikotoLinks':{},'../animeWorkIdentity':load('src/lib/animeWorkIdentity.ts',{'@/lib/db':{getDb:()=>null}}),
     '../db':{getAnissiaStreamCache:async()=>({reanime_id:confirmed?'wrong-season-1':'fixed-season-2'}),setAnissiaStreamCache:async()=>{}},
   },{fetch:()=>{throw Error('unexpected network');}});
   return {...api,searches,streams,details};
@@ -184,3 +184,76 @@ test('Postgres migration, collision rollback, refresh persistence and linked cat
 
     }finally{if(sql)await sql.end();await admin.unsafe(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await admin.end();}
   });
+
+function treeElements(tree) {
+  if(!tree || typeof tree!=='object')return [];
+  if(Array.isArray(tree))return tree.flatMap(treeElements);
+  return [tree,...treeElements(tree.props?.children)];
+}
+function workMatchControl({retryPlayback=true,canEdit=true,saveOk=true}={}) {
+  const states=[],effects=[],requests=[],replacements=[];
+  let cursor=0,refreshes=0,retries=0;
+  const right={id:'ensemble',title:'Tokubetsu-hen Hibike! Euphonium: Ensemble Contest'};
+  const component=load('src/components/WorkMatchSetting.tsx',{
+    react:{useState:initial=>{
+      const index=cursor++;
+      if(!(index in states))states[index]=initial;
+      return [states[index],value=>{states[index]=value;}];
+    },useEffect:callback=>{effects.push(callback);}},
+    'react/jsx-runtime':{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})},
+    'next/navigation':{useRouter:()=>({replace:url=>replacements.push(url),refresh:()=>refreshes++})},
+  },{window:{location:{pathname:'/watch/ani_2425/7',search:'?video_source=anikoto&creator=author&sub_url=https%3A%2F%2Fblog.example%2F7&dub=1&source_ep=1&manual_source=9'}},
+    fetch:async(url,options={})=>{
+      requests.push({url,options});
+      if(options.method==='PUT')return {ok:saveOk,json:async()=>saveOk?{success:true}:{message:'save failed'}};
+      const searching=new URL(url,'https://app.example').searchParams.get('q');
+      return {ok:true,json:async()=>({current:null,manual:false,canEdit,candidates:searching?[right]:[]})};
+    }}).default;
+  const render=()=>{cursor=0;return component({animeId:'ani_2425',retryPlayback,onConnectionSaved:()=>retries++});};
+  const init=async()=>{render();effects.shift()();await new Promise(resolve=>setImmediate(resolve));return render();};
+  return {init,render,requests,replacements,get refreshes(){return refreshes;},get retries(){return retries;}};
+}
+test('failed playback can search the DB, save a link and retry the same episode using its linked provider',async()=>{
+  const ui=workMatchControl();
+  let tree=await ui.init();
+  treeElements(tree).find(e=>e.type==='input').props.onChange({target:{value:'Ensemble Contest'}});
+  tree=ui.render();
+  await treeElements(tree).find(e=>e.type==='form').props.onSubmit({preventDefault(){}});
+  tree=ui.render();
+  const save=treeElements(tree).find(e=>e.type==='button' && e.props.children==='연결하고 다시 재생');
+  assert.ok(save);
+  await save.props.onClick();
+  const put=ui.requests.find(r=>r.options.method==='PUT');
+  assert.deepEqual(JSON.parse(put.options.body),{animeId:'ani_2425',targetId:'ensemble'});
+  assert.equal(ui.refreshes,1);assert.equal(ui.retries,1);assert.equal(ui.replacements.length,1);
+  const retry=new URL(ui.replacements[0],'https://app.example');
+  assert.equal(retry.pathname,'/watch/ani_2425/7');
+  assert.equal(retry.searchParams.get('video_source'),'rean');
+  assert.equal(retry.searchParams.get('creator'),'author');
+  assert.equal(retry.searchParams.get('sub_url'),'https://blog.example/7');
+  assert.equal(retry.searchParams.get('dub'),'1');
+  assert.equal(retry.searchParams.get('source_ep'),'1');
+  assert.equal(retry.searchParams.has('manual_source'),false);
+});
+test('detail page connection retains its existing save behavior without playback navigation',async()=>{
+  const ui=workMatchControl({retryPlayback:false});
+  let tree=await ui.init();
+  treeElements(tree).find(e=>e.type==='input').props.onChange({target:{value:'Ensemble Contest'}});
+  await treeElements(ui.render()).find(e=>e.type==='form').props.onSubmit({preventDefault(){}});
+  const save=treeElements(ui.render()).find(e=>e.type==='button' && e.props.children==='이 작품으로 변경');
+  await save.props.onClick();
+  assert.equal(ui.refreshes,1);assert.equal(ui.retries,0);assert.deepEqual(ui.replacements,[]);
+});
+test('failed playback connection preserves administrator permissions and does not retry a failed save',async()=>{
+  const readonly=workMatchControl({canEdit:false});
+  const tree=await readonly.init();
+  assert.ok(!treeElements(tree).some(e=>e.type==='form' || e.type==='button'));
+  const ui=workMatchControl({saveOk:false});
+  let editable=await ui.init();
+  treeElements(editable).find(e=>e.type==='input').props.onChange({target:{value:'Ensemble Contest'}});
+  await treeElements(ui.render()).find(e=>e.type==='form').props.onSubmit({preventDefault(){}});
+  const save=treeElements(ui.render()).find(e=>e.type==='button' && e.props.children==='연결하고 다시 재생');
+  await save.props.onClick();
+  assert.equal(ui.refreshes,0);assert.equal(ui.retries,0);assert.deepEqual(ui.replacements,[]);
+  assert.ok(treeElements(ui.render()).some(e=>e.props?.role==='status' && e.props.children==='save failed'));
+});

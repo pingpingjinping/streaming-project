@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Player from "@/components/Player";
+import WorkMatchSetting from "@/components/WorkMatchSetting";
 import { stripReanimeId } from "@/lib/providers/ids";
 import { EpisodeItem } from "@/lib/providers/types";
 import Link from "next/link";
@@ -227,6 +228,9 @@ export default function ReanimeWatchFallback({
               <RefreshCw className="h-4 w-4" /> 다시 시도
             </button>
           </div>
+        </div>
+        <div className="text-left">
+          <WorkMatchSetting animeId={id} retryPlayback onConnectionSaved={loadStream} />
         </div>
       </main>
     );

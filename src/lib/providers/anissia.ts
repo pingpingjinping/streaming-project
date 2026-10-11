@@ -11,7 +11,7 @@ import { ANISSIA_PREFIX, stripAnissiaId, toAnissiaId } from "./ids";
 import {getConfirmedReanimeIdsForAnissia, getPlaybackReanimeIdForAnissia} from "../reanimeMatches";
 import {getReanimeArtwork, getAnimeDetail as getReanimeDetail} from "./reanime";
 import { defaultSubtitleEpisodeStart, localEpisodeCount, reviewedVideoStart, toSourceEpisode, videoEpisodeList } from "../episodeMapping";
-import { parseSeason, resolveAnissiaStream } from "../resolvers/videoResolver";
+import { parseSeason, resolveAnissiaStream, matchesVideoPlaybackIdentity } from "../resolvers/videoResolver";
 
 /** Parse Anissia episode labels without concatenating punctuation-separated digits.
  * Labels such as `24.9` are special/decimal episode notation, not episode 249.
@@ -907,11 +907,24 @@ class AnissiaProvider implements AnimeProvider {
 
       // 최대 화수 계산
       const subtitleCount = localEpisodeCount(epNumbers, subtitleEpisodeStart, meta?.totalEpisodes || 12);
+      const targetSeason = parseSeason(animeData.subject) || parseSeason(animeData.originalSubject || "");
+      const trustedVideo = linkedId && links.get(animeNo)?.replace(/^re_/, "") === linkedId.replace(/^re_/, "");
+      let validVideo = !!trustedVideo;
+      if (video && !trustedVideo) {
+        const aliases = [animeData.subject, animeData.originalSubject].filter(Boolean);
+        const verifiedMeta = meta && matchesVideoPlaybackIdentity({
+          title: meta.nativeTitle, original_title: meta.romajiTitle,
+        }, aliases, null, false);
+        if (verifiedMeta) aliases.push(meta.nativeTitle, meta.romajiTitle);
+        validVideo = matchesVideoPlaybackIdentity(video, aliases,
+          verifiedMeta ? meta.anilistId : null,
+          !!targetSeason && targetSeason > 1 && Number(subtitleEpisodeStart) > 1);
+      }
       // Default playback is ReAnime: its actual playlist owns the detail list.
       // Artwork still requires a confirmed link; playback can also use the
-      // selected provisional work or a successful, non-conflicting cached ID.
+      // selected provisional work or a cached ID with verified work identity.
       // Fuzzy AniList counts are fallback metadata, never expansion evidence.
-      const videoEpisodes = video?.video_available === true ? videoEpisodeList(video.sub_episodes,
+      const videoEpisodes = video?.video_available === true && validVideo ? videoEpisodeList(video.sub_episodes,
         reviewedVideoStart(animeId, video.id) ?? subtitleEpisodeStart,
         parseSeason(animeData.subject) || parseSeason(animeData.originalSubject || ""),
         parseSeason(video.title) || parseSeason(video.original_title || ""), meta?.totalEpisodes || subtitleCount) : [];

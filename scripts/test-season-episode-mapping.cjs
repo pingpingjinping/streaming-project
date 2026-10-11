@@ -23,6 +23,12 @@ function load(file, deps = {}, globals = {}) {
   return exports;
 }
 const mapping = load('src/lib/episodeMapping.ts');
+const videoIdentity = load('src/lib/resolvers/videoResolver.ts', {
+  '../providers/reanime':{}, '../providers/anikoto':{}, '../providers/linkkf':{}, '../providers/ohli24':{},
+  '../providers/anissia':{}, '../db':{}, '../anikotoLinks':{},
+  '../animeWorkIdentity':load('src/lib/animeWorkIdentity.ts',{'@/lib/db':{getDb:()=>null}}),
+});
+
 const range = (first, last) => Array.from({length: last - first + 1}, (_, i) => first + i);
 const korean = '정반대의 너와 나 2기';
 const native = '正反対な君と僕 第2期';
@@ -33,7 +39,7 @@ function anissia(captionNumbers = range(13,25), metaCount = 13, options = {}) {
       ? new Map([[options.animeNo || 42,'linked']]) : new Map(),getEffectiveReanimeIdsForAnissia:async()=>new Map(),
       getPlaybackReanimeIdForAnissia:async()=> options.video && (options.confirmed !== false || options.playbackLinked) ? 'linked' : null},
     './reanime': {getReanimeArtwork: async () => null,getAnimeDetail:async()=>options.video},
-    '../resolvers/videoResolver': {parseSeason: text => Number(text?.match(/(?:Season\s*|第)(\d+)/i)?.[1] || text?.match(/(\d+)기/)?.[1]) || null},
+    '../resolvers/videoResolver': {matchesVideoPlaybackIdentity:videoIdentity.matchesVideoPlaybackIdentity,parseSeason: text => Number(text?.match(/(?:Season\s*|第)(\d+)/i)?.[1] || text?.match(/(\d+)기/)?.[1]) || null},
   }, {fetch: async url => {
     if (String(url).includes('graphql')) return {ok: true, json: async () => ({data: {Media: {
       id: 1, title: {}, episodes: metaCount,
@@ -103,7 +109,7 @@ function resolver({sourceTitle = 'Seihantai na Kimi to Boku', numbers = range(1,
     '../providers/anissia': {fetchAniListMeta: async () => ({romajiTitle:romaji})},
     '../db': {getAnissiaStreamCache: async () => cached ? {reanime_id:'merged'} : null,
       setAnissiaStreamCache: async () => {}},
-    '../anikotoLinks': {getAnikotoPlaybackCandidates: async (id,ep) => {mappingRequests.push([id,ep]);return linked;}},
+    '../anikotoLinks': {getAnikotoPlaybackCandidates: async (id,ep) => {mappingRequests.push([id,ep]);return linked.map(row => ({linkStatus:'reviewed',...row}));}},
     '../animeWorkIdentity': {getAnimeWorkIdentity: async () => ({titles:[romaji]}),
       normalizeIdentityTitle: value => value.toLowerCase().replace(/\W/g,''),
       matchesIdentityTitle: (value,aliases) => aliases.includes(value)},
@@ -147,9 +153,9 @@ test('wrong cached first season never plays source 1; latest availability is loc
   assert.deepEqual(threeSeasons.streams,[]);
 });
 test('search examines a valid combined source after rejecting a first-season candidate', async () => {
-  const api = resolver({cached:false,items:[{id:'first',title:'Show Season 1'},{id:'merged',title:'Show'}],details:{
-    first:{title:'Show Season 1',sub_episodes:range(1,12).map(number=>({number,watch_url:`wrong/${number}`}))},
-    merged:{title:'Show',sub_episodes:range(1,25).map(number=>({number,watch_url:`correct/${number}`}))},
+  const api = resolver({cached:false,items:[{id:'first',title:'Seihantai na Kimi to Boku Season 1'},{id:'merged',title:'Seihantai na Kimi to Boku'}],details:{
+    first:{title:'Seihantai na Kimi to Boku Season 1',sub_episodes:range(1,12).map(number=>({number,watch_url:`wrong/${number}`}))},
+    merged:{title:'Seihantai na Kimi to Boku',sub_episodes:range(1,25).map(number=>({number,watch_url:`correct/${number}`}))},
   }});
   await api.run(1);
   assert.deepEqual(api.streams,['correct/13']);
@@ -467,4 +473,77 @@ test('iframe previous/next and dropdown navigation retain the actual video sourc
   select.props.onChange({target:{value:'24'}});
   assert.equal(location.href,'/watch/ani_42/24?video_source=anikoto');
   assert.ok(nodes.some(e=>e.type==='SubtitleSelectModal'));
+});
+
+test('ReAnime keeps raw identity and AniList ID despite an unrelated bundled display label', async () => {
+  const nativeTitle='特別編 響け！ユーフォニアム～アンサンブルコンテスト～';
+  const romajiTitle='Tokubetsu-hen Hibike! Euphonium: Ensemble Contest';
+  const raw={anime_id:'ensemble',anilist_id:150429,title:{native:nativeTitle,romaji:romajiTitle},can_watch:true};
+  const provider=load('src/lib/providers/reanime.ts',{
+    '@/lib/db':{DEFAULT_REANIME_URL:'https://rean.example',getReanimeBaseUrl:async()=> 'https://rean.example'},
+    '@/lib/reanimeMatches':{getBundledReanimeMatch:()=>({koreanTitle:'Wrong display label'}),
+      findReanimeSearchTitles:()=>[],findReanimeSearchTitlesFromDb:async()=>[]},
+  },{Date,fetch:async url=>({ok:true,json:async()=>String(url).includes('/search?')
+    ? {results:[raw]}:String(url).endsWith('/episodes') ? {data:[{episode_number:1}]}:raw})});
+  const item=(await provider.searchAnime(romajiTitle)).items[0];
+  const detail=await provider.getAnimeDetail('re_ensemble');
+  for(const value of [item,detail]) {
+    assert.equal(value.title,'Wrong display label');
+    assert.equal(value.original_title,nativeTitle);
+    assert.deepEqual(plain(value.identity_titles),[nativeTitle,romajiTitle]);
+    assert.equal(value.anilist_id,150429);
+  }
+  assert.equal(new URL(detail.sub_episodes[0].watch_url).searchParams.get('anilist'),'150429');
+});
+
+test('detail cannot import an unrelated cached work playlist even when episode one exists', async () => {
+  const wrong=videoDetail('re_elfen','Elfen Lied Special',1,8);
+  const detail=await anissia([1],1,{confirmed:false,playbackLinked:true,video:wrong,
+    title:'특별편 울려라! 유포니엄: 앙상블 콘테스트',
+    originalTitle:'特別編 響け! ユーフォニアム～アンサンブルコンテスト～'}).getAnimeDetail('ani_42');
+  assert.equal(detail.total_episodes,1);
+  assert.deepEqual(plain(detail.sub_episodes.map(e=>e.number)),[1]);
+  assert.ok(!detail.sub_episodes[0].title.includes('Video'));
+});
+
+test('missing metadata or episode address exposes the existing DB connection control on the watch page',async()=>{
+  for(const detail of [null,{id:'ani_2425',title:'Ensemble',sub_episodes:[],dub_episodes:[]}]) {
+    const api=pageDeps();
+    api.deps['@/lib/providers']={getProviderByAnimeId:()=>({getAnimeDetail:async()=>detail})};
+    const page=load('src/app/watch/[id]/[ep]/page.tsx',api.deps).default;
+    const tree=await page({params:Promise.resolve({id:'ani_2425',ep:'1'}),searchParams:Promise.resolve({})});
+    const controls=elements(tree).filter(e=>e.type==='WorkMatchSetting');
+    assert.equal(controls.length,1);
+    assert.equal(controls[0].props.animeId,'ani_2425');
+    assert.equal(controls[0].props.retryPlayback,true);
+  }
+});
+test('Anissia stream failure offers inline DB connection instead of only an external-link workaround',()=>{
+  const deps={
+    'react/jsx-runtime':{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})},
+    'next/link':'Link','next/image':'Image',
+    'lucide-react':new Proxy({},{get:(_,key)=>key}),
+    '@/components/AnissiaVideoSourceSelect':'SourceSelect',
+    '@/components/WorkMatchSetting':'WorkMatchSetting',
+  };
+  const component=load('src/components/AnissiaStreamFallback.tsx',deps).default;
+  const tree=component({animeId:'ani_2425',animeTitle:'Ensemble Contest',episodeNumber:1,selectedVideoSource:'anikoto'});
+  const control=elements(tree).find(e=>e.type==='WorkMatchSetting');
+  assert.equal(control.props.animeId,'ani_2425');assert.equal(control.props.retryPlayback,true);
+});
+test('ReAnime browser fallback exposes DB connection only after failure, not during loading or successful playback',()=>{
+  for(const [states,expected] of [[[true,null,null],0],[[false,'offline',null],1],[[false,null,{animeId:'re_ensemble'}],0]]) {
+    let cursor=0;
+    const deps={
+      react:{useState:()=>[states[cursor++],()=>{}],useEffect:()=>{}},
+      'react/jsx-runtime':{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})},
+      'next/link':'Link','lucide-react':new Proxy({},{get:(_,key)=>key}),
+      '@/components/Player':'Player','@/components/WorkMatchSetting':'WorkMatchSetting',
+      '@/lib/providers/ids':load('src/lib/providers/ids.ts'),
+    };
+    const component=load('src/components/ReanimeWatchFallback.tsx',deps).default;
+    const controls=elements(component({id:'re_ensemble',ep:1})).filter(e=>e.type==='WorkMatchSetting');
+    assert.equal(controls.length,expected);
+    if(expected){assert.equal(controls[0].props.animeId,'re_ensemble');assert.equal(controls[0].props.retryPlayback,true);}
+  }
 });
