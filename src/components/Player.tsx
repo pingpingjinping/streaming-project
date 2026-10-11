@@ -2164,14 +2164,16 @@ export default function Player(props: PlayerProps) {
       sourceBundleLabel: option.sourceBundleLabel,
       bundleAssigned: option.bundleAssigned,
     };
-    try {
-      const trackPreferenceKey = `anissia-local-track:${animeId}`;
-      if (option.localArchive && option.sourceProvider === "anissia" && option.localArchiveTrackKey) {
-        window.localStorage.setItem(trackPreferenceKey, option.localArchiveTrackKey);
-      } else {
-        window.localStorage.removeItem(trackPreferenceKey);
-      }
-    } catch {}
+    if (!option.episodeException) {
+      try {
+        const trackPreferenceKey = `anissia-local-track:${animeId}`;
+        if (option.localArchive && option.sourceProvider === "anissia" && option.localArchiveTrackKey) {
+          window.localStorage.setItem(trackPreferenceKey, option.localArchiveTrackKey);
+        } else {
+          window.localStorage.removeItem(trackPreferenceKey);
+        }
+      } catch {}
+    }
     const next = [subtitle, ...subs.filter((item) => item.name !== subtitle.name)];
     setSubs(next);
     setSelectedSubIndex(0);
