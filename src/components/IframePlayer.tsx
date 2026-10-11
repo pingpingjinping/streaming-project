@@ -28,6 +28,8 @@ import type { ServerSource } from "@/lib/providers/types";
 import { usePlayerFullscreen } from "./usePlayerFullscreen";
 import { useContainedPlayerFrame } from "./useContainedPlayerFrame";
 import { iframeSeekMessage, iframePausedState, syncIframeSubtitleClock, updateSubtitleHud, type IframeSubtitleClock } from "@/lib/iframePlayback";
+import SponsorSubtitleSyncModal from "./SponsorSubtitleSyncModal";
+import { effectiveSubtitleOffset, formatSyncTime, type SponsorSubtitleSync } from "@/lib/sponsorSubtitleSync";
 import PlayerSettingsModal, {
   DEFAULT_PLAYER_SETTINGS,
   loadPlayerSettings,
@@ -125,6 +127,9 @@ export default function IframePlayer({
   const [currentVideoTime, setCurrentVideoTime] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
   const [syncOffset, setSyncOffset] = useState(0.0);
+  const [sponsorSync, setSponsorSync] = useState<SponsorSubtitleSync>({ startSeconds: null, delaySeconds: 0 });
+  const [sponsorSyncOpen, setSponsorSyncOpen] = useState(false);
+  const sponsorSyncRef = useRef<SponsorSubtitleSync>({ startSeconds: null, delaySeconds: 0 });
   const [isSubEnabled, setIsSubEnabled] = useState(true);
   const [subSize, setSubSize] = useState<"small" | "normal" | "large">("normal");
   const [isSavedSync, setIsSavedSync] = useState(false);
@@ -431,24 +436,37 @@ export default function IframePlayer({
     return list;
   }, []);
 
-  // 3. Load saved sync setting from DB
+  // 3. Restore ordinary and breakpoint sync independently for each episode.
   useEffect(() => {
+    let cancelled = false;
+    sponsorSyncRef.current = { startSeconds: null, delaySeconds: 0 };
+    setSponsorSync(sponsorSyncRef.current);
+    setSyncOffset(0);
+    setIsSavedSync(false);
     async function loadSavedSync() {
       try {
         const res = await fetch(
           `/api/anime/reanime-sync?animeId=${encodeURIComponent(animeId)}&ep=${episodeNumber}`
         );
         const data = await res.json();
-        if (data.success && data.setting) {
-          const savedOffset = parseFloat(data.setting.sync_offset || "0");
-          setSyncOffset(savedOffset);
-          setIsSavedSync(true);
-        }
+        if (cancelled || !data.success || !data.setting) return;
+        const savedOffset = Number(data.setting.sync_offset) || 0;
+        const savedStart = data.setting.sponsor_sync_start;
+        const savedDelay = Number(data.setting.sponsor_sync_delay) || 0;
+        const next: SponsorSubtitleSync = {
+          startSeconds: Number.isInteger(savedStart) && savedStart >= 0 && savedDelay > 0 ? savedStart : null,
+          delaySeconds: savedDelay > 0 ? savedDelay : 0,
+        };
+        setSyncOffset(savedOffset);
+        sponsorSyncRef.current = next;
+        setSponsorSync(next);
+        setIsSavedSync(true);
       } catch (err) {
         console.error("Failed to load saved sync offset:", err);
       }
     }
-    loadSavedSync();
+    void loadSavedSync();
+    return () => { cancelled = true; };
   }, [animeId, episodeNumber]);
 
   // 4. Save sync setting to DB (debounced)
@@ -480,6 +498,39 @@ export default function IframePlayer({
     },
     [animeId, episodeNumber, subtitles, currentSubIndex]
   );
+
+  // Save an independent per-episode sponsor breakpoint, preserving ordinary offset.
+  const saveSponsorSync = useCallback(async (startSeconds: number | null, delaySeconds: number): Promise<boolean> => {
+    try {
+      const response = await fetch("/api/anime/reanime-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "sponsor", animeId, ep: episodeNumber,
+          sponsorSyncStart: startSeconds, sponsorSyncDelay: delaySeconds,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) return false;
+      const next: SponsorSubtitleSync = { startSeconds, delaySeconds };
+      sponsorSyncRef.current = next;
+      setSponsorSync(next);
+      // Re-anchor libass immediately, even when paused.
+      if (octopusRef.current?.worker) {
+        const time = lastCurrentTimeRef.current;
+        const offset = effectiveSubtitleOffset(syncOffsetRef.current, sponsorSyncRef.current, time);
+        subtitleClockRef.current = syncIframeSubtitleClock(
+          octopusRef.current, subtitleClockRef.current, time + offset, playbackPausedRef.current,
+          { offset, reset: true });
+      }
+      showNotice(startSeconds === null ? "스폰서 이후 싱크 설정 해제 (이 회차에 저장)"
+        : `스폰서 이후 싱크: ${formatSyncTime(startSeconds)}부터 +${delaySeconds}초 (이 회차에 저장)`);
+      return true;
+    } catch (error) {
+      console.error("[Iframe sponsor subtitle sync save]", error);
+      return false;
+    }
+  }, [animeId, episodeNumber, showNotice]);
 
   // 5. Fetch Korean subtitles for this anime
   const [resolvedTitle, setResolvedTitle] = useState<string>("");
@@ -620,7 +671,7 @@ export default function IframePlayer({
             fallbackFont: "/libass/default.woff2",
             workerUrl: "/libass/subtitles-octopus-worker.js",
             legacyWorkerUrl: "/libass/subtitles-octopus-worker.js",
-            timeOffset: syncOffsetRef.current,
+            timeOffset: effectiveSubtitleOffset(syncOffsetRef.current, sponsorSyncRef.current, lastCurrentTimeRef.current),
             targetFps: 60,
             onReady: () => {
               isOctopusActiveRef.current = true;
@@ -634,8 +685,8 @@ export default function IframePlayer({
                   Math.max(1, Math.round(ch * sharpness))
                 );
                 if (octopusRef.current) subtitleClockRef.current = syncIframeSubtitleClock(
-                  octopusRef.current, null, lastCurrentTimeRef.current + syncOffsetRef.current, playbackPausedRef.current,
-                  { offset: syncOffsetRef.current });
+                  octopusRef.current, null, lastCurrentTimeRef.current + effectiveSubtitleOffset(syncOffsetRef.current, sponsorSyncRef.current, lastCurrentTimeRef.current), playbackPausedRef.current,
+                  { offset: effectiveSubtitleOffset(syncOffsetRef.current, sponsorSyncRef.current, lastCurrentTimeRef.current) });
               } catch {}
             },
             onError: (e: any) => {
@@ -722,7 +773,8 @@ export default function IframePlayer({
         playbackStatusKnownRef.current = true;
         if (octopusRef.current?.worker) subtitleClockRef.current = syncIframeSubtitleClock(
           octopusRef.current, subtitleClockRef.current,
-          lastCurrentTimeRef.current + syncOffsetRef.current, paused, { offset: syncOffsetRef.current });
+          lastCurrentTimeRef.current + effectiveSubtitleOffset(syncOffsetRef.current, sponsorSyncRef.current, lastCurrentTimeRef.current), paused,
+          { offset: effectiveSubtitleOffset(syncOffsetRef.current, sponsorSyncRef.current, lastCurrentTimeRef.current) });
       }
 
       // Handle Fullscreen queries from iframe
@@ -770,10 +822,10 @@ export default function IframePlayer({
         if (octopusRef.current && typeof octopusRef.current.setCurrentTime === "function") {
           try {
             if (octopusRef.current.worker) {
-              const effectiveTime = time + syncOffsetRef.current;
+              const effectiveTime = time + effectiveSubtitleOffset(syncOffsetRef.current, sponsorSyncRef.current, time);
               subtitleClockRef.current = syncIframeSubtitleClock(
                 octopusRef.current, subtitleClockRef.current, effectiveTime, playbackPausedRef.current,
-                { offset: syncOffsetRef.current });
+                { offset: effectiveSubtitleOffset(syncOffsetRef.current, sponsorSyncRef.current, time) });
             } else {
               isOctopusActiveRef.current = false;
               setIsOctopusActive(false);
@@ -802,7 +854,7 @@ export default function IframePlayer({
           updateSubtitleHud(hudTextRef.current, "");
           updateSubtitleHud(topHudTextRef.current, "");
         } else {
-          const effectiveTime = time + syncOffsetRef.current;
+          const effectiveTime = time + effectiveSubtitleOffset(syncOffsetRef.current, sponsorSyncRef.current, time);
           const matchedCues = cuesRef.current.filter((c) => effectiveTime >= c.start && effectiveTime < c.end);
           updateSubtitleHud(hudTextRef.current, matchedCues.filter(c => !c.isTop).map(c => c.text).join("\n"));
           updateSubtitleHud(topHudTextRef.current, matchedCues.filter(c => c.isTop).map(c => c.text).join("\n"));
@@ -844,8 +896,8 @@ export default function IframePlayer({
           octopusRef.current.resize(renderW, renderH);
           subtitleClockRef.current = syncIframeSubtitleClock(
             octopusRef.current, subtitleClockRef.current,
-            lastCurrentTimeRef.current + syncOffsetRef.current, playbackPausedRef.current,
-            { offset: syncOffsetRef.current, reset: true });
+            lastCurrentTimeRef.current + effectiveSubtitleOffset(syncOffsetRef.current, sponsorSyncRef.current, lastCurrentTimeRef.current), playbackPausedRef.current,
+            { offset: effectiveSubtitleOffset(syncOffsetRef.current, sponsorSyncRef.current, lastCurrentTimeRef.current), reset: true });
         } catch {}
       }
     };
@@ -1266,6 +1318,13 @@ export default function IframePlayer({
         )}
       </div>
 
+      <button type="button" onClick={() => setSponsorSyncOpen(true)}
+        className="my-3 rounded-xl border border-purple-500/40 bg-slate-900 px-3 py-2 text-xs font-semibold text-purple-200 hover:bg-slate-800">
+        {sponsorSync.startSeconds === null
+          ? "스폰서 이후 자막 싱크 설정"
+          : `스폰서 이후 싱크 · ${formatSyncTime(sponsorSync.startSeconds)}부터 +${sponsorSync.delaySeconds}초`}
+      </button>
+
       {/* Layer 3: Subtitle Control Toolbar (플레이어 하단) */}
       <div className="rounded-2xl border border-purple-500/20 bg-slate-900/70 p-3 sm:p-4 backdrop-blur-md space-y-3">
         {/* Row 1: Subtitle Source & First Dialogue Guide */}
@@ -1441,6 +1500,16 @@ export default function IframePlayer({
           </div>
         </div>
       </div>
+
+      <SponsorSubtitleSyncModal
+        isOpen={sponsorSyncOpen}
+        onClose={() => setSponsorSyncOpen(false)}
+        episodeNumber={episodeNumber}
+        startSeconds={sponsorSync.startSeconds}
+        delaySeconds={sponsorSync.delaySeconds}
+        getCurrentTime={() => lastCurrentTimeRef.current}
+        onSave={saveSponsorSync}
+      />
 
       <PlayerSettingsModal
         isOpen={isSettingsOpen}
