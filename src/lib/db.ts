@@ -441,7 +441,7 @@ async function initializeDb() {
   // A shared multi-season Anikoto URL is only accepted with a reviewed range.
   await sql`CREATE TABLE IF NOT EXISTS anime_anikoto_work_overrides (
     anissia_no INTEGER PRIMARY KEY CHECK (anissia_no>0),
-    anikoto_id VARCHAR(200) NOT NULL UNIQUE,
+    anikoto_id VARCHAR(200) NOT NULL,
     mapping_kind VARCHAR(8) NOT NULL CHECK (mapping_kind IN ('whole','range')),
     anikoto_episode_start INTEGER,
     anikoto_episode_end INTEGER,
