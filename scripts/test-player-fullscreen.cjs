@@ -26,6 +26,8 @@ test('Anissia auto-matched Anikoto iframe has the same sandbox policy as direct 
   const {default: Player} = load('src/components/IframePlayer.tsx', {
     react, 'next/link': {}, 'lucide-react': {}, './SubtitleSelectModal': {},
     './PlayerSettingsModal': {DEFAULT_PLAYER_SETTINGS: {}},
+    './SponsorSubtitleSyncModal': {default:()=>null},
+    '@/lib/sponsorSubtitleSync': {effectiveSubtitleOffset:(v)=>v, formatSyncTime:()=>''},
     './usePlayerFullscreen': {usePlayerFullscreen: () => ({mode: 'inline', isFullscreen: false, toggleFullscreen() {}})},
     './useContainedPlayerFrame': {useContainedPlayerFrame() {}},
     '@/lib/iframePlayback': load('src/lib/iframePlayback.ts'),
@@ -356,7 +358,7 @@ test('ASS subtitle sharpness is shown beside fullscreen exit opacity and applies
   assert.doesNotMatch(syncResizeBlock, /canvasRef\.current\.width\s*=|canvasRef\.current\.height\s*=/);
   assert.match(
     iframe,
-    /syncOctopusCanvasSize[\s\S]*?syncIframeSubtitleClock\([\s\S]*?lastCurrentTimeRef\.current \+ syncOffsetRef\.current[\s\S]*?reset: true/
+    /syncOctopusCanvasSize[\s\S]*?syncIframeSubtitleClock\([\s\S]*?lastCurrentTimeRef\.current \+ effectiveSubtitleOffset\([\s\S]*?reset: true/
   );
   assert.match(iframe, /playerSettings\.subtitleSharpness,[\s\S]*?\]\);/);
 });

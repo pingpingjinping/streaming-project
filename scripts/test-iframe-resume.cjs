@@ -193,6 +193,8 @@ function messageControl() {
   const context = {...playback, iframeRef:ref({contentWindow:frame}),
     playbackPausedRef:ref(true), playbackStatusKnownRef:ref(false), lastClockAdvanceRef:ref(0),
     lastCurrentTimeRef:ref(0), lastDurationRef:ref(0), syncOffsetRef:ref(0), subtitleClockRef:ref(null),
+    sponsorSyncRef:ref({startSeconds:null,delaySeconds:0}),
+    effectiveSubtitleOffset:(base,rule,time)=>rule.startSeconds!==null && time>=rule.startSeconds ? base+rule.delaySeconds : base,
     octopusRef:ref({worker:{},setIsPaused:(paused,time)=>calls.push(['pause',paused,time]),
       setCurrentTime:time=>calls.push(['time',time])}),
     resumeHistoryReadyRef:ref(false), pendingResumeRef:ref(null), lastHistorySaveTime:ref(0),

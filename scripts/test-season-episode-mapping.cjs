@@ -476,6 +476,8 @@ test('iframe previous/next and dropdown navigation retain the actual video sourc
     './usePlayerFullscreen':{usePlayerFullscreen:()=>({mode:'native',isFullscreen:false,toggleFullscreen:()=>{}})},
     './useContainedPlayerFrame':{useContainedPlayerFrame:()=>{}},'@/lib/iframePlayback':{},
     './PlayerSettingsModal':{default:'PlayerSettingsModal',DEFAULT_PLAYER_SETTINGS:{}},
+    './SponsorSubtitleSyncModal':{default:'SponsorSubtitleSyncModal'},
+    '@/lib/sponsorSubtitleSync':{effectiveSubtitleOffset:(base)=>base,formatSyncTime:()=>''},
   },{window:{location},fetch:async()=>({ok:true,json:async()=>({})})}).default;
   const tree=component({animeId:'ani_42',animeTitle:'Work',episodeNumber:21,linkPreEp:20,linkNextEp:22,
     videoSource:'anikoto',subEpisodes:range(1,24).map(number=>({number,title:`${number}화`}))});
