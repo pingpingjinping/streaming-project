@@ -39,6 +39,8 @@ import PlayerSettingsModal, {
 } from "./PlayerSettingsModal";
 import SubtitleSelectModal, { SubtitleOption } from "./SubtitleSelectModal";
 import IframePlayer from "./IframePlayer";
+import SponsorSubtitleSyncModal from "./SponsorSubtitleSyncModal";
+import { effectiveSubtitleOffset, formatSyncTime, type SponsorSubtitleSync } from "@/lib/sponsorSubtitleSync";
 import { isReanimeId } from "@/lib/providers/ids";
 import type { ServerSource } from "@/lib/providers/types";
 
@@ -197,6 +199,8 @@ export default function Player(props: PlayerProps) {
   const syncSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshSubtitleSettingsRef = useRef<((currentSubs: SubtitleItem[], activeIdx: number) => void) | null>(null);
   const currentSyncOffsetRef = useRef<number>(0.0);
+  const sponsorSyncRef = useRef<SponsorSubtitleSync>({ startSeconds: null, delaySeconds: 0 });
+  const appliedEffectiveOffsetRef = useRef<number>(NaN);
   const docPipWindowRef = useRef<Window | null>(null);
   const docPipPlaceholderRef = useRef<HTMLDivElement | null>(null);
   const nativePipTextTrackRef = useRef<TextTrack | null>(null);
@@ -495,6 +499,13 @@ export default function Player(props: PlayerProps) {
 
         // 5. 상태 및 ref 즉각 동기화 (비동기 렌더 지연 없이 이벤트 핸들러가 즉시 새 회차 참조)
         currentEpRef.current = targetEp;
+        // Do not carry another episode's sponsor breakpoint over during seamless switching.
+        sponsorSyncRef.current = { startSeconds: null, delaySeconds: 0 };
+        appliedEffectiveOffsetRef.current = NaN;
+        currentSyncOffsetRef.current = 0;
+        setCurrentSyncOffset(0);
+        setSponsorSync(sponsorSyncRef.current);
+        setSponsorSyncOpen(false);
         currentM3u8UrlRef.current = newM3u8;
         currentPreEpRef.current = newPreEp;
         currentNextEpRef.current = newNextEp;
@@ -626,6 +637,8 @@ export default function Player(props: PlayerProps) {
   const [loadingCreatorName, setLoadingCreatorName] = useState<string | null>(null);
   const [isSubtitleFinderOpen, setIsSubtitleFinderOpen] = useState(false);
   const [currentSyncOffset, setCurrentSyncOffset] = useState<number>(0.0);
+  const [sponsorSync, setSponsorSync] = useState<SponsorSubtitleSync>({ startSeconds: null, delaySeconds: 0 });
+  const [sponsorSyncOpen, setSponsorSyncOpen] = useState(false);
   const [currentSubSize, setCurrentSubSize] = useState<number>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("anime_sub_size");
@@ -1173,7 +1186,9 @@ export default function Player(props: PlayerProps) {
         return;
       }
 
-      const offset = currentSyncOffsetRef.current || 0;
+      const offset = effectiveSubtitleOffset(
+        currentSyncOffsetRef.current, sponsorSyncRef.current, artRef.current?.currentTime || 0,
+      );
       const isAppleDevice =
         typeof navigator !== "undefined" &&
         (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent) ||
@@ -1564,6 +1579,8 @@ export default function Player(props: PlayerProps) {
       pendingSubtitleRef.current = sub;
       if (!artRef.current) return;
       const art = artRef.current;
+      const adjustedOffset = effectiveSubtitleOffset(offset, sponsorSyncRef.current, art.currentTime || 0);
+      appliedEffectiveOffsetRef.current = adjustedOffset;
 
       // 1. Clean up existing ASS SubtitlesOctopus instance and canvas elements
       if (octopusRef.current) {
@@ -1637,7 +1654,7 @@ export default function Player(props: PlayerProps) {
                 (playerSettingsRef.current.subtitleSharpness || 1) > 1 ? 2160 : 1440,
               workerUrl: "/libass/subtitles-octopus-worker.js",
               legacyWorkerUrl: "/libass/subtitles-octopus-worker.js",
-              timeOffset: offset,
+              timeOffset: adjustedOffset,
               onReady: () => {
                 art.notice.show = `${sub.name} (ASS 특수효과) 자막 로드 완료`;
                 const playerEl = (art.template?.$player as HTMLElement | undefined) || containerRef.current;
@@ -1701,7 +1718,7 @@ export default function Player(props: PlayerProps) {
                 art.template.$subtitle.style.display = "flex";
               }
             });
-          art.subtitle.offset = offset;
+          art.subtitle.offset = adjustedOffset;
           art.notice.show = `${sub.name} 자막 로드 완료`;
         }
       }
@@ -1758,20 +1775,60 @@ export default function Player(props: PlayerProps) {
     syncPipStyles();
   }, [syncPipStyles]);
 
+  // Apply the additional sponsor delay only after the saved video-time breakpoint.
+  // Re-seeks and time updates both use the current video clock, never cumulative shifts.
+  const applyEffectiveSubtitleSync = useCallback((force = false) => {
+    const art = artRef.current;
+    if (!art) return;
+    const offset = effectiveSubtitleOffset(
+      currentSyncOffsetRef.current, sponsorSyncRef.current, art.currentTime || 0,
+    );
+    if (!force && appliedEffectiveOffsetRef.current === offset) return;
+    appliedEffectiveOffsetRef.current = offset;
+    if (octopusRef.current?.setTimeOffset) {
+      try { octopusRef.current.setTimeOffset(offset); } catch {}
+    }
+    if (art.subtitle) art.subtitle.offset = offset;
+    // Rebuild native PiP cues only when crossing the breakpoint or changing a setting.
+    if (isNativePipActive()) void syncCuesToPipTrack(true);
+  }, [syncCuesToPipTrack, isNativePipActive]);
+
+  const saveSponsorSync = useCallback(async (startSeconds: number | null, delaySeconds: number) => {
+    const episodeToSave = currentEpRef.current;
+    try {
+      const response = await fetch("/api/anime/reanime-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "sponsor", animeId, ep: episodeToSave,
+          sponsorSyncStart: startSeconds, sponsorSyncDelay: delaySeconds,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success || currentEpRef.current !== episodeToSave) return false;
+      const next: SponsorSubtitleSync = { startSeconds, delaySeconds };
+      sponsorSyncRef.current = next;
+      setSponsorSync(next);
+      applyEffectiveSubtitleSync(true);
+      if (artRef.current) {
+        artRef.current.notice.show = startSeconds === null
+          ? "스폰서 이후 싱크 설정 해제 (이 회차에 저장)"
+          : `스폰서 이후 싱크: ${formatSyncTime(startSeconds)}부터 +${delaySeconds}초 (이 회차에 저장)`;
+      }
+      return true;
+    } catch (e) {
+      console.error("[Save sponsor subtitle sync error]:", e);
+      return false;
+    }
+  }, [animeId, applyEffectiveSubtitleSync]);
+
   // Subtitle sync offset controller
   const setSubtitleSyncOffset = useCallback(
     (val: number) => {
       const offset = parseFloat(String(val));
       currentSyncOffsetRef.current = offset;
       setCurrentSyncOffset(offset);
-      if (octopusRef.current && typeof octopusRef.current.setTimeOffset === "function") {
-        try {
-          octopusRef.current.setTimeOffset(offset);
-        } catch {}
-      }
-      if (artRef.current && artRef.current.subtitle) {
-        artRef.current.subtitle.offset = offset;
-      }
+      applyEffectiveSubtitleSync(true);
       if (artRef.current) {
         artRef.current.notice.show = `자막 싱크: ${offset > 0 ? "+" : ""}${offset.toFixed(1)} 초 (이 회차에 저장)`;
       }
@@ -1793,7 +1850,7 @@ export default function Player(props: PlayerProps) {
         }).catch((err) => console.error("Failed to save episode subtitle sync:", err));
       }, 500);
     },
-    [animeId, syncCuesToPipTrack, isNativePipActive]
+    [animeId, applyEffectiveSubtitleSync]
   );
 
   // Restore subtitle sync independently for each episode.
@@ -1801,22 +1858,32 @@ export default function Player(props: PlayerProps) {
     let cancelled = false;
     currentSyncOffsetRef.current = 0;
     setCurrentSyncOffset(0);
+    sponsorSyncRef.current = { startSeconds: null, delaySeconds: 0 };
+    setSponsorSync(sponsorSyncRef.current);
+    appliedEffectiveOffsetRef.current = NaN;
+    applyEffectiveSubtitleSync(true);
     fetch(`/api/anime/reanime-sync?animeId=${encodeURIComponent(animeId)}&ep=${currentEp}`)
       .then((response) => response.json())
       .then((data) => {
-        if (cancelled || !data.success || !data.setting) return;
+        if (cancelled || !data.success || currentEpRef.current !== currentEp || !data.setting) return;
         const offset = Number(data.setting.sync_offset) || 0;
+        const start = data.setting.sponsor_sync_start;
+        const delay = Number(data.setting.sponsor_sync_delay) || 0;
+        const rule: SponsorSubtitleSync = {
+          startSeconds: Number.isInteger(start) && start >= 0 && delay > 0 ? start : null,
+          delaySeconds: delay > 0 ? delay : 0,
+        };
         currentSyncOffsetRef.current = offset;
         setCurrentSyncOffset(offset);
-        if (octopusRef.current?.setTimeOffset) octopusRef.current.setTimeOffset(offset);
-        if (artRef.current?.subtitle) artRef.current.subtitle.offset = offset;
-        syncCuesToPipTrack(isNativePipActive());
+        sponsorSyncRef.current = rule;
+        setSponsorSync(rule);
+        applyEffectiveSubtitleSync(true);
       })
       .catch((err) => console.error("Failed to load episode subtitle sync:", err));
     return () => {
       cancelled = true;
     };
-  }, [animeId, currentEp, syncCuesToPipTrack, isNativePipActive]);
+  }, [animeId, currentEp, applyEffectiveSubtitleSync]);
 
   // Refresh ArtPlayer's setting menu for Subtitle Selector
   const refreshSubtitleSettings = useCallback(
@@ -2609,6 +2676,17 @@ export default function Player(props: PlayerProps) {
               },
             },
             {
+              name: "sponsorSubtitleSync",
+              width: 240,
+              html: "스폰서 이후 자막 싱크",
+              tooltip: "회차별 설정",
+              selector: [{ html: "시작 시각 / 지연 시간 설정", value: "edit" }],
+              onSelect: () => {
+                setSponsorSyncOpen(true);
+                return "스폰서 이후 자막 싱크";
+              },
+            },
+            {
               name: "subtitleSize",
               width: 230,
               html: "자막 크기",
@@ -3220,6 +3298,9 @@ export default function Player(props: PlayerProps) {
             applyTimelineHighlight(skipIntervalsRef.current);
           }
         });
+        art.on("video:timeupdate", () => applyEffectiveSubtitleSync());
+        art.on("video:seeked", () => applyEffectiveSubtitleSync());
+        art.on("video:loadedmetadata", () => applyEffectiveSubtitleSync(true));
         art.on("video:play", () => {
           if (!isNativePipActive()) {
             hideAllNativeVideoTracks();
@@ -3980,6 +4061,17 @@ export default function Player(props: PlayerProps) {
         )}
       </div>
 
+      {/* A shortcut is available outside ArtPlayer's settings, including on mobile. */}
+      <button
+        type="button"
+        onClick={() => setSponsorSyncOpen(true)}
+        className="mt-3 rounded-xl border border-purple-500/40 bg-slate-900 px-3 py-2 text-xs font-semibold text-purple-200 hover:bg-slate-800"
+      >
+        {sponsorSync.startSeconds === null
+          ? "스폰서 이후 자막 싱크 설정"
+          : `스폰서 이후 싱크 · ${formatSyncTime(sponsorSync.startSeconds)}부터 +${sponsorSync.delaySeconds}초`}
+      </button>
+
       {/* Episode Navigation & Controls */}
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-purple-500/20 bg-slate-900/80 p-4 backdrop-blur-md">
         {/* Navigation Buttons */}
@@ -4648,6 +4740,15 @@ export default function Player(props: PlayerProps) {
         </div>
       )}
 
+      <SponsorSubtitleSyncModal
+        isOpen={sponsorSyncOpen}
+        onClose={() => setSponsorSyncOpen(false)}
+        episodeNumber={currentEp}
+        startSeconds={sponsorSync.startSeconds}
+        delaySeconds={sponsorSync.delaySeconds}
+        getCurrentTime={() => artRef.current?.currentTime || 0}
+        onSave={saveSponsorSync}
+      />
       {/* Player Settings Modal */}
       <SubtitleSelectModal
         isOpen={isSubtitleFinderOpen}

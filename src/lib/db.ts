@@ -233,12 +233,18 @@ async function initializeDb() {
         anime_id VARCHAR(100) NOT NULL,
         episode_number INT NOT NULL,
         sync_offset REAL DEFAULT 0.0,
+        sponsor_sync_start INTEGER,
+        sponsor_sync_delay REAL DEFAULT 0,
         subtitle_name VARCHAR(100),
         subtitle_url TEXT,
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT uq_reanime_sub_sync UNIQUE (user_id, anime_id, episode_number)
       )
     `;
+    // Existing Pi databases already have this table; add the new nullable
+    // breakpoint without altering any stored episode sync or subtitle choice.
+    await sql`ALTER TABLE reanime_subtitle_settings ADD COLUMN IF NOT EXISTS sponsor_sync_start INTEGER`;
+    await sql`ALTER TABLE reanime_subtitle_settings ADD COLUMN IF NOT EXISTS sponsor_sync_delay REAL DEFAULT 0`;
   } catch (e: any) {
     if (e?.code !== "23505" && !e?.message?.includes("already exists")) {
       console.warn("[initDb reanime_subtitle_settings warning]:", e?.message);
@@ -2025,6 +2031,8 @@ export async function deleteUser(id: number): Promise<boolean> {
 // ==========================================
 export interface ReanimeSubtitleSetting {
   sync_offset: number;
+  sponsor_sync_start: number | null;
+  sponsor_sync_delay: number;
   subtitle_name?: string | null;
   subtitle_url?: string | null;
 }
@@ -2039,7 +2047,7 @@ export async function getReanimeSubtitleSetting(
   await initDb();
   try {
     const rows = await sql`
-      SELECT sync_offset, subtitle_name, subtitle_url
+      SELECT sync_offset, sponsor_sync_start, sponsor_sync_delay, subtitle_name, subtitle_url
       FROM reanime_subtitle_settings
       WHERE user_id = ${userId} AND anime_id = ${animeId} AND episode_number = ${episodeNumber}
       LIMIT 1;
@@ -2047,6 +2055,8 @@ export async function getReanimeSubtitleSetting(
     if (rows.length === 0) return null;
     return {
       sync_offset: Number(rows[0].sync_offset) || 0.0,
+      sponsor_sync_start: rows[0].sponsor_sync_start === null ? null : Number(rows[0].sponsor_sync_start),
+      sponsor_sync_delay: Number(rows[0].sponsor_sync_delay) || 0,
       subtitle_name: rows[0].subtitle_name || null,
       subtitle_url: rows[0].subtitle_url || null,
     };
@@ -2081,6 +2091,35 @@ export async function setReanimeSubtitleSetting(
     return true;
   } catch (e) {
     console.error("[db.setReanimeSubtitleSetting error]:", e);
+    return false;
+  }
+}
+
+/** Persist sponsor break independently of the ordinary sync and chosen subtitle. */
+export async function setSponsorSubtitleSync(
+  userId: string,
+  animeId: string,
+  episodeNumber: number,
+  startSeconds: number | null,
+  delaySeconds: number
+): Promise<boolean> {
+  const sql = getDb();
+  if (!sql) return false;
+  await initDb();
+  try {
+    await sql`
+      INSERT INTO reanime_subtitle_settings
+        (user_id, anime_id, episode_number, sync_offset, sponsor_sync_start, sponsor_sync_delay, updated_at)
+      VALUES (${userId}, ${animeId}, ${episodeNumber}, 0, ${startSeconds}, ${delaySeconds}, CURRENT_TIMESTAMP)
+      ON CONFLICT (user_id, anime_id, episode_number)
+      DO UPDATE SET
+        sponsor_sync_start = EXCLUDED.sponsor_sync_start,
+        sponsor_sync_delay = EXCLUDED.sponsor_sync_delay,
+        updated_at = CURRENT_TIMESTAMP;
+    `;
+    return true;
+  } catch (e) {
+    console.error("[db.setSponsorSubtitleSync error]:", e);
     return false;
   }
 }
