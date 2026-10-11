@@ -10,6 +10,7 @@ import { anikotoProvider } from "../providers/anikoto";
 import { getAnissiaStreamCache, setAnissiaStreamCache } from "../db";
 import { fetchAniListMeta } from "../providers/anissia";
 import { getAnikotoPlaybackCandidates } from "../anikotoLinks";
+import { getAnikotoWorkOverride } from "../anikotoWorkOverrides";
 import { getAnimeWorkIdentity, matchesIdentityTitle, normalizeIdentityTitle } from "../animeWorkIdentity";
 
 const HEADERS: Record<string, string> = {
@@ -169,6 +170,7 @@ export async function resolveAnissiaStream(
     console.warn("[videoResolver] DB cache lookup error:", e);
   }
 
+  const manualAnikoto = anissiaId === null ? null : await getAnikotoWorkOverride(anissiaId);
   const workOverrides = await getWorkMatchOverrides();
   const reservedIds = await getReservedReanimeIdsForOtherWorks(anissiaId);
   const reservedForAnotherWork = (id: string) => reservedIds.has(id.replace(/^re_/, "")) || workOverrides.some(row =>
@@ -243,7 +245,7 @@ export async function resolveAnissiaStream(
   // Step 2: 1순위 ReAnime 1080p 고화질 탐색
   // ==========================================================
   try {
-    if (!requestedSource || requestedSource === "rean") {
+    if ((!requestedSource && !manualAnikoto) || requestedSource === "rean") {
     let reanimeId = cachedReanimeId;
 
     // Reviewed/manual DB links stay authoritative, including merged-season
@@ -378,7 +380,7 @@ export async function resolveAnissiaStream(
       // either a stream or a playlist.
       const usableLinks = [];
       for (const linked of linkedCandidates) {
-        if (["reviewed", "multi_reviewed"].includes(linked.linkStatus)) {
+        if (["manual", "reviewed", "multi_reviewed"].includes(linked.linkStatus)) {
           usableLinks.push(linked);
           continue;
         }
@@ -426,6 +428,10 @@ export async function resolveAnissiaStream(
           };
         }
       }
+
+      // A failed explicit administrator link must never fall back to a
+      // same-title Anikoto guess (e.g. a different season or special).
+      if (manualAnikoto) return null;
 
       const { aliases, anilistId } = await getAutomaticIdentity();
       const searchQueries = [...new Set(aliases)].filter(q => q.length >= 2).slice(0, 6);

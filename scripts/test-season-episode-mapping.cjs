@@ -8,7 +8,7 @@ const root = path.join(__dirname, '..');
 const matchOverrides = {getWorkMatchOverrides:async()=>[], importedLinkIsOverridden:()=>false};
 const plain = value => JSON.parse(JSON.stringify(value));
 function load(file, deps = {}, globals = {}) {
-  deps={'../provisionalWorkMatches':{getReservedReanimeIdsForOtherWorks:async()=>new Set(),hasWorkMatchCandidates:async()=>false},'../workMatchOverrides':matchOverrides,'./workMatchOverrides':matchOverrides,'../reanimeMatches':{getConfirmedReanimeIdsForAnissia:async()=>new Map(),getEffectiveReanimeIdsForAnissia:async()=>new Map()},...deps};
+  deps={'../anikotoWorkOverrides':{getAnikotoWorkOverride:async()=>null},'./anikotoWorkOverrides':{getAnikotoWorkOverride:async()=>null},'../provisionalWorkMatches':{getReservedReanimeIdsForOtherWorks:async()=>new Set(),hasWorkMatchCandidates:async()=>false},'../workMatchOverrides':matchOverrides,'./workMatchOverrides':matchOverrides,'../reanimeMatches':{getConfirmedReanimeIdsForAnissia:async()=>new Map(),getEffectiveReanimeIdsForAnissia:async()=>new Map()},...deps};
   const exports = {};
   const code = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {
     compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
@@ -172,6 +172,21 @@ test('Anikoto reviewed multi ranges remain authoritative and never receive a sec
     assert.deepEqual(api.mappingRequests,[['ani_42',local]]);
   }
   assert.equal(links.mapAnikotoEpisode(row,14),null);
+});
+test('Anikoto administrator override takes priority without ReAnime and respects reviewed range', async () => {
+  const override={anissiaNo:42,anikotoId:'shared-range',mappingKind:'range',
+    anikotoEpisodeStart:13,anikotoEpisodeEnd:25,targetEpisodeStart:1,targetEpisodeEnd:13};
+  const links=load('src/lib/anikotoLinks.ts',{
+    './db':{getDb:()=>null},
+    './anikotoWorkOverrides':{getAnikotoWorkOverride:async no=>{
+      assert.equal(no,42);return override;}},
+  });
+  const result=await links.getAnikotoPlaybackCandidates('ani_42',1,true);
+  assert.equal(result.length,1);
+  assert.equal(result[0].animeId,'ak_shared-range');
+  assert.equal(result[0].linkStatus,'manual');
+  assert.equal(result[0].episodeNumber,13);
+  assert.equal((await links.getAnikotoPlaybackCandidates('ani_42',14,true)).length,0);
 });
 test('Anikoto whole and exact season-local fallback keep source-local episode 1', async () => {
   for (const linked of [[],[{animeId:'ak_season2',episodeNumber:1,mappingKind:'whole'}]]) {
