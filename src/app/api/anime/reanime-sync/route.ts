@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser, getCurrentUserId } from "@/lib/auth";
-import { getReanimeSubtitleSetting, setReanimeSubtitleSetting } from "@/lib/db";
+import { getReanimeSubtitleSetting, setReanimeSubtitleSetting, setSponsorSubtitleSync } from "@/lib/db";
 
 export async function GET(request: NextRequest) {
   const session = await getSessionUser();
@@ -48,10 +48,29 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, message: "Missing required fields" }, { status: 400 });
     }
 
-    const epNum = parseInt(String(rawEp), 10);
-    const offsetVal = parseFloat(String(rawSyncOffset || 0.0));
-
+    const epNum = Number(rawEp);
+    if (!Number.isInteger(epNum) || epNum < 1) {
+      return NextResponse.json({ success: false, message: "Invalid episode number" }, { status: 400 });
+    }
     const userId = await getCurrentUserId();
+    if (body.mode === "sponsor") {
+      const start = body.sponsorSyncStart;
+      const delay = body.sponsorSyncDelay;
+      const disable = start === null && delay === 0;
+      if (!disable && (!Number.isInteger(start) || start < 0 || start > 36000 ||
+          typeof delay !== "number" || !Number.isFinite(delay) || delay <= 0 || delay > 120)) {
+        return NextResponse.json(
+          { success: false, message: "Invalid sponsor sync breakpoint or delay" }, { status: 400 }
+        );
+      }
+      const ok = await setSponsorSubtitleSync(userId, animeId, epNum, start, delay);
+      return NextResponse.json({ success: ok }, { status: ok ? 200 : 500 });
+    }
+    const offsetVal = Number(rawSyncOffset ?? 0);
+    if (!Number.isFinite(offsetVal)) {
+      return NextResponse.json({ success: false, message: "Invalid subtitle sync offset" }, { status: 400 });
+    }
+
     const ok = await setReanimeSubtitleSetting(
       userId,
       animeId,
