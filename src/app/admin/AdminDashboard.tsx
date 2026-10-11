@@ -238,6 +238,12 @@ export default function AdminDashboard({
           </div>
         )}
 
+        <a href="/admin/work-audit"
+          className="mb-5 flex items-center justify-between gap-3 rounded-2xl border border-purple-500/30 bg-purple-950/20 px-5 py-4 text-sm font-semibold text-purple-200 hover:border-purple-400 hover:bg-purple-950/40">
+          <span>Work 검수 자료 · DB 스냅샷 및 실제 자막 원본 다운로드</span>
+          <span aria-hidden="true">→</span>
+        </a>
+
         <section className="mb-8 rounded-3xl border border-white/10 bg-[#0d1426]/70 p-6 shadow-2xl backdrop-blur-xl">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>

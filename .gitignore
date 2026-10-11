@@ -53,3 +53,6 @@ next-env.d.ts
 *.md
 !/README.md
 !/readme.md
+
+# Pi-generated Work audit snapshots (contain internal file paths and DB exports)
+/work-audit/
