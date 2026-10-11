@@ -264,6 +264,31 @@ export default function SubtitleSelectModal({
     }catch(error){setBundleNotice(error instanceof Error?error.message:'버전을 저장하지 못했습니다.');}
     finally{setSavingBundleKey('');}
   };
+  const selectThisEpisodeSubtitle = async (subtitle: SubtitleOption) => {
+    if (savingBundleKey) return;
+    const fileId = subtitle.localFileId || subtitle.reviewedFileId;
+    if (!subtitle.sourceProvider || !fileId || !Number.isInteger(episodeNumber) || episodeNumber < 1 || episodeNumber > 10000) {
+      setBundleNotice('이번 화에 지정할 파일과 회차를 확인해 주세요.');
+      return;
+    }
+    setSavingBundleKey(`episode:${subtitle.sourceProvider}:${fileId}`);
+    setBundleNotice(null);
+    try {
+      const response = await fetch('/api/anime/subtitle-exceptions', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ animeId, episodeNumber, provider: subtitle.sourceProvider, fileId }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.message || '이번 화 지정을 저장하지 못했습니다.');
+      onSelectSubtitle({ ...subtitle, ...data.subtitle, episodeException: true });
+      onClose();
+      window.dispatchEvent(new CustomEvent('subtitle-settings-changed', { detail: { animeId } }));
+    } catch (error) {
+      setBundleNotice(error instanceof Error ? error.message : '이번 화 지정을 저장하지 못했습니다.');
+    } finally {
+      setSavingBundleKey('');
+    }
+  };
   const assignBundle = async (subtitle: SubtitleOption) => {
     if (!subtitle.localArchive || !subtitle.sourceProvider || !subtitle.sourceBundleKey || savingBundleKey) return;
     const key = `${subtitle.sourceProvider}:${subtitle.sourceBundleKey}`;
@@ -774,6 +799,11 @@ export default function SubtitleSelectModal({
                               : savingBundleKey === `${subtitle.sourceProvider}:${subtitle.sourceBundleKey}` ? "지정 중…" : subtitle.sourceFolderKey ? "이 버전 계속" : "작품 전체 지정"}
                           </button>
                         )}
+                        {subtitle.sourceProvider && (subtitle.reviewedFileId || subtitle.localFileId) && <button type="button"
+                          onClick={() => selectThisEpisodeSubtitle(subtitle)} disabled={Boolean(savingBundleKey)}
+                          className="shrink-0 rounded-lg border border-cyan-500/40 px-2.5 py-2 text-[11px] font-bold text-cyan-200 hover:bg-cyan-500/10 disabled:opacity-50">
+                          {savingBundleKey === `episode:${subtitle.sourceProvider}:${subtitle.localFileId || subtitle.reviewedFileId}` ? "저장 중…" : "이번 화만 지정"}
+                        </button>}
                         {(subtitle.reviewedFileId || subtitle.localFileId) && <button type="button" onClick={()=>setExceptionCandidate(subtitle)}
                           className="shrink-0 rounded-lg border border-amber-500/40 px-2.5 py-2 text-[11px] font-bold text-amber-200">예외 만들기</button>}
                         <button type="button" onClick={() => changeRejection(subtitleSource(subtitle), true)}
@@ -988,6 +1018,7 @@ export default function SubtitleSelectModal({
                 </button>
               </form>
 
+              {bundleNotice && <p className="text-sm text-emerald-200">{bundleNotice}</p>}
               {searchError && (
                 <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-3 text-xs text-red-400">
                   {searchError}
@@ -1093,6 +1124,11 @@ export default function SubtitleSelectModal({
                           : savingBundleKey === `${sub.sourceProvider}:${sub.sourceBundleKey}` ? "지정 중…" : sub.sourceFolderKey ? "이 버전 계속" : "작품 전체 지정"}
                       </button>
                     )}
+                    {sub.localArchive && sub.sourceProvider && (sub.reviewedFileId || sub.localFileId) && <button type="button"
+                      onClick={() => selectThisEpisodeSubtitle(sub)} disabled={Boolean(savingBundleKey)}
+                      className="rounded-lg border border-cyan-500/40 px-3 py-2 text-[11px] font-bold text-cyan-200 hover:bg-cyan-500/10 disabled:opacity-50">
+                      {savingBundleKey === `episode:${sub.sourceProvider}:${sub.localFileId || sub.reviewedFileId}` ? "저장 중…" : "이번 화만 지정"}
+                    </button>}
                     {sub.localArchive && (sub.reviewedFileId || sub.localFileId) && <button type="button" onClick={()=>{setExceptionCandidate(sub);setActiveTab("creators");}}
                       className="rounded-lg border border-amber-500/40 px-3 py-2 text-[11px] font-bold text-amber-200">예외 만들기</button>}
                     <button type="button" onClick={() => changeRejection(subtitleSource(sub), true)}

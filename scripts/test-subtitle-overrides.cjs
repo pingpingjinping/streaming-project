@@ -25,6 +25,8 @@ put('anissia_subtitles/풀린 작품/04.srt',srt('flat base 4'));
 put('anissia_subtitles/풀린 작품/OVA/01.srt',srt('flat OVA'));
 put('anissia_subtitles/풀린 작품/S02/01.srt',srt('flat season two'));
 put('anissia_subtitles/풀린 작품/unknown.ass',Buffer.from('[Script Info]\nTitle: unknown'));
+put('anissia_subtitles/특별편 울려라! 유포니엄 앙상블 콘테스트/Hibike! Euphonium - Ensemble Contest-hen (1080P).smi',
+  Buffer.from('<SAMI><BODY><SYNC Start=1000><P Class=KRCC>ensemble special<SYNC Start=3000><P Class=KRCC>&nbsp;</BODY></SAMI>'));
 for(const ep of [1,2]) {
   put(`aniall_subtitles/풀린 애니올/TV/${String(ep).padStart(2,'0')}.srt`,srt(`aniall flat ${ep}`));
 }
@@ -133,6 +135,41 @@ const assign=async(id,provider,subtitle)=>(await bundleRoute.PUT(request('subtit
 function registryRow(pid,member,title,target,confirmed=[]){return{pid,source:'aniall',pack_id:'registry',zip_relative_path:'aniall/registry.zip',member_path:member,
   sha256:digest(member==='bonus.ass'?Buffer.from('[Script Info]\nTitle: unnumbered'):srt(member.startsWith('TV')?'reviewed TV':'reviewed OVA')),
   archive_sha256:digest(registryBytes),work_title_ko:title,reanime_id:null,target_source:'AniList',target_id:target,content_extension:'.srt',confirmed_episodes:confirmed};}
+
+// Render the real modal with inert effects; clicks still call the real persistence API.
+function renderSubtitleModal(candidate,{animeId,episode=1,tab='creators',searchEp=99,fetchOverride,savingKey=''}={}) {
+  // The local API adds these display/provider fields to raw storage results.
+  candidate={name:candidate.orig_filename,localArchive:true,sourceProvider:'anissia',...candidate};
+  const vm=require('node:vm'),module={exports:{}},stateWrites=[],calls=[],selected=[],events=[],order=[];
+  let hook=0,closes=0;
+  const overrides=new Map([[0,true],[1,tab],[2,[candidate]],[5,searchEp],[6,[candidate]],[24,savingKey]]);
+  const react={useEffect(){},useRef:value=>({current:value}),useState:initial=>{
+    const index=hook++,value=overrides.has(index)?overrides.get(index):typeof initial==='function'?initial():initial;
+    return[value,next=>stateWrites.push({index,next})];
+  }};
+  const jsx=(type,props)=>({type,props});
+  const dependencies={react,'react/jsx-runtime':{jsx,jsxs:jsx},'react-dom':{createPortal:tree=>tree},
+    'lucide-react':new Proxy({},{get:(_,name)=>name}),'@/lib/subtitleLocalIdentity':identity,
+    './SubtitleFolderAssignments':()=>null,'./SubtitleEpisodeExceptions':()=>null};
+  const code=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../src/components/SubtitleSelectModal.tsx'),'utf8'),
+    {compilerOptions:{...compilerOptions,jsx:ts.JsxEmit.ReactJSX}}).outputText;
+  vm.runInNewContext(code,{module,exports:module.exports,require:id=>{
+    assert.ok(id in dependencies,`unexpected modal dependency: ${id}`);return dependencies[id];
+  },Error,document:{body:{}},CustomEvent:class{constructor(type,options){this.type=type;this.detail=options.detail;}},
+    window:{dispatchEvent:event=>{events.push(event);order.push('refresh');}},fetch:async(endpoint,options)=>{
+      const body=JSON.parse(options.body);calls.push({endpoint,method:options.method,body});
+      if(fetchOverride)return fetchOverride(endpoint,options);
+      return (endpoint.endsWith('subtitle-exceptions')?exceptionRoute:bundleRoute).PUT(request(endpoint.split('/').at(-1),options.method,body));
+    }});
+  const tree=module.exports.default({isOpen:true,animeId,animeTitle:'작품',episodeNumber:episode,creators:[],
+    onSelectSubtitle:subtitle=>{selected.push(subtitle);order.push('select');},onClose:()=>{closes++;order.push('close');}});
+  const nodes=[];function walk(node){if(Array.isArray(node))return node.forEach(walk);if(node&&typeof node==='object'){
+    nodes.push(node);walk(node.props?.children);
+  }}walk(tree);
+  function label(node){if(Array.isArray(node))return node.map(label).join('');if(node&&typeof node==='object')return label(node.props?.children);
+    return typeof node==='string'||typeof node==='number'?String(node):'';}
+  return{button:text=>nodes.find(node=>node.type==='button'&&label(node).includes(text)),calls,selected,events,order,stateWrites,get closes(){return closes;}};
+}
 
 test('same creator and generic ZIP names are scoped by work; assigned ns track follows episode two',async()=>{
   const a=await storage.getAnissiaArchiveSubtitles(['작품 A'],1,101),b=await storage.getAnissiaArchiveSubtitles(['작품 B'],1,102);
@@ -745,4 +782,73 @@ test('a newer manual selection wins over an automatic request in flight',async()
     assert.equal(assignments.get(`alice:${id}`).bundleKey,manual.sourceBundleKey);
     assert.ok((await play(id,title,2)).subtitles[0].content.includes('Korean release 2'));
   }finally{db.saveSubtitleBundleAssignment=save;}
+});
+
+test('current-episode button saves an unnumbered Ensemble Contest file and refresh no longer requests manual selection',async()=>{
+  rows=[];
+  const title='특별편 울려라! 유포니엄 앙상블 콘테스트';
+  const files=await storage.getAnissiaArchiveSubtitles([title],1,null,null,{manualSearch:true});
+  const candidate=files.find(s=>s.orig_filename.includes('Ensemble Contest-hen'));assert.ok(candidate);
+  assert.equal(candidate.episodeConfirmed,false);
+  const animeId='re_ensemble_button';await assign(animeId,'anissia',candidate);
+  const before=assignments.get(`alice:${animeId}`);
+  assert.equal((await play(animeId,title)).needs_manual_subtitle_choice,true);
+  const ui=renderSubtitleModal(candidate,{animeId});
+  assert.ok(ui.button('이번 화만 지정'));assert.ok(ui.button('이 버전 계속'));
+  await ui.button('이번 화만 지정').props.onClick();
+  assert.equal(ui.calls.length,1);assert.equal(ui.calls[0].endpoint,'/api/anime/subtitle-exceptions');
+  assert.equal(ui.calls[0].body.episodeNumber,1);assert.equal(ui.calls[0].body.fileId,candidate.localFileId);
+  assert.equal(ui.selected[0].episodeException,true);assert.equal(ui.closes,1);
+  assert.deepEqual(ui.order,['select','close','refresh']);assert.equal(ui.events[0].detail.animeId,animeId);
+  assert.strictEqual(assignments.get(`alice:${animeId}`),before);
+  for(let reload=0;reload<2;reload++) {
+    const current=await play(animeId,title);assert.equal(current.needs_manual_subtitle_choice,false);
+    assert.equal(current.subtitles[0].localFileId,candidate.localFileId);assert.ok(current.subtitles[0].content.includes('ensemble special'));
+  }
+  assert.equal((await play(animeId,title,2)).assignment_missing,true);
+});
+
+test('both modal lists save numbered files to the player episode without changing the next-episode bundle',async()=>{
+  rows=[];
+  const files=await storage.getAnissiaArchiveSubtitles(['풀린 작품'],1,null,null,{manualSearch:true});
+  const candidate=files.find(s=>s.content.includes('flat OVA')),base=files.find(s=>s.content.includes('flat base 1'));
+  assert.ok(candidate&&base);
+  for(const tab of ['creators','search']) {
+    const animeId=`re_episode_button_${tab}`;await assign(animeId,'anissia',base);
+    const before=assignments.get(`alice:${animeId}`);
+    const ui=renderSubtitleModal(candidate,{animeId,episode:3,tab,searchEp:1});
+    assert.ok(ui.button('예외 만들기'));await ui.button('이번 화만 지정').props.onClick();
+    assert.equal(ui.calls[0].body.episodeNumber,3);assert.equal(ui.selected.length,1);assert.equal(ui.closes,1);
+    assert.strictEqual(assignments.get(`alice:${animeId}`),before);
+    assert.ok((await play(animeId,'풀린 작품',3)).subtitles[0].content.includes('flat OVA'));
+    assert.ok((await play(animeId,'풀린 작품',2)).subtitles[0].content.includes('flat base 2'));
+  }
+});
+
+test('current-episode button also persists reviewed-file IDs',async()=>{
+  const row=registryRow('button-bonus','bonus.ass','버튼 특전','button-special');rows=[row];
+  const candidate=await reviewed.readReviewedFile(row),animeId='re_reviewed_button';
+  const ui=renderSubtitleModal(candidate,{animeId,episode:4,tab:'search'});
+  assert.ok(ui.button('작품 전체 지정'));await ui.button('이번 화만 지정').props.onClick();
+  assert.equal(ui.calls[0].body.fileId,candidate.reviewedFileId);
+  const current=await play(animeId,'버튼 특전',4);assert.equal(current.needs_manual_subtitle_choice,false);
+  assert.equal(current.subtitles[0].reviewedFileId,candidate.reviewedFileId);
+  assert.equal(assignments.has(`alice:${animeId}`),false);
+});
+
+test('failed episode save keeps the modal open and reports the error; unsupported files have no episode button',async()=>{
+  rows=[];const files=await storage.getAnissiaArchiveSubtitles(['풀린 작품'],1,null,null,{manualSearch:true});
+  const candidate=files.find(s=>s.content.includes('flat base 1'));
+  for(const tab of ['creators','search']) {
+    const ui=renderSubtitleModal(candidate,{animeId:'re_failed_button',tab,
+      fetchOverride:async()=>({ok:false,json:async()=>({success:false,message:'파일이 변경되었습니다.'})})});
+    await ui.button('이번 화만 지정').props.onClick();
+    assert.equal(ui.closes,0);assert.equal(ui.selected.length,0);assert.equal(ui.events.length,0);
+    assert.ok(ui.stateWrites.some(write=>write.next==='파일이 변경되었습니다.'));
+    const unsupported=renderSubtitleModal({...candidate,localFileId:undefined,reviewedFileId:undefined},{animeId:'re_raw_zip',tab});
+    assert.equal(unsupported.button('이번 화만 지정'),undefined);
+    const busy=renderSubtitleModal(candidate,{animeId:'re_busy',tab,savingKey:'other-save'});
+    assert.equal(busy.button('이번 화만 지정').props.disabled,true);
+    await busy.button('이번 화만 지정').props.onClick();assert.equal(busy.calls.length,0);
+  }
 });
