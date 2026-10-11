@@ -1,5 +1,6 @@
 import { getDb } from "./db";
 import { reviewedAnikotoRanges } from "./episodeMapping";
+import { getAnikotoWorkOverride } from "./anikotoWorkOverrides";
 
 export interface AnikotoPlaybackCandidate {
   animeId: string;
@@ -81,6 +82,29 @@ export async function getAnikotoPlaybackCandidates(
   const work = workKeyFromAnimeId(animeId);
   const sql = getDb();
   if (!work) return [];
+  // Local administrator choice wins over all imported/automatic Anikoto IDs.
+  // Do not flatten multi-season reviewed ranges to whole-season links.
+  if (work.source === "Anissia") {
+    const manual = await getAnikotoWorkOverride(Number(work.sourceId));
+    if (manual) {
+      const row = {
+        mapping_kind: manual.mappingKind,
+        anikoto_episode_start: manual.anikotoEpisodeStart,
+        anikoto_episode_end: manual.anikotoEpisodeEnd,
+        target_episode_start: manual.targetEpisodeStart,
+        target_episode_end: manual.targetEpisodeEnd,
+      };
+      const mapped = mapAnikotoEpisode(row, episodeNumber);
+      if (mapped === null) return [];
+      return [{
+        animeId: "ak_" + manual.anikotoId,
+        episodeNumber: mapped, mappingKind: manual.mappingKind,
+        linkStatus: "manual", sourceStart: manual.anikotoEpisodeStart ?? undefined,
+        targetStart: manual.targetEpisodeStart ?? undefined,
+        targetEnd: manual.targetEpisodeEnd ?? undefined,
+      }];
+    }
+  }
 
   try {
     const rows: any[] = sql ? await sql`
