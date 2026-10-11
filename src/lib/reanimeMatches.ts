@@ -1,7 +1,7 @@
-import { getProvisionalWorkMatches } from './provisionalWorkMatches';
+import { getProvisionalWorkMatches, getReservedReanimeIdsForOtherWorks, hasWorkMatchCandidates } from './provisionalWorkMatches';
 import { getWorkMatchOverrides, importedLinkIsOverridden } from './workMatchOverrides';
 import matches from "@/data/reanime-matches.json";
-import { getDb } from "@/lib/db";
+import { getDb, getAnissiaStreamCache } from "@/lib/db";
 
 export interface ReanimeMatch {
   koreanTitle: string;
@@ -74,6 +74,29 @@ export async function getEffectiveReanimeIdsForAnissia(animeNos:number[]):Promis
   for(const c of await getProvisionalWorkMatches())if(animeNos.includes(c.anissiaNo) && !result.has(c.anissiaNo))
     result.set(c.anissiaNo,c.reanimeId);
   return result;
+}
+
+/** Use the same selected/cached work as playback without a new title search.
+ * Explicit and provisional choices supersede a previously successful cache.
+ * Candidate conflicts and IDs reserved for another work invalidate old caches.
+ */
+export async function getPlaybackReanimeIdForAnissia(anissiaNo: number): Promise<string | null> {
+  if (!Number.isSafeInteger(anissiaNo) || anissiaNo <= 0) return null;
+  const selected = (await getEffectiveReanimeIdsForAnissia([anissiaNo])).get(anissiaNo);
+  if (selected) return selected;
+  if (await hasWorkMatchCandidates(anissiaNo)) return null;
+  try {
+    const cached = (await getAnissiaStreamCache(anissiaNo))?.reanime_id;
+    if (!cached) return null;
+    const slug = cached.replace(/^re_/, '');
+    const [reserved, overrides] = await Promise.all([
+      getReservedReanimeIdsForOtherWorks(anissiaNo), getWorkMatchOverrides(),
+    ]);
+    if (reserved.has(slug) || overrides.some(row => row.reanimeId === slug && row.anissiaNo !== anissiaNo)) return null;
+    return cached;
+  } catch {
+    return null;
+  }
 }
 
 export function getBundledReanimeMatch(animeId: string): ReanimeMatch | null {
