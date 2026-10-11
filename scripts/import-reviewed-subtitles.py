@@ -23,7 +23,7 @@ NULL = '\\N'
 def append_copy(stream, table, columns, rows):
     stream.write(
         'COPY ' + table + ' (' + ','.join(columns)
-        + ") FROM STDIN WITH (FORMAT csv, NULL '\\\\N');\n"
+        + ") FROM STDIN WITH (FORMAT csv, NULL E'\\\\N');\n"
     )
     writer = csv.writer(stream, lineterminator='\n')
     count = 0
