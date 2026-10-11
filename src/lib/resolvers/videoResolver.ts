@@ -59,26 +59,44 @@ export function parseSeason(text: string): number | null {
   return null;
 }
 
-/**
- * 검색 대상 작품들 중 시즌이 가장 잘 일치하는 아이템을 우선 선정
- */
-function selectBestReanimeItem(items: any[], targetSeason: number | null): any {
-  if (items.length === 0) return null;
-  if (targetSeason && targetSeason > 1) {
-    // targetSeason (예: 3)이 포함된 아이템 우선 탐색
-    const seasonMatch = items.find((item) => {
-      const s = parseSeason(item.title);
-      return s === targetSeason;
-    });
-    if (seasonMatch) return seasonMatch;
-  }
+interface ProviderIdentity {
+  title: string;
+  original_title?: string;
+  identity_titles?: string[];
+  anilist_id?: number;
+}
 
-  // 시즌 1이거나 타겟 시즌이 없는 경우 1기 또는 본편 우선
-  const firstSeason = items.find((item) => {
-    const s = parseSeason(item.title);
-    return !s || s === 1;
+// Only a terminal numbered season label may be removed for a combined source.
+// Preserve OVA, movie, named chapters, part numbers and all other subtitles.
+function withoutSeason(title: string): string {
+  return title.replace(/\s*(?:第\s*\d+\s*期|\d+\s*기|(?:season\s*\d+|\d+(?:st|nd|rd|th)\s*season))\s*$/iu, "").trim();
+}
+
+export function matchesVideoPlaybackIdentity(
+  candidate: ProviderIdentity,
+  aliases: string[],
+  expectedAniListId: number | null,
+  allowCombinedSource: boolean,
+): boolean {
+  // Raw provider titles take precedence: a bundled label must not disguise
+  // a detail response belonging to a different work.
+  const titles = candidate.identity_titles?.length
+    ? candidate.identity_titles : [candidate.title, candidate.original_title || ""];
+  const exact = titles.some(title => matchesIdentityTitle(title, aliases));
+  const combined = allowCombinedSource && titles.some(title => {
+    const key = normalizeIdentityTitle(title);
+    return key.length >= 4 && aliases.some(alias => {
+      const base = withoutSeason(alias);
+      return base !== alias && normalizeIdentityTitle(base) === key;
+    });
   });
-  return firstSeason || items[0];
+  if (!exact && !combined) return false;
+  // Separate seasons can legitimately use one combined provider ID, but the
+  // existing episode mapper must still validate the configured boundary.
+  if (expectedAniListId && candidate.anilist_id && candidate.anilist_id !== expectedAniListId) {
+    return combined;
+  }
+  return true;
 }
 
 /**
@@ -228,57 +246,62 @@ export async function resolveAnissiaStream(
     if (!requestedSource || requestedSource === "rean") {
     let reanimeId = cachedReanimeId;
 
-    // 캐시된 ID가 있다면 해당 회차가 실제로 존재하는지 검증
+    // Reviewed/manual DB links stay authoritative, including merged-season
+    // projections. Unreviewed cache and search results must prove identity.
+    let identity: Promise<{ aliases: string[]; anilistId: number | null }> | null = null;
+    const getIdentity = () => identity ||= (async () => {
+      const work = await getAnimeWorkIdentity(animeId || (anissiaId ? `ani_${anissiaId}` : ""));
+      const aliases = [...new Set([...(work?.titles || []), ...requestedWorkTitles])];
+      const meta = await fetchAniListMeta(requestedJapaneseTitle || korTitle).catch(() => null);
+      const verifiedMeta = meta && [meta.nativeTitle, meta.romajiTitle]
+        .some(value => matchesIdentityTitle(value || "", aliases));
+      if (verifiedMeta) aliases.push(...[meta.nativeTitle, meta.romajiTitle].filter(Boolean));
+      return { aliases: [...new Set(aliases)], anilistId: verifiedMeta && meta.anilistId > 0 ? meta.anilistId : null };
+    })();
+    const matchesWork = async (candidate: Parameters<typeof matchesVideoPlaybackIdentity>[0]) => {
+      const proof = await getIdentity();
+      return matchesVideoPlaybackIdentity(candidate, proof.aliases, proof.anilistId,
+        !!targetSeason && targetSeason > 1 && Number(subtitleEpisodeStart) > 1);
+    };
+
     if (reanimeId) {
       const detail = await reanimeProvider.getAnimeDetail(reanimeId);
-      recordLatestReanimeEpisode(detail);
-      const hasEpisode = videoEpisode(detail) !== null;
-      if (!hasEpisode) {
-        // 캐시된 ID에 해당 회차가 없으면 캐시 무효화 후 새로 탐색
+      if (!detail || (!selectedReanimeId && !await matchesWork(detail))) {
+        // Never reuse or refresh a stale cache pointing to another work.
         reanimeId = null;
+      } else {
+        recordLatestReanimeEpisode(detail);
+        if (videoEpisode(detail) === null) reanimeId = null;
       }
     }
 
     if (!reanimeId && !selectedReanimeId && !hasCatalogCandidates) {
-      const cleanJp = jpTitle ? jpTitle.replace(SUBTITLE_DELIMITERS, "").trim() : "";
-      const baseJp = cleanJp
-        ? cleanJp
-            .replace(
-              /[第期シーズンSeason]+|\d+기|\d+th|[ⅠⅡⅢⅣⅤⅥ]|(?:part\s*)?(?:VI|IV|V|III|II|I)/gi,
-              ""
-            )
-            .trim()
-        : "";
-
-      // AniList 메타데이터 조회하여 영어/로마자 타이틀 보강
-      const meta = await fetchAniListMeta(cleanJp || jpTitle || korTitle);
-      const romajiClean = meta?.romajiTitle ? meta.romajiTitle.replace(SUBTITLE_DELIMITERS, "").trim() : "";
-
-      // 일본어 원제 및 AniList 로마자 위주로 검색 쿼리 구성 (영어/일어 DB인 ReAnime 특성 반영)
-      const searchQueries = [
-        cleanJp,
-        baseJp,
-        romajiClean,
-        jpTitle,
-        ...relatedJapaneseTitles,
-      ].filter((q): q is string => Boolean(q && q.length >= 2));
-
+      const { aliases } = await getIdentity();
+      // Complete aliases preserve named specials, seasons and punctuation.
+      // No prefix truncation and no character-class "Season" stripping.
+      const romanAliases = aliases.filter(q => /^[a-z0-9]{4,}$/.test(normalizeIdentityTitle(q)));
+      const searchQueries = [...new Set([requestedJapaneseTitle, ...romanAliases, ...aliases])]
+        .filter(q => q.length >= 2).slice(0, 6);
+      const examined = new Set<string>();
       for (const q of searchQueries) {
-        const searchRes = await reanimeProvider.searchAnime(q);
-        if (searchRes.items && searchRes.items.length > 0) {
-          const best = selectBestReanimeItem(searchRes.items, targetSeason);
-          const candidates = [best, ...searchRes.items.filter(item => item !== best)].filter(Boolean);
-          for (const best of candidates) {
-            if (reservedForAnotherWork(best.id)) continue;
-            // 해당 후보가 요청한 회차를 가지고 있는지 검증
-            const candidateDetail = await reanimeProvider.getAnimeDetail(best.id);
-            recordLatestReanimeEpisode(candidateDetail);
-            if (videoEpisode(candidateDetail) !== null) {
-              reanimeId = best.id;
-              break;
-            }
-          }
-          if (reanimeId) break;
+        let searchRes;
+        try { searchRes = await reanimeProvider.searchAnime(q); }
+        catch { continue; }
+        const playable = [];
+        for (const candidate of searchRes.items || []) {
+          if (examined.has(candidate.id) || reservedForAnotherWork(candidate.id)) continue;
+          if (!await matchesWork(candidate)) continue;
+          examined.add(candidate.id);
+          const detail = await reanimeProvider.getAnimeDetail(candidate.id);
+          if (!detail || !await matchesWork(detail)) continue;
+          recordLatestReanimeEpisode(detail);
+          if (videoEpisode(detail) !== null) playable.push(candidate.id);
+        }
+        // Ambiguous full-title matches require a reviewed link, not ordering.
+        if (playable.length > 1) break;
+        if (playable.length === 1) {
+          reanimeId = playable[0];
+          break;
         }
       }
     }
@@ -332,13 +355,43 @@ export async function resolveAnissiaStream(
         ? await getAnikotoPlaybackCandidates(animeId, episodeNumber, true)
         : [];
 
+      let automaticIdentity: Promise<{ aliases: string[]; anilistId: number | null }> | null = null;
+      const getAutomaticIdentity = () => automaticIdentity ||= (async () => {
+        const work = await getAnimeWorkIdentity(animeId || (anissiaId ? `ani_${anissiaId}` : ""));
+        const aliases = [...new Set([...(work?.titles || []), ...requestedWorkTitles])];
+        const hasCatalogRomanTitle = work?.titles.some(value => /^[a-z0-9]{4,}$/.test(normalizeIdentityTitle(value)));
+        const meta = hasCatalogRomanTitle ? null
+          : await fetchAniListMeta(requestedJapaneseTitle || korTitle).catch(() => null);
+        const verifiedMeta = meta && [meta.nativeTitle, meta.romajiTitle]
+          .some(value => matchesIdentityTitle(value || "", aliases));
+        if (verifiedMeta) aliases.push(...[meta.nativeTitle, meta.romajiTitle].filter(Boolean));
+        return { aliases: [...new Set(aliases)], anilistId: verifiedMeta && meta.anilistId > 0 ? meta.anilistId : null };
+      })();
+
       const linkedDetails = new Map<string, AnimeDetail>();
       await Promise.allSettled([...new Set(linkedCandidates.map(c => c.animeId))].map(async id => {
         const detail = await anikotoProvider.getAnimeDetail(id);
         if (detail) linkedDetails.set(id, detail);
       }));
-      const linkedEpisodes = new Map<number, EpisodeItem>();
+      // Reviewed ranges/manual links are authoritative. Imported automatic
+      // links need the same work proof as a fresh search before contributing
+      // either a stream or a playlist.
+      const usableLinks = [];
       for (const linked of linkedCandidates) {
+        if (["reviewed", "multi_reviewed"].includes(linked.linkStatus)) {
+          usableLinks.push(linked);
+          continue;
+        }
+        const detail = linkedDetails.get(linked.animeId);
+        if (!detail) continue;
+        const proof = await getAutomaticIdentity();
+        if (matchesVideoPlaybackIdentity(detail, proof.aliases, proof.anilistId,
+          linked.mappingKind === "whole" && !!targetSeason && targetSeason > 1 && Number(subtitleEpisodeStart) > 1)) {
+          usableLinks.push(linked);
+        }
+      }
+      const linkedEpisodes = new Map<number, EpisodeItem>();
+      for (const linked of usableLinks) {
         const detail = linkedDetails.get(linked.animeId);
         if (!detail) continue;
         const episodes = linked.mappingKind === "whole"
@@ -353,7 +406,7 @@ export async function resolveAnissiaStream(
         for (const e of episodes) if (!linkedEpisodes.has(e.number)) linkedEpisodes.set(e.number, e);
       }
 
-      for (const linked of linkedCandidates) {
+      for (const linked of usableLinks) {
         if (linked.episodeNumber < 1) continue;
         const detail = linkedDetails.get(linked.animeId);
         if (!detail?.sub_episodes?.length) continue;
@@ -374,23 +427,14 @@ export async function resolveAnissiaStream(
         }
       }
 
-      const work = await getAnimeWorkIdentity(animeId || (anissiaId ? `ani_${anissiaId}` : ""));
-      const aliases = [...new Set([...(work?.titles || []), ...requestedWorkTitles])];
-      // AniList search is fuzzy. Only a full existing alias match lets its
-      // romaji/native names become identity evidence for the requested work.
-      const hasCatalogRomanTitle = work?.titles.some(value => /^[a-z0-9]{4,}$/.test(normalizeIdentityTitle(value)));
-      const meta = hasCatalogRomanTitle ? null
-        : await fetchAniListMeta(requestedJapaneseTitle || korTitle).catch(() => null);
-      if (meta && [meta.nativeTitle, meta.romajiTitle].some(value => matchesIdentityTitle(value || "", aliases))) {
-        aliases.push(...[meta.nativeTitle, meta.romajiTitle].filter(Boolean));
-      }
+      const { aliases, anilistId } = await getAutomaticIdentity();
       const searchQueries = [...new Set(aliases)].filter(q => q.length >= 2).slice(0, 6);
       const candidates = new Set<string>();
       const searchResults = await Promise.allSettled(searchQueries.map(query => anikotoProvider.searchAnime(query, 1)));
       for (const result of searchResults) {
         if (result.status !== "fulfilled") continue;
-        for (const candidate of result.value.items.slice(0, 5)) {
-          if ([candidate.title, candidate.original_title || ""].some(value => matchesIdentityTitle(value, aliases))) {
+        for (const candidate of result.value.items.slice(0, 20)) {
+          if (matchesVideoPlaybackIdentity(candidate, aliases, anilistId, false)) {
             candidates.add(candidate.id);
           }
         }
@@ -401,7 +445,7 @@ export async function resolveAnissiaStream(
         const detail = await anikotoProvider.getAnimeDetail(id);
         // Recheck the detail page: a search label must not disguise a different
         // work. Complete titles preserve sequel, season, OVA and movie suffixes.
-        if (!detail || ![detail.title, detail.original_title || ""].some(value => matchesIdentityTitle(value, aliases))) continue;
+        if (!detail || !matchesVideoPlaybackIdentity(detail, aliases, anilistId, false)) continue;
         const sourceEpisode = videoEpisode(detail);
         const epItem = detail.sub_episodes.find(episode => episode.number === sourceEpisode);
         if (epItem?.watch_url) playable.push({ epItem, detail });

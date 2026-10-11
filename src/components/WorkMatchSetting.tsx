@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 type Item = {id:string;title:string;nativeTitle?:string;year?:number;format?:string;score?:number;reason?:string};
-export default function WorkMatchSetting({animeId}:{animeId:string}) {
+export default function WorkMatchSetting({animeId,retryPlayback=false,onConnectionSaved}:{animeId:string;retryPlayback?:boolean;onConnectionSaved?:()=>void}) {
   const router = useRouter();
   const [current,setCurrent] = useState<Item|null>(null);
   const [manual,setManual] = useState(false);
@@ -21,6 +21,7 @@ export default function WorkMatchSetting({animeId}:{animeId:string}) {
     return data;
   }
   useEffect(()=>{
+    if (!/^(re_|ani_)/.test(animeId)) return;
     const controller = new AbortController();
     read('',controller.signal).then(data=>{setCurrent(data.current);setManual(data.manual);setCandidate(data.matchStatus==='candidate');setReason(data.candidateReason || '');setItems(data.candidates);setCanEdit(data.canEdit);setLoaded(true);})
       .catch(error=>{if(error.name!=='AbortError')setNotice(error.message);});
@@ -39,7 +40,18 @@ export default function WorkMatchSetting({animeId}:{animeId:string}) {
         ...(targetId?{body:JSON.stringify({animeId,targetId})}:{})});
       const data=await response.json();if(!response.ok)throw new Error(data.message);
       const next=await read();setCurrent(next.current);setManual(next.manual);setCandidate(next.matchStatus==='candidate');setReason(next.candidateReason || '');setItems(next.candidates);
-      setNotice(targetId?'작품 연결을 저장했습니다.':'자동 매칭으로 되돌렸습니다.');router.refresh();
+      setNotice(targetId?'작품 연결을 저장했습니다.':'자동 매칭으로 되돌렸습니다.');
+      if (targetId && retryPlayback) {
+        const params = new URLSearchParams(window.location.search);
+        // This control links Anissia to ReAnime. Retry the newly selected
+        // provider, even if the failed request explicitly selected Anikoto.
+        if (animeId.startsWith('ani_')) params.set('video_source','rean');
+        params.delete('manual_source');
+        const query = params.toString();
+        router.replace(`${window.location.pathname}${query?`?${query}`:''}`);
+        onConnectionSaved?.();
+      }
+      router.refresh();
     }catch(error:any){setNotice(error.message);}finally{setBusy(false);}
   }
   if (!/^(re_|ani_)/.test(animeId)) return null;
@@ -57,7 +69,7 @@ export default function WorkMatchSetting({animeId}:{animeId:string}) {
       {items.length>0 && <p className="mt-3 text-xs text-slate-400">{query.trim()?'검색 결과':'우선 검토 후보'}</p>}
       <ul className="mt-3 space-y-2">{items.map(item=><li key={item.id} className="flex items-center justify-between gap-3 rounded-lg bg-slate-950 p-3">
         <div><p>{item.title} {item.year && `· ${item.year}년`} {item.format && `· ${item.format}`}</p><p className="text-xs text-amber-200">{item.reason}</p><p className="break-all text-xs text-slate-400">{item.nativeTitle} · {item.id}</p></div>
-        <button type="button" disabled={busy} onClick={()=>save(item.id)} className="shrink-0 rounded-lg bg-purple-600 px-3 py-2 disabled:opacity-50">이 작품으로 변경</button>
+        <button type="button" disabled={busy} onClick={()=>save(item.id)} className="shrink-0 rounded-lg bg-purple-600 px-3 py-2 disabled:opacity-50">{retryPlayback?'연결하고 다시 재생':'이 작품으로 변경'}</button>
       </li>)}</ul>
       {manual && <button type="button" disabled={busy} onClick={()=>save()} className="mt-3 underline disabled:opacity-50">자동 매칭으로 되돌리기</button>}
     </>}

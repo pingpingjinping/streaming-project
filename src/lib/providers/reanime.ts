@@ -257,6 +257,10 @@ function mapRawItemToAnimeListItem(item: any): AnimeListItem {
   return {
     id: toReanimeId(animeId),
     title,
+    original_title: item.title?.native || item.title?.romaji || "",
+    identity_titles: [item.title?.native, item.title?.romaji, item.title?.english]
+      .filter((value): value is string => typeof value === "string" && !!value.trim()),
+    anilist_id: Number(item.anilist_id) || 0,
     poster,
     detail_url: `/anime/${toReanimeId(animeId)}`,
     remarks,
@@ -635,6 +639,10 @@ export async function getAnimeDetail(animeId: string): Promise<AnimeDetail | nul
       const detail: AnimeDetail = {
         id: normalizedId,
         title,
+        original_title: rawAnime.title?.native || rawAnime.title?.romaji || "",
+        identity_titles: [rawAnime.title?.native, rawAnime.title?.romaji, rawAnime.title?.english]
+          .filter((value): value is string => typeof value === "string" && !!value.trim()),
+        anilist_id: anilistId,
         video_available: rawAnime.can_watch === true && anilistId > 0,
         poster,
         description: rawAnime.description ? rawAnime.description.replace(/<br\s*[\/]?>/gi, "\n") : "",
@@ -711,6 +719,10 @@ export async function getAnimeDetail(animeId: string): Promise<AnimeDetail | nul
     const detail: AnimeDetail = {
       id: normalizedId,
       title,
+      original_title: rawAnime.title?.native || rawAnime.title?.romaji || "",
+      identity_titles: [rawAnime.title?.native, rawAnime.title?.romaji, rawAnime.title?.english]
+        .filter((value): value is string => typeof value === "string" && !!value.trim()),
+      anilist_id: anilistId,
       video_available: rawAnime.can_watch === true && anilistId > 0,
       poster,
       description: rawAnime.description ? rawAnime.description.replace(/<br\s*[\/]?>/gi, "\n") : "",
