@@ -173,6 +173,21 @@ test('Anikoto reviewed multi ranges remain authoritative and never receive a sec
   }
   assert.equal(links.mapAnikotoEpisode(row,14),null);
 });
+test('Anikoto administrator override takes priority without ReAnime and respects reviewed range', async () => {
+  const override={anissiaNo:42,anikotoId:'shared-range',mappingKind:'range',
+    anikotoEpisodeStart:13,anikotoEpisodeEnd:25,targetEpisodeStart:1,targetEpisodeEnd:13};
+  const links=load('src/lib/anikotoLinks.ts',{
+    './db':{getDb:()=>null},
+    './anikotoWorkOverrides':{getAnikotoWorkOverride:async no=>{
+      assert.equal(no,42);return override;}},
+  });
+  const result=await links.getAnikotoPlaybackCandidates('ani_42',1,true);
+  assert.equal(result.length,1);
+  assert.equal(result[0].animeId,'ak_shared-range');
+  assert.equal(result[0].linkStatus,'manual');
+  assert.equal(result[0].episodeNumber,13);
+  assert.deepEqual(await links.getAnikotoPlaybackCandidates('ani_42',14,true),[]);
+});
 test('Anikoto whole and exact season-local fallback keep source-local episode 1', async () => {
   for (const linked of [[],[{animeId:'ak_season2',episodeNumber:1,mappingKind:'whole'}]]) {
     const api = resolver({provider:'anikoto',sourceTitle:romaji,numbers:range(1,13),linked});
