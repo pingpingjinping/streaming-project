@@ -12,46 +12,59 @@ spec.loader.exec_module(module)
 
 
 class ManualWorkMatchExportTest(unittest.TestCase):
-    def fake(self, stdout="", returncode=0):
+    def fake(self, reanime=(), anikoto=(), fail=False):
         def runner(command, **kwargs):
             self.assertEqual(command[:5], ["docker", "compose", "exec", "-T", "db"])
-            self.assertIn("anime_work_match_overrides", command[-1])
             self.assertNotIn("updated_by", command[-1])
             self.assertNotIn("relative_path", command[-1])
-            return types.SimpleNamespace(stdout=stdout, returncode=returncode, stderr="test")
+            if "anime_anikoto_work_overrides" in command[-1]:
+                rows = anikoto
+            elif "anime_work_match_overrides" in command[-1]:
+                rows = reanime
+            else:
+                raise AssertionError("Unexpected database relation")
+            return types.SimpleNamespace(
+                stdout="\n".join(json.dumps(row) for row in rows) + ("\n" if rows else ""),
+                returncode=1 if fail else 0, stderr="test")
         return runner
 
-    def test_exact_id_pairs_only_sorted_and_private_data_excluded(self):
-        raw = [
-            {"reanime_id": "second-season", "anissia_no": 2184},
-            {"reanime_id": "one-piece", "anissia_no": 10},
-        ]
-        rows = module.export_rows(ROOT, runner=self.fake(
-            stdout="\n".join(json.dumps(x) for x in raw) + "\n"))
-        self.assertEqual([row["reanime_id"] for row in rows],
+    def test_exact_provider_pairs_only_and_private_data_excluded(self):
+        r1 = {"reanime_id": "second-season", "anissia_no": 2184}
+        r2 = {"reanime_id": "one-piece", "anissia_no": 10}
+        ak = {"anikoto_id": "an-id", "anissia_no": 2184, "mapping_kind": "whole",
+              "anikoto_episode_start": None, "anikoto_episode_end": None,
+              "target_episode_start": None, "target_episode_end": None}
+        rows = module.export_rows(ROOT, self.fake([r1, r2], [ak]))
+        self.assertEqual([r["reanime_id"] for r in rows["reanime"]],
                          ["one-piece", "second-season"])
+        self.assertEqual(rows["anikoto"], [ak])
         output = json.dumps(rows)
         self.assertNotIn("updated_by", output)
         self.assertNotIn("relative_path", output)
 
-    def test_reset_can_export_an_explicit_empty_snapshot(self):
-        self.assertEqual(module.export_rows(ROOT, runner=self.fake()), [])
+    def test_reset_exports_explicit_empty_provider_lists(self):
+        self.assertEqual(module.export_rows(ROOT, self.fake()),
+                         {"reanime": [], "anikoto": []})
 
-    def test_failed_db_query_must_not_be_converted_into_empty_success(self):
+    def test_failed_db_query_never_becomes_empty_success(self):
         with self.assertRaisesRegex(RuntimeError, "Cannot read"):
-            module.export_rows(ROOT, runner=self.fake(returncode=1))
+            module.export_rows(ROOT, self.fake(fail=True))
 
-    def test_duplicate_and_malformed_work_ids_fail(self):
-        with self.assertRaisesRegex(ValueError, "Conflicting"):
-            module.export_rows(ROOT, runner=self.fake(
-                stdout='{"reanime_id":"a","anissia_no":5}\n'
-                       '{"reanime_id":"b","anissia_no":5}\n'))
-        for row in ({"reanime_id": "bad/path", "anissia_no": 1},
-                    {"reanime_id": "valid", "anissia_no": "1"},
-                    {"reanime_id": "valid", "anissia_no": 0},
-                    {"reanime_id": "valid", "anissia_no": 1, "updated_by": "admin"}):
-            with self.subTest(row=row), self.assertRaises(ValueError):
-                module.export_rows(ROOT, runner=self.fake(stdout=json.dumps(row)+"\n"))
+    def test_duplicate_or_invalid_anikoto_ranges_fail(self):
+        valid = {"anikoto_id": "ak-a", "anissia_no": 1, "mapping_kind": "range",
+                 "anikoto_episode_start": 13, "anikoto_episode_end": 25,
+                 "target_episode_start": 1, "target_episode_end": 13}
+        self.assertEqual(len(module.export_rows(ROOT, self.fake(anikoto=[valid]))["anikoto"]), 1)
+        for item in [
+            {**valid, "target_episode_end": 12},
+            {**valid, "anikoto_id": "bad/path"},
+            {**valid, "anissia_no": "1"},
+            {**valid, "updated_by": "private-admin"},
+        ]:
+            with self.subTest(item=item), self.assertRaises(ValueError):
+                module.export_rows(ROOT, self.fake(anikoto=[item]))
+        with self.assertRaises(ValueError):
+            module.export_rows(ROOT, self.fake(anikoto=[valid, {**valid, "anikoto_id": "other"}]))
 
 
 if __name__ == "__main__":
