@@ -19,7 +19,7 @@ function load(file,deps={},globals={}) {
     },
     ...deps,
   };
-  deps={'./provisionalWorkMatches':{getProvisionalWorkMatches:async()=>[]},'./workMatchOverrides':matchOverrides,
+  deps={'./provisionalWorkMatches':{getProvisionalWorkMatches:async()=>[],getReservedReanimeIdsForOtherWorks:async()=>new Set(),hasWorkMatchCandidates:async()=>false},'./workMatchOverrides':matchOverrides,
     '@/lib/koreanSubtitleCatalog':{getKoreanSubtitleCatalog:async()=>{
       throw Error('ReAnime artwork tests must not request the Korean subtitle catalog');
     }},...deps};
@@ -34,7 +34,7 @@ function anissia(fetch,links=new Map(),artwork=async()=>null,clock=Date) {
   return load('src/lib/providers/anissia.ts',{
     '../episodeMapping':load('src/lib/episodeMapping.ts'),
     './ids':requireIds(),'../resolvers/videoResolver':{resolveAnissiaStream:async()=>null,parseSeason:()=>null},
-    '../reanimeMatches':{getConfirmedReanimeIdsForAnissia:async()=>links},'./reanime':{getReanimeArtwork:artwork,getAnimeDetail:async()=>null},
+    '../reanimeMatches':{getConfirmedReanimeIdsForAnissia:async()=>links,getPlaybackReanimeIdForAnissia:async n=>links.get(n)||null},'./reanime':{getReanimeArtwork:artwork,getAnimeDetail:async()=>null},
   },{fetch,Date:clock});
 }
 function requireIds(){return load('src/lib/providers/ids.ts');}
@@ -107,6 +107,25 @@ test('confirmed reverse lookup refuses multiple works and does not resurrect abs
     '@/lib/db':{getDb:()=>async()=>[{anissia_no:1,reanime_id:'first'},{anissia_no:1,reanime_id:'second'},{anissia_no:2,reanime_id:'only'}]}});
   const links=await matches.getConfirmedReanimeIdsForAnissia([1,2,3]);
   assert.equal(links.has(1),false);assert.equal(links.get(2),'only');assert.equal(links.has(3),false);
+});
+test('detail playback IDs prefer explicit/provisional links and reuse only non-conflicting successful caches',async()=>{
+  function api({confirmed=[],provisional=[],cache='re_beatless-yd63yf',candidates=false,reserved=[],manual=[]}={}) {
+    return load('src/lib/reanimeMatches.ts',{
+      '@/data/reanime-matches.json':{},
+      '@/lib/db':{getDb:()=>async()=>confirmed,getAnissiaStreamCache:async()=>({reanime_id:cache})},
+      './workMatchOverrides':{...matchOverrides,getWorkMatchOverrides:async()=>manual},
+      './provisionalWorkMatches':{getProvisionalWorkMatches:async()=>provisional,
+        hasWorkMatchCandidates:async()=>candidates,getReservedReanimeIdsForOtherWorks:async()=>new Set(reserved)},
+    });
+  }
+  assert.equal(await api().getPlaybackReanimeIdForAnissia(1205),'re_beatless-yd63yf');
+  assert.equal(await api({confirmed:[{anissia_no:1205,reanime_id:'confirmed'}]}).getPlaybackReanimeIdForAnissia(1205),'confirmed');
+  assert.equal(await api({provisional:[{anissiaNo:1205,reanimeId:'selected'}],candidates:true}).getPlaybackReanimeIdForAnissia(1205),'selected');
+  assert.equal(await api({candidates:true}).getPlaybackReanimeIdForAnissia(1205),null);
+  assert.equal(await api({reserved:['beatless-yd63yf']}).getPlaybackReanimeIdForAnissia(1205),null);
+  assert.equal(await api({manual:[{anissiaNo:1346,reanimeId:'beatless-yd63yf'}]}).getPlaybackReanimeIdForAnissia(1205),null);
+  assert.equal(await api({cache:null}).getPlaybackReanimeIdForAnissia(1205),null);
+  assert.equal(await api().getPlaybackReanimeIdForAnissia(-1),null);
 });
 test('filtered catalog does not fall back to an unfiltered network feed when DB is unavailable',async()=>{
   const api=load('src/lib/linkedReanimeCatalog.ts',{'./db':{getDb:()=>null},

@@ -30,7 +30,8 @@ const romaji = 'Seihantai na Kimi to Boku Season 2';
 function anissia(captionNumbers = range(13,25), metaCount = 13, options = {}) {
   return load('src/lib/providers/anissia.ts', {
     '../reanimeMatches': {getConfirmedReanimeIdsForAnissia: async () => options.video && options.confirmed !== false
-      ? new Map([[options.animeNo || 42,'linked']]) : new Map(),getEffectiveReanimeIdsForAnissia:async()=>new Map()},
+      ? new Map([[options.animeNo || 42,'linked']]) : new Map(),getEffectiveReanimeIdsForAnissia:async()=>new Map(),
+      getPlaybackReanimeIdForAnissia:async()=> options.video && (options.confirmed !== false || options.playbackLinked) ? 'linked' : null},
     './reanime': {getReanimeArtwork: async () => null,getAnimeDetail:async()=>options.video},
     '../resolvers/videoResolver': {parseSeason: text => Number(text?.match(/(?:Season\s*|第)(\d+)/i)?.[1] || text?.match(/(\d+)기/)?.[1]) || null},
   }, {fetch: async url => {
@@ -325,6 +326,22 @@ test('confirmed video expansion respects season-local and cumulative numbering w
   assert.equal(local.total_episodes,14);
   const combined = await anissia([13,25],13,{video:videoDetail('re_complete','Seihantai na Kimi to Boku',1,37)}).getAnimeDetail('ani_42',{subtitleEpisodeStart:13});
   assert.equal(combined.total_episodes,13);
+});
+test('detail uses the default playback ReAnime catalog even without a confirmed artwork link', async () => {
+  const detail = await anissia([20],20,{confirmed:false,playbackLinked:true,
+    video:videoDetail('re_beatless-yd63yf','BEATLESS',1,24),title:'BEATLESS',originalTitle:''}).getAnimeDetail('ani_42');
+  assert.deepEqual(plain(detail.sub_episodes.map(e=>e.number)),range(1,24));
+  assert.equal(detail.sub_episodes[19].caption_url,'https://blog.example/20');
+  assert.equal(detail.sub_episodes[23].watch_url,'/watch/ani_42/24');
+});
+test('detail reflects a shorter/sparse video playlist and keeps its OVA titles instead of manufacturing subtitle-only episodes', async () => {
+  const video = videoDetail('re_exact','BEATLESS',1,12);
+  video.sub_episodes.push({number:14,title:'OVA - Extra',watch_url:'https://video.example/14'});
+  const detail = await anissia([20],20,{video,title:'BEATLESS',originalTitle:''}).getAnimeDetail('ani_42');
+  assert.deepEqual(plain(detail.sub_episodes.map(e=>e.number)),[...range(1,12),14]);
+  assert.equal(detail.total_episodes,13);
+  assert.equal(detail.sub_episodes[12].title,'OVA - Extra');
+  assert.equal(detail.sub_episodes[12].watch_url,'/watch/ani_42/14');
 });
 test('Final Stage defaults to local 1-4 while its subtitle source remains 21-24', async () => {
   const detail = await anissia([24],4,{animeNo:1346,title:'BEATLESS Final Stage',originalTitle:'',
