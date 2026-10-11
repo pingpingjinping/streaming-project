@@ -1187,7 +1187,7 @@ export default function Player(props: PlayerProps) {
       }
 
       const offset = effectiveSubtitleOffset(
-        currentSyncOffsetRef.current, sponsorSyncRef.current, art.currentTime || 0,
+        currentSyncOffsetRef.current, sponsorSyncRef.current, artRef.current?.currentTime || 0,
       );
       const isAppleDevice =
         typeof navigator !== "undefined" &&
