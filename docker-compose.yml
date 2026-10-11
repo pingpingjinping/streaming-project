@@ -35,8 +35,10 @@ services:
       NEXT_TELEMETRY_DISABLED: 1
       DATABASE_URL: postgresql://${POSTGRES_USER:-anime}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-anime}
       SUBTITLE_STORAGE_DIR: /app/data/subtitles
+      WORK_AUDIT_DIR: /app/data/work-audit
     volumes:
       - ./subtitle-data:/app/data/subtitles
+      - ./work-audit:/app/data/work-audit:ro
     healthcheck:
       test:
         [
