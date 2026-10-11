@@ -852,3 +852,23 @@ test('failed episode save keeps the modal open and reports the error; unsupporte
     await busy.button('이번 화만 지정').props.onClick();assert.equal(busy.calls.length,0);
   }
 });
+
+test('native player episode-only selection preserves future-episode track preference while ordinary selection still changes it',()=>{
+  const vm=require('node:vm'),source=fs.readFileSync(path.join(__dirname,'../src/components/Player.tsx'),'utf8');
+  const start=source.indexOf('  const handleSelectFoundSubtitle ='),end=source.indexOf('\n  const autoNextRef',start);
+  assert.ok(start>=0&&end>start);
+  const code=ts.transpileModule(source.slice(start,end),{compilerOptions}).outputText;
+  const key='anissia-local-track:re_player_button',preferences=new Map([[key,'ordinary-track']]),applied=[];
+  const context={animeId:'re_player_button',subs:[],currentSyncOffset:0,
+    setNeedsManualSubtitleChoice(){},setSubtitleNotice(){},setSubs(){},setSelectedSubIndex(){},refreshSubtitleSettings(){},
+    applySubtitle:subtitle=>applied.push(subtitle),window:{localStorage:{
+      setItem:(k,v)=>preferences.set(k,v),removeItem:k=>preferences.delete(k),
+    }}};
+  function select(option){vm.runInNewContext(code+'\nhandleSelectFoundSubtitle(option);',{...context,option});}
+  const local={name:'special',content:'special',localArchive:true,sourceProvider:'anissia',localArchiveTrackKey:'special-track'};
+  select({...local,episodeException:true});assert.equal(preferences.get(key),'ordinary-track');
+  select({name:'reviewed',reviewedFileId:'reviewed_v6_1109:bonus',episodeException:true});
+  assert.equal(preferences.get(key),'ordinary-track');assert.equal(applied.length,2);
+  select(local);assert.equal(preferences.get(key),'special-track');
+  select({name:'uploaded'});assert.equal(preferences.has(key),false);
+});
