@@ -50,6 +50,7 @@ export interface AnimeDetail {
   rating?: number | null;
   caption_count?: number;
   original_title?: string;
+  video_available?: boolean;
 }
 
 export interface ServerSource {
@@ -60,6 +61,8 @@ export interface ServerSource {
 
 export interface EpisodeStreamInfo {
   success: boolean;
+  video_source?: "rean" | "anikoto" | "linkkf" | "ohli24";
+  video_episodes?: EpisodeItem[];
   m3u8_url: string;
   vtt_url: string;
   player_url: string;

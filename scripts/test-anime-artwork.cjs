@@ -33,8 +33,8 @@ const response=data=>({ok:true,json:async()=>data});
 function anissia(fetch,links=new Map(),artwork=async()=>null,clock=Date) {
   return load('src/lib/providers/anissia.ts',{
     '../episodeMapping':load('src/lib/episodeMapping.ts'),
-    './ids':requireIds(),'../resolvers/videoResolver':{resolveAnissiaStream:async()=>null},
-    '../reanimeMatches':{getConfirmedReanimeIdsForAnissia:async()=>links},'./reanime':{getReanimeArtwork:artwork},
+    './ids':requireIds(),'../resolvers/videoResolver':{resolveAnissiaStream:async()=>null,parseSeason:()=>null},
+    '../reanimeMatches':{getConfirmedReanimeIdsForAnissia:async()=>links},'./reanime':{getReanimeArtwork:artwork,getAnimeDetail:async()=>null},
   },{fetch,Date:clock});
 }
 function requireIds(){return load('src/lib/providers/ids.ts');}
@@ -85,6 +85,7 @@ test('same source titles with different confirmed IDs do not share another seaso
 });
 function reanime(fetch,clock=Date) {
   return load('src/lib/providers/reanime.ts',{'./ids':requireIds(),
+    '../episodeMapping':load('src/lib/episodeMapping.ts'),
     '@/lib/reanimeMatches':{},'@/lib/db':{DEFAULT_REANIME_URL:'https://reanime.example',getReanimeBaseUrl:async()=> 'https://reanime.example'}},{fetch,Date:clock});
 }
 test('ReAnime poster lookup fetches only the linked ID, caches and deduplicates concurrent requests',async()=>{

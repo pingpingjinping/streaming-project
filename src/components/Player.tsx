@@ -146,6 +146,7 @@ export interface PlayerProps {
   initialSubtitle?: any;
   initialCreator?: string;
   initialSubUrl?: string;
+  videoSource?: string;
 }
 
 declare global {
@@ -455,7 +456,7 @@ export default function Player(props: PlayerProps) {
 
         // 3. 새 회차 스트림 정보 API 호출
         const res = await fetch(
-          `/api/anime/episode_info?id=${encodeURIComponent(animeId)}&ep=${targetEp}${isDub ? "&is_dub=1" : ""}`
+          `/api/anime/episode_info?id=${encodeURIComponent(animeId)}&ep=${targetEp}${isDub ? "&is_dub=1" : ""}${props.videoSource ? `&video_source=${encodeURIComponent(props.videoSource)}` : ""}`
         );
         const data = await res.json();
 
@@ -477,7 +478,10 @@ export default function Player(props: PlayerProps) {
         }
 
         // 4. 페이지 이동 없이 브라우저 URL 갱신 (Next.js 가로채기 방지 -> 전체화면 유지)
-        const nextUrl = `/watch/${animeId}/${targetEp}${isDub ? "?dub=1" : ""}`;
+        const query = new URLSearchParams();
+        if (isDub) query.set("dub", "1");
+        if (props.videoSource) query.set("video_source", props.videoSource);
+        const nextUrl = `/watch/${animeId}/${targetEp}${query.size ? `?${query}` : ""}`;
         try {
           // Next.js App Router의 라우트 변경(RSC 리마운트 및 전체화면 풀림) 인터셉트 방지: __NA: true
           const nextState = { ...(window.history.state || {}), __NA: true };
@@ -578,7 +582,7 @@ export default function Player(props: PlayerProps) {
         setIsSwitchingEp(null);
       }
     },
-    [animeId, animeTitle, isDub, currentEpisodes]
+    [animeId, animeTitle, isDub, currentEpisodes, props.videoSource]
   );
   switchEpisodeRef.current = switchEpisode;
 

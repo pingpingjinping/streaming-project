@@ -27,18 +27,19 @@ const range = (first, last) => Array.from({length: last - first + 1}, (_, i) => 
 const korean = '정반대의 너와 나 2기';
 const native = '正反対な君と僕 第2期';
 const romaji = 'Seihantai na Kimi to Boku Season 2';
-function anissia(captionNumbers = range(13,25), metaCount = 13) {
+function anissia(captionNumbers = range(13,25), metaCount = 13, options = {}) {
   return load('src/lib/providers/anissia.ts', {
-    '../reanimeMatches': {getConfirmedReanimeIdsForAnissia: async () => new Map(),getEffectiveReanimeIdsForAnissia:async()=>new Map()},
-    './reanime': {getReanimeArtwork: async () => null},
-    '../resolvers/videoResolver': {},
+    '../reanimeMatches': {getConfirmedReanimeIdsForAnissia: async () => options.video && options.confirmed !== false
+      ? new Map([[options.animeNo || 42,'linked']]) : new Map(),getEffectiveReanimeIdsForAnissia:async()=>new Map()},
+    './reanime': {getReanimeArtwork: async () => null,getAnimeDetail:async()=>options.video},
+    '../resolvers/videoResolver': {parseSeason: text => Number(text?.match(/(?:Season\s*|第)(\d+)/i)?.[1] || text?.match(/(\d+)기/)?.[1]) || null},
   }, {fetch: async url => {
     if (String(url).includes('graphql')) return {ok: true, json: async () => ({data: {Media: {
       id: 1, title: {}, episodes: metaCount,
     }}})};
     const data = String(url).includes('/caption/')
       ? captionNumbers.map(episode => ({episode: String(episode), name: 'creator', website: `https://blog.example/${episode}`}))
-      : {subject: korean, originalSubject: native, status: 'END'};
+      : {subject: options.title ?? korean, originalSubject: options.originalTitle ?? native, status: 'END'};
     return {ok: true, json: async () => ({data})};
   }}).anissiaProvider;
 }
@@ -303,4 +304,150 @@ test('segment discovery resolves the same local episode and refuses local 14', a
   assert.deepEqual(calls[0].slice(5),['ani_42',13,13]);
   assert.equal((await api.GET({url:'https://app.example/api?anime_id=ani_42&ep=14'})).data.success,false);
   assert.equal(calls.length,1);
+});
+
+const videoDetail = (id, title, first, last) => ({id,title,video_available:true,
+  sub_episodes:range(first,last).map(number=>({number,title:`${number}화 - Video ${number}`,watch_url:`https://video.example/${id}/${number}`}))});
+test('caption max 20 expands to a confirmed ReAnime 24; fuzzy or unavailable metadata cannot expand it', async () => {
+  const video = videoDetail('re_complete','BEATLESS',1,24);
+  for (const [confirmed,available,expected] of [[true,true,24],[false,true,20],[true,false,20]]) {
+    const detail = await anissia([20],24,{video:{...video,video_available:available},confirmed,title:'BEATLESS',originalTitle:''}).getAnimeDetail('ani_42');
+    assert.equal(detail.total_episodes,expected);
+    assert.equal(detail.sub_episodes[19].caption_url,'https://blog.example/20');
+    if (expected===24) {
+      assert.equal(detail.sub_episodes[23].watch_url,'/watch/ani_42/24');
+      assert.equal(detail.sub_episodes[23].caption_url,undefined);
+    }
+  }
+});
+test('confirmed video expansion respects season-local and cumulative numbering without importing another season', async () => {
+  const local = await anissia([13,25],13,{video:videoDetail('re_season2',romaji,1,14)}).getAnimeDetail('ani_42',{subtitleEpisodeStart:13});
+  assert.equal(local.total_episodes,14);
+  const combined = await anissia([13,25],13,{video:videoDetail('re_complete','Seihantai na Kimi to Boku',1,37)}).getAnimeDetail('ani_42',{subtitleEpisodeStart:13});
+  assert.equal(combined.total_episodes,13);
+});
+test('Final Stage defaults to local 1-4 while its subtitle source remains 21-24', async () => {
+  const detail = await anissia([24],4,{animeNo:1346,title:'BEATLESS Final Stage',originalTitle:'',
+    video:videoDetail('re_beatless-final-stage-tmwejf','BEATLESS Final Stage',1,4)}).getAnimeDetail('ani_1346');
+  assert.deepEqual(plain(detail.sub_episodes.map(e=>e.number)),range(1,4));
+  assert.equal(detail.sub_episodes[3].caption_url,'https://blog.example/24');
+  assert.equal(mapping.defaultSubtitleEpisodeStart('ani_1346'),21);
+  assert.equal(mapping.defaultSubtitleEpisodeStart('ani_42'),null);
+});
+test('ReAnime Final projection uses the complete work streams 21/24 instead of AniList 0 episodes 1/4', async () => {
+  const requests=[];
+  const provider = load('src/lib/providers/reanime.ts',{
+    '@/lib/db':{DEFAULT_REANIME_URL:'https://rean.example',getReanimeBaseUrl:async()=> 'https://rean.example'},
+    '@/lib/reanimeMatches':{getBundledReanimeMatch:()=>null},
+  },{Date,fetch:async url=>{
+    requests.push(String(url));
+    const data=String(url).endsWith('/episodes') ? {data:range(1,24).map(number=>({number,title:`Episode ${number}`}))}
+      : {anime_id:'beatless-yd63yf',title:{english:'BEATLESS'},anilist_id:100245,can_watch:true,episodes_total:24};
+    return {ok:true,json:async()=>data};
+  }});
+  const detail=await provider.getAnimeDetail('re_beatless-final-stage-tmwejf');
+  assert.equal(detail.total_episodes,4);
+  assert.deepEqual(plain(detail.sub_episodes.map(e=>e.number)),range(1,4));
+  for (const [local,source] of [[1,21],[4,24]]) {
+    const url=new URL(detail.sub_episodes[local-1].watch_url);
+    assert.equal(url.pathname,'/watch/beatless-yd63yf');
+    assert.equal(url.searchParams.get('ep'),String(source));
+    assert.equal(url.searchParams.get('anilist'),'100245');
+  }
+  assert.ok(requests.every(url=>!url.includes('final-stage')));
+});
+test('Anikoto reviewed split builds a complete 1-24 playlist and maps 21/24 to Final 1/4', async () => {
+  const links=load('src/lib/anikotoLinks.ts',{'./db':{getDb:()=>null}});
+  const streams=[];
+  const main=videoDetail('ak_beatless-hy0tv','BEATLESS',1,20),final=videoDetail('ak_beatless-final-stage-6exh5','BEATLESS Final Stage',1,4);
+  const provider={getAnimeDetail:async id=>id===main.id?main:id===final.id?final:null,
+    getEpisodeStream:async url=>{streams.push(url);return {success:true,embed_url:url};}};
+  const api=load('src/lib/resolvers/videoResolver.ts',{
+    '../db':{getAnissiaStreamCache:async()=>null,setAnissiaStreamCache:async()=>{}},
+    '../anikotoLinks':links,'../providers/anikoto':{anikotoProvider:provider},
+    '../providers/reanime':{},'../providers/linkkf':{},'../providers/ohli24':{},'../providers/anissia':{},'../animeWorkIdentity':{},
+  },{fetch:()=>{throw Error('unexpected network');}});
+  for (const [local,source,id] of [[1,1,main.id],[20,20,main.id],[21,1,final.id],[24,4,final.id]]) {
+    const stream=await api.resolveAnissiaStream(1205,local,'BEATLESS','BEATLESS','anikoto','ani_1205',null);
+    assert.equal(stream.success,true);
+    assert.equal(stream.video_source,'anikoto');
+    assert.deepEqual(plain(stream.video_episodes.map(e=>e.number)),range(1,24));
+    assert.equal(streams.at(-1),`https://video.example/${id}/${source}`);
+    assert.equal(stream.video_episodes[23].watch_url,'/watch/ani_1205/24?video_source=anikoto');
+  }
+  assert.equal((await links.getAnikotoPlaybackCandidates('ani_1205',25)).length,0);
+  const local=await links.getAnikotoPlaybackCandidates('ani_1346',4);
+  assert.equal(local[0].episodeNumber,4);
+});
+test('invalid or unknown Anikoto ranges cannot add fictitious playlist episodes', async () => {
+  const links=load('src/lib/anikotoLinks.ts',{'./db':{getDb:()=>async()=>[
+    {anikoto_id:'wrong',mapping_kind:'range',anikoto_episode_start:1,anikoto_episode_end:4,target_episode_start:21,target_episode_end:30},
+    {anikoto_id:'unknown',mapping_kind:'unknown_order'},
+  ]}});
+  assert.equal((await links.getAnikotoPlaybackCandidates('ani_42',1,true)).length,0);
+});
+test('video playlists preserve missing numbers and OVA titles; absent caption rows remain selectable', () => {
+  const rows=[{number:1,title:'1화',watch_url:'/1'},{number:3,title:'OVA',watch_url:'/3'},{number:4,title:'4화',watch_url:'/4'}];
+  const result=mapping.attachEpisodeCaptions(mapping.videoEpisodeList(rows,null,null,null),[{number:1,title:'caption',caption_url:'https://blog.example/1',creator_name:'creator'}]);
+  assert.deepEqual(plain(result.map(e=>e.number)),[1,3,4]);
+  assert.equal(result[1].title,'OVA');assert.equal(result[1].caption_url,undefined);
+  assert.equal(result[0].creator_name,'creator');
+});
+test('watch page uses the successful provider playlist, including shorter sources and extra episodes with subtitle controls', async () => {
+  for (const [source,last,episode] of [['rean',24,24],['anikoto',20,1],['anikoto',26,26]]) {
+    const api=pageDeps();
+    api.deps['@/lib/db'].getSubtitleEpisodeStart=async()=>null;
+    api.deps['@/lib/providers']={getProviderByAnimeId:()=>anissia([20],20,{title:'BEATLESS',originalTitle:''})};
+    api.deps['@/lib/resolvers/videoResolver']={resolveAnissiaStream:async(...args)=>{
+      assert.equal(args[4],source);
+      return {success:true,embed_url:'https://video.example',server_sources:[],video_source:source,
+        video_episodes:range(1,last).map(number=>({number,title:`${number}화 - Source`,watch_url:`/watch/ani_42/${number}?video_source=${source}`}))};
+    }};
+    const tree=await load('src/app/watch/[id]/[ep]/page.tsx',api.deps).default({params:Promise.resolve({id:'ani_42',ep:String(episode)}),searchParams:Promise.resolve({video_source:source})});
+    const player=elements(tree).find(e=>e.type==='Player');
+    assert.equal(player.props.subEpisodes.length,last);
+    assert.equal(player.props.videoSource,source);
+    assert.equal(player.props.linkNextEp,episode===last?null:episode+1);
+    assert.equal(player.props.initialEpTitle,`${episode}화 - Source`);
+    assert.equal(player.props.animeId,'ani_42');
+  }
+});
+test('episode API retains the chosen source, uses its next/previous numbers and resolves extra episodes', async () => {
+  const calls=[];
+  const api=load('src/app/api/anime/episode_info/route.ts',{
+    'next/server':{NextResponse:response},'@/lib/auth':{getSessionUser:async()=>({username:'viewer'})},
+    '@/lib/db':{getSubtitleEpisodeStart:async()=>null},
+    '@/lib/providers':{getProviderByAnimeId:()=>anissia([20],20,{title:'BEATLESS',originalTitle:''})},
+    '@/lib/resolvers/videoResolver':{resolveAnissiaStream:async(...args)=>{
+      calls.push(args);return {success:true,m3u8_url:'https://video.example/master.m3u8',video_source:'anikoto',
+        video_episodes:range(1,24).map(number=>({number,title:`${number}화 - Video`,watch_url:`/watch/ani_42/${number}?video_source=anikoto`}))};
+    }},
+  });
+  const result=await api.GET({url:'https://app.example/api?id=ani_42&ep=21&video_source=anikoto'});
+  assert.equal(result.data.success,true);assert.equal(calls[0][4],'anikoto');
+  assert.equal(result.data.link_pre_ep_num,20);assert.equal(result.data.link_next_ep_num,22);
+  assert.equal(result.data.video_source,'anikoto');assert.equal(result.data.episode_title,'21화 - Video');
+});
+
+test('iframe previous/next and dropdown navigation retain the actual video source and expose subtitle selection', () => {
+  const location={href:''};
+  const component=load('src/components/IframePlayer.tsx',{
+    react:{useEffect:()=>{},useRef:value=>({current:value}),useState:value=>[typeof value==='function'?value():value,()=>{}],useCallback:callback=>callback},
+    'react/jsx-runtime':{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})},
+    'next/link':'Link','lucide-react':{},'./SubtitleSelectModal':'SubtitleSelectModal',
+    './usePlayerFullscreen':{usePlayerFullscreen:()=>({mode:'native',isFullscreen:false,toggleFullscreen:()=>{}})},
+    './useContainedPlayerFrame':{useContainedPlayerFrame:()=>{}},'@/lib/iframePlayback':{},
+    './PlayerSettingsModal':{default:'PlayerSettingsModal',DEFAULT_PLAYER_SETTINGS:{}},
+  },{window:{location},fetch:async()=>({ok:true,json:async()=>({})})}).default;
+  const tree=component({animeId:'ani_42',animeTitle:'Work',episodeNumber:21,linkPreEp:20,linkNextEp:22,
+    videoSource:'anikoto',subEpisodes:range(1,24).map(number=>({number,title:`${number}화`}))});
+  const nodes=elements(tree);
+  const links=nodes.filter(e=>e.type==='Link').map(e=>e.props.href);
+  assert.ok(links.includes('/watch/ani_42/20?video_source=anikoto'));
+  assert.ok(links.includes('/watch/ani_42/22?video_source=anikoto'));
+  const select=nodes.find(e=>e.type==='select');
+  assert.equal(select.props.children.length,24);
+  select.props.onChange({target:{value:'24'}});
+  assert.equal(location.href,'/watch/ani_42/24?video_source=anikoto');
+  assert.ok(nodes.some(e=>e.type==='SubtitleSelectModal'));
 });

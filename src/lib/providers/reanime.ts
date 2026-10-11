@@ -9,6 +9,7 @@ import {
   ServerSource,
 } from "./types";
 import { REANIME_PREFIX, stripReanimeId, toReanimeId } from "./ids";
+import { reviewedReanimeProjection } from "../episodeMapping";
 import {
   findReanimeSearchTitles,
   findReanimeSearchTitlesFromDb,
@@ -577,6 +578,19 @@ export async function getAnimeDetail(animeId: string): Promise<AnimeDetail | nul
   const slug = stripReanimeId(animeId);
   if (!slug) return null;
 
+  const projection = reviewedReanimeProjection(normalizedId);
+  if (projection) {
+    const complete = await getAnimeDetail(projection.sourceId);
+    if (!complete) return null;
+    const episodes = complete.sub_episodes.filter(e => e.number >= projection.start && e.number <= projection.end)
+      .map(e => ({ ...e, number: e.number - projection.start + 1,
+        title: e.title.replace(/^\d+화/, `${e.number - projection.start + 1}화`) }));
+    const detail = { ...complete, id: normalizedId, title: projection.title, sub_episodes: episodes,
+      dub_episodes: [], total_episodes: episodes.length };
+    detailCache[normalizedId] = { data: detail, anilistId: detailCache[toReanimeId(projection.sourceId)]?.anilistId || 0, timestamp: now };
+    return detail;
+  }
+
   const baseUrl = await getBaseUrl();
   const headers = { ...REANIME_HEADERS, Referer: `${baseUrl}/` };
 
@@ -621,6 +635,7 @@ export async function getAnimeDetail(animeId: string): Promise<AnimeDetail | nul
       const detail: AnimeDetail = {
         id: normalizedId,
         title,
+        video_available: rawAnime.can_watch === true && anilistId > 0,
         poster,
         description: rawAnime.description ? rawAnime.description.replace(/<br\s*[\/]?>/gi, "\n") : "",
         genres: Array.isArray(rawAnime.genres) ? rawAnime.genres : [],
@@ -696,6 +711,7 @@ export async function getAnimeDetail(animeId: string): Promise<AnimeDetail | nul
     const detail: AnimeDetail = {
       id: normalizedId,
       title,
+      video_available: rawAnime.can_watch === true && anilistId > 0,
       poster,
       description: rawAnime.description ? rawAnime.description.replace(/<br\s*[\/]?>/gi, "\n") : "",
       genres: Array.isArray(rawAnime.genres) ? rawAnime.genres : [],
