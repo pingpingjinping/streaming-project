@@ -55,21 +55,32 @@ export async function saveAnikotoWorkOverride(anissiaNo: number, anikotoId: stri
         AND NOT (target_source='Anissia' AND target_id=${String(anissiaNo)})
         AND link_status IN ('reviewed','multi_reviewed')
       LIMIT 1`;
-    const existing = await tx`SELECT anissia_no FROM anime_anikoto_work_overrides
-      WHERE anikoto_id=${anikotoId} AND anissia_no<>${anissiaNo} LIMIT 1`;
-    if (existing.length || (other.length && !ranges.length)) throw new Error("ambiguous_multi_season");
+    const existing = await tx`SELECT anissia_no,mapping_kind,
+      anikoto_episode_start,anikoto_episode_end,target_episode_start,target_episode_end
+      FROM anime_anikoto_work_overrides
+      WHERE anikoto_id=${anikotoId} AND anissia_no<>${anissiaNo}`;
+    if (other.length && !ranges.length) throw new Error("ambiguous_multi_season");
     const range = ranges.length === 1 ? ranges[0] : null;
     if (ranges.length > 1) throw new Error("ambiguous_multi_season");
     const explicit = !!range && range.mapping_kind !== "whole";
-    const sourceStart = explicit ? Number(range.anikoto_episode_start) : null;
-    const sourceEnd = explicit ? Number(range.anikoto_episode_end) : null;
-    const targetStart = explicit ? Number(range.target_episode_start) : null;
-    const targetEnd = explicit ? Number(range.target_episode_end) : null;
+    const sourceStart = explicit && range ? Number(range.anikoto_episode_start) : null;
+    const sourceEnd = explicit && range ? Number(range.anikoto_episode_end) : null;
+    const targetStart = explicit && range ? Number(range.target_episode_start) : null;
+    const targetEnd = explicit && range ? Number(range.target_episode_end) : null;
     if (explicit && (!Number.isInteger(sourceStart) || !Number.isInteger(sourceEnd)
       || !Number.isInteger(targetStart) || !Number.isInteger(targetEnd)
       || sourceStart! < 1 || targetStart! < 1 || sourceEnd! < sourceStart!
       || targetEnd! < targetStart! || sourceEnd! - sourceStart! !== targetEnd! - targetStart!))
       throw new Error("ambiguous_multi_season");
+    // A multi-season URL may be shared only when both reviewed mappings
+    // have explicit, disjoint Anikoto source episode ranges.
+    for (const row of existing) {
+      if (!explicit || row.mapping_kind !== "range"
+        || row.anikoto_episode_start == null || row.anikoto_episode_end == null
+        || !(sourceEnd! < Number(row.anikoto_episode_start)
+          || sourceStart! > Number(row.anikoto_episode_end)))
+        throw new Error("ambiguous_multi_season");
+    }
     await tx`INSERT INTO anime_anikoto_work_overrides (
       anissia_no,anikoto_id,mapping_kind,anikoto_episode_start,anikoto_episode_end,
       target_episode_start,target_episode_end)
