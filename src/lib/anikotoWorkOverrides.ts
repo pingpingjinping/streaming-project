@@ -51,15 +51,16 @@ export async function saveAnikotoWorkOverride(anissiaNo: number, anikotoId: stri
         AND link_status IN ('reviewed','multi_reviewed')
       ORDER BY target_order`;
     const other = await tx`SELECT target_id FROM anime_anikoto_work_targets
-      WHERE anikoto_id=${anikotoId} AND target_source='Anissia'
-        AND target_id<>${String(anissiaNo)} AND link_status IN ('reviewed','multi_reviewed')
+      WHERE anikoto_id=${anikotoId}
+        AND NOT (target_source='Anissia' AND target_id=${String(anissiaNo)})
+        AND link_status IN ('reviewed','multi_reviewed')
       LIMIT 1`;
     const existing = await tx`SELECT anissia_no FROM anime_anikoto_work_overrides
       WHERE anikoto_id=${anikotoId} AND anissia_no<>${anissiaNo} LIMIT 1`;
     if (existing.length || (other.length && !ranges.length)) throw new Error("ambiguous_multi_season");
     const range = ranges.length === 1 ? ranges[0] : null;
     if (ranges.length > 1) throw new Error("ambiguous_multi_season");
-    const explicit = range && range.mapping_kind !== "whole";
+    const explicit = !!range && range.mapping_kind !== "whole";
     const sourceStart = explicit ? Number(range.anikoto_episode_start) : null;
     const sourceEnd = explicit ? Number(range.anikoto_episode_end) : null;
     const targetStart = explicit ? Number(range.target_episode_start) : null;
