@@ -4061,17 +4061,6 @@ export default function Player(props: PlayerProps) {
         )}
       </div>
 
-      {/* A shortcut is available outside ArtPlayer's settings, including on mobile. */}
-      <button
-        type="button"
-        onClick={() => setSponsorSyncOpen(true)}
-        className="mt-3 rounded-xl border border-purple-500/40 bg-slate-900 px-3 py-2 text-xs font-semibold text-purple-200 hover:bg-slate-800"
-      >
-        {sponsorSync.startSeconds === null
-          ? "스폰서 이후 자막 싱크 설정"
-          : `스폰서 이후 싱크 · ${formatSyncTime(sponsorSync.startSeconds)}부터 +${sponsorSync.delaySeconds}초`}
-      </button>
-
       {/* Episode Navigation & Controls */}
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-purple-500/20 bg-slate-900/80 p-4 backdrop-blur-md">
         {/* Navigation Buttons */}
@@ -4259,6 +4248,14 @@ export default function Player(props: PlayerProps) {
           >
             <Settings className="h-3.5 w-3.5 text-purple-400" />
             <span>설정</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSponsorSyncOpen(true)}
+            title="스폰서 이후 자막 싱크 설정"
+            className="inline-flex items-center rounded-lg border border-purple-500/40 bg-slate-800 px-2 py-1 text-xs font-semibold text-purple-200 transition hover:border-purple-500 hover:text-white active:scale-95 cursor-pointer"
+          >
+            스폰서 싱크
           </button>
         </div>
       </div>

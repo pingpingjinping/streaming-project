@@ -1318,13 +1318,6 @@ export default function IframePlayer({
         )}
       </div>
 
-      <button type="button" onClick={() => setSponsorSyncOpen(true)}
-        className="my-3 rounded-xl border border-purple-500/40 bg-slate-900 px-3 py-2 text-xs font-semibold text-purple-200 hover:bg-slate-800">
-        {sponsorSync.startSeconds === null
-          ? "스폰서 이후 자막 싱크 설정"
-          : `스폰서 이후 싱크 · ${formatSyncTime(sponsorSync.startSeconds)}부터 +${sponsorSync.delaySeconds}초`}
-      </button>
-
       {/* Layer 3: Subtitle Control Toolbar (플레이어 하단) */}
       <div className="rounded-2xl border border-purple-500/20 bg-slate-900/70 p-3 sm:p-4 backdrop-blur-md space-y-3">
         {/* Row 1: Subtitle Source & First Dialogue Guide */}
@@ -1451,6 +1444,15 @@ export default function IframePlayer({
                 <Check className="h-3 w-3" /> 저장됨
               </span>
             )}
+
+            <button
+              type="button"
+              onClick={() => setSponsorSyncOpen(true)}
+              title="스폰서 이후 자막 싱크 설정"
+              className="shrink-0 rounded-lg border border-purple-500/40 bg-slate-800 px-2 py-1 font-semibold text-purple-200 transition hover:border-purple-500 hover:text-white active:scale-95 cursor-pointer"
+            >
+              스폰서 싱크
+            </button>
           </div>
 
           {/* Subtitle Toggle, Size & Fullscreen */}
