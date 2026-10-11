@@ -67,7 +67,7 @@ export default function SponsorSubtitleSyncModal({
     const m = Number(minutes), s = Number(seconds), d = Number(delay);
     if (!minutes.trim() || !seconds.trim() || !delay.trim() ||
         !Number.isInteger(m) || !Number.isInteger(s) ||
-        m < 0 || m > 600 || s < 0 || s > 59 ||
+        m < 0 || m > 600 || s < 0 || s > 59 || m * 60 + s > 36000 ||
         !Number.isFinite(d) || d <= 0 || d > 120) {
       setError("시작 시각은 0~600분 0~59초, 추가 지연은 0초 초과~120초로 설정해 줘.");
       return;
