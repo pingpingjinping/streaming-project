@@ -1,26 +1,36 @@
-name: Inspect ReAnime episode pagination
+name: Inspect source episode list
 on:
   push:
     branches: [codex/fix-reanime-episode-pagination]
-permissions:
-  contents: read
+permissions: {contents: read}
 jobs:
   inspect:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/setup-node@v4
         with: {node-version: '22'}
-      - name: Read public episode response shapes
+      - name: Read Anikoto watch page and episode AJAX shape
         run: |
           node --input-type=module <<'JS'
-          const base='https://reanime.to/api/v1/anime/you-re-under-arrest-tv-m29pp3';
-          for (const suffix of ['', '/episodes', '/episodes?limit=100&offset=0','/episodes?limit=30&offset=30','/episodes?page=2&limit=30']) {
-            try {
-              const res=await fetch(base+suffix,{headers:{Accept:'application/json','User-Agent':'Mozilla/5.0',Referer:'https://reanime.to/'},signal:AbortSignal.timeout(12000)});
-              if (!res.ok) { console.log(JSON.stringify({suffix,status:res.status}));continue; }
-              const j=await res.json();const rows=Array.isArray(j)?j:Array.isArray(j.data)?j.data:[];
-              const rest=Object.fromEntries(Object.entries(j).filter(([k,v])=>k!=='data'&& !Array.isArray(v)&& (v===null||typeof v!=='object'||/meta|pagination/.test(k))));
-              console.log(JSON.stringify({suffix,status:res.status,keys:Object.keys(j),metadata:rest,count:rows.length,first:rows[0],last:rows.at(-1)}));
-            } catch(e) { console.log(JSON.stringify({suffix,error:String(e)})); }
-          }
+          const base='https://anikoto.cz';
+          const headers={'User-Agent':'Mozilla/5.0',Referer:base,Accept:'text/html'};
+          const res=await fetch(base+'/watch/you-re-under-arrest-1996-4cefz',{headers,signal:AbortSignal.timeout(16000)});
+          console.log('SHOW_STATUS',res.status);
+          if(!res.ok)process.exit(0);
+          const html=await res.text();
+          const main=html.match(/<[^>]*id=["']watch-main["'][^>]*>/)?.[0]||'';
+          console.log('MAIN',main);
+          const showId=main.match(/data-id=["'](\d+)["']/)?.[1];
+          if(!showId)process.exit(0);
+          const cookie=res.headers.getSetCookie().map(x=>x.split(';')[0]).join('; ');
+          const r=await fetch(base+'/ajax/episode/list/'+showId+'?style=grid&vrf=',{headers:{...headers,Cookie:cookie,'X-Requested-With':'XMLHttpRequest'},signal:AbortSignal.timeout(16000)});
+          console.log('LIST_STATUS',r.status);
+          if(!r.ok)process.exit(0);
+          const j=await r.json();console.log('JSON_KEYS',Object.keys(j));
+          const result=j.result;console.log('RESULT_TYPE',typeof result,typeof result==='object'?Object.keys(result):'');
+          const content=typeof result==='string'?result:result?.html||'';
+          const tags=[...content.matchAll(/<a\b[^>]*data-num=["']([^"']+)["'][^>]*>/g)].map(x=>({number:x[1],sub:x[0].match(/data-sub=["']([^"']+)/)?.[1],dub:x[0].match(/data-dub=["']([^"']+)/)?.[1]}));
+          console.log('EPISODE_TAGS',JSON.stringify(tags));
+          console.log('LIST_HTML',content.replace(/data-ids=["'][^"']*["']/g,'data-ids="REDACTED"').slice(0,18000));
+          console.log('SCRIPTS',JSON.stringify([...html.matchAll(/<script[^>]+src=["']([^"']+)/g)].map(x=>x[1])));
           JS
