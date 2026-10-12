@@ -54,7 +54,7 @@ const server=http.createServer((req,res)=>{
  cache['next/link']={exports:({children,prefetch,...props})=>React.createElement('a',props,children)};
  cache['./SubtitleSelectModal']={exports:{__esModule:true,default:empty}};
  cache['./SponsorSubtitleSyncModal']={exports:{__esModule:true,default:empty}};
- cache['./PlayerSettingsModal']={exports:{__esModule:true,default:empty,DEFAULT_PLAYER_SETTINGS:${JSON.stringify(settingsExports.DEFAULT_PLAYER_SETTINGS)},loadPlayerSettings:()=>${JSON.stringify(settingsExports.DEFAULT_PLAYER_SETTINGS)},fetchUserSettingsFromDb:async()=>({authenticated:false,settings:null}),applyPlayerSettingsStyles(){},getSubtitleOffsetY:()=>0}};
+ cache['./PlayerSettingsModal']={exports:{__esModule:true,default:empty,DEFAULT_PLAYER_SETTINGS:${JSON.stringify(settingsExports.DEFAULT_PLAYER_SETTINGS)},loadPlayerSettings:()=>(${JSON.stringify(settingsExports.DEFAULT_PLAYER_SETTINGS)}),fetchUserSettingsFromDb:async()=>({authenticated:false,settings:null}),applyPlayerSettingsStyles(){},getSubtitleOffsetY:()=>0}};
  cache['./usePlayerFullscreen']={exports:{usePlayerFullscreen:()=>({mode:'inline',isFullscreen:false,toggleFullscreen(){}})}};
  cache['./useContainedPlayerFrame']={exports:{useContainedPlayerFrame(){}}};
  const query=new URL(location.href).searchParams,mode=query.get('mode')||'rean',ep=Number(query.get('ep')||1);
@@ -73,7 +73,8 @@ const server=http.createServer((req,res)=>{
  let browser;
  try{
   browser=await chromium.launch({headless:true});const page=await browser.newPage({viewport:{width:1100,height:1100}}),errors=[];
-  page.on('pageerror',error=>errors.push(error.message));
+  page.on('pageerror',error=>{errors.push(error.message);console.error('Browser error:',error.message);});
+  page.on('console',message=>{if(message.type()==='error')console.error('Browser console:',message.text());});
   await page.goto(appUrl+'/?mode=rean&creator=maker');
   await page.getByTitle('영상 서버 선택').waitFor();
   await page.waitForFunction(()=>document.body.innerText.includes('02:00.0 / 10:00.0'));
