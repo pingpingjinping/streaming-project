@@ -69,6 +69,37 @@ export function mapAnikotoEpisode(
   return sourceStart + (episodeNumber - targetStart);
 }
 
+/** Use an already-proven canonical ID without repeating remote title searches. */
+export async function getAnikotoPlaybackCandidatesByAniList(
+  anilistId: number, episodeNumber: number, includeCatalog = false,
+): Promise<AnikotoPlaybackCandidate[]> {
+  if (!Number.isInteger(anilistId) || anilistId <= 0) return [];
+  const sql = getDb();
+  if (!sql) return [];
+  try {
+    const rows = await sql`SELECT anikoto_id, target_order, link_status, mapping_kind,
+      anikoto_episode_start, anikoto_episode_end, target_episode_start, target_episode_end
+      FROM anime_anikoto_work_targets
+      WHERE target_source='AniList' AND target_id=${String(anilistId)}
+        AND link_status IN ('reviewed','multi_reviewed','automatic')
+      ORDER BY CASE link_status WHEN 'multi_reviewed' THEN 0 WHEN 'reviewed' THEN 1 ELSE 2 END,
+        anikoto_id, target_order`;
+    return rows.flatMap(row => {
+      if (row.mapping_kind && row.mapping_kind !== 'whole' &&
+          mapAnikotoEpisode(row, integerOrNull(row.target_episode_start) ?? -1) === null) return [];
+      const mapped = mapAnikotoEpisode(row, episodeNumber);
+      if (mapped === null && (!includeCatalog || row.mapping_kind === 'unknown_order')) return [];
+      return [{ animeId: `ak_${row.anikoto_id}`, episodeNumber: mapped ?? -1,
+        mappingKind: String(row.mapping_kind || 'whole'), linkStatus: String(row.link_status || ''),
+        sourceStart: integerOrNull(row.anikoto_episode_start) ?? undefined,
+        targetStart: integerOrNull(row.target_episode_start) ?? undefined,
+        targetEnd: integerOrNull(row.target_episode_end) ?? undefined }];
+    });
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Return only DB-reviewed Anikoto candidates for the currently viewed canonical
  * work. A single Anikoto source may map to multiple seasons; range metadata
@@ -161,3 +192,4 @@ export async function getAnikotoPlaybackCandidates(
     return [];
   }
 }
+

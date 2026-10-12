@@ -106,6 +106,12 @@ export async function preservePlayerFullscreen(
   const mode = await requestPlayerFullscreen(container, nav);
   if (mode === "native" && getPlayerFullscreenElement(doc) === container) return "native";
 
+  // On desktop, silently replacing provider fullscreen with a CSS panel leaves
+  // browser/OS chrome visible and traps Escape inside the cross-origin iframe.
+  // Keep the real provider fullscreen when promotion is denied. The site's
+  // subtitle-inclusive button can request native fullscreen with a fresh click.
+  if (!isAppleTouchDevice(nav)) return null;
+
   // CSS fullscreen cannot display siblings above a native-fullscreen iframe.
   // Exit that child first, then use our normal web fullscreen with captions.
   // Do not exit a different element if the user changed fullscreen meanwhile.
@@ -113,4 +119,5 @@ export async function preservePlayerFullscreen(
   await exitPlayerFullscreen(doc);
   return getPlayerFullscreenElement(doc) ? null : "web";
 }
+
 
