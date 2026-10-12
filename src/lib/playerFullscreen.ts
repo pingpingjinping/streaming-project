@@ -91,3 +91,26 @@ export async function exitPlayerFullscreen(doc: Document): Promise<void> {
   const exit = fullscreenDoc.exitFullscreen || fullscreenDoc.webkitExitFullscreen;
   if (exit) await exit.call(fullscreenDoc);
 }
+
+/** A provider's own fullscreen button may expand its iframe without our captions. */
+export async function preservePlayerFullscreen(
+  container: HTMLElement,
+  doc: Document,
+  nav: Pick<Navigator, "userAgent" | "maxTouchPoints">,
+): Promise<Exclude<PlayerFullscreenMode, "inline"> | null> {
+  const child = getPlayerFullscreenElement(doc);
+  if (!child || child === container || !container.contains(child)) return null;
+
+  // Try promoting the whole player first. Some browsers retain activation for
+  // this transition; others consume it in the provider's initial request.
+  const mode = await requestPlayerFullscreen(container, nav);
+  if (mode === "native" && getPlayerFullscreenElement(doc) === container) return "native";
+
+  // CSS fullscreen cannot display siblings above a native-fullscreen iframe.
+  // Exit that child first, then use our normal web fullscreen with captions.
+  // Do not exit a different element if the user changed fullscreen meanwhile.
+  if (getPlayerFullscreenElement(doc) !== child) return null;
+  await exitPlayerFullscreen(doc);
+  return getPlayerFullscreenElement(doc) ? null : "web";
+}
+

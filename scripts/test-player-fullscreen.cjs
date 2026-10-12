@@ -394,3 +394,54 @@ test('libass keeps the old frame until a forced resize frame is ready', () => {
   assert.doesNotMatch(src, /hasResizeSnapshot|bufferCanvasCtx\.drawImage\(self\.canvas/);
 });
 
+
+test('provider iframe fullscreen promotes the caption container when native transfer is allowed', async () => {
+  const child={},doc={fullscreenElement:child},requests=[];
+  const container={contains:el=>el===child,requestFullscreen:async function(){requests.push(this);doc.fullscreenElement=container;}};
+  assert.equal(await api.preservePlayerFullscreen(container,doc,android),'native');
+  assert.equal(doc.fullscreenElement,container);
+  assert.deepEqual(requests,[container]);
+});
+test('consumed provider activation exits iframe fullscreen before caption-preserving web fallback', async () => {
+  const child={},events=[],doc={fullscreenElement:child,exitFullscreen:async()=>{events.push('exit');doc.fullscreenElement=null;}};
+  const container={contains:el=>el===child,requestFullscreen:async()=>{events.push('request');throw new Error('activation consumed');}};
+  assert.equal(await api.preservePlayerFullscreen(container,doc,android),'web');
+  assert.deepEqual(events,['request','exit']);
+  assert.equal(doc.fullscreenElement,null);
+});
+test('fullscreen preservation never exits unrelated elements or overrides a user exit during transfer', async () => {
+  const child={},unrelated={},container={contains:el=>el===child};
+  let exits=0;const doc={fullscreenElement:unrelated,exitFullscreen:async()=>{exits++;}};
+  assert.equal(await api.preservePlayerFullscreen(container,doc,android),null);
+  doc.fullscreenElement=container;
+  assert.equal(await api.preservePlayerFullscreen(container,doc,android),null);
+  doc.fullscreenElement=child;
+  container.requestFullscreen=async()=>{doc.fullscreenElement=null;throw new Error('user pressed Escape');};
+  assert.equal(await api.preservePlayerFullscreen(container,doc,android),null);
+  assert.equal(exits,0);
+});
+test('native provider fullscreen handoff coalesces duplicate events and ignores updates after unmount', async () => {
+  const child={},doc=Object.assign(new EventTarget(),{fullscreenElement:child});
+  const win=new EventTarget();let pending,transfers=0,mode='inline',cleanup;
+  const refs=[];
+  const {usePlayerFullscreen}=load('src/components/usePlayerFullscreen.ts',{
+    react:{useRef:value=>{const ref={current:value};refs.push(ref);return ref;},useState:()=>['inline',v=>{mode=v;}],useCallback:fn=>fn,
+      useEffect:fn=>{const result=fn();if(result)cleanup=result;}},
+    '@/lib/playerFullscreen':{getPlayerFullscreenElement:d=>d.fullscreenElement,
+      preservePlayerFullscreen:()=>{transfers++;return new Promise(resolve=>{pending=resolve;});},
+      requestPlayerFullscreen:async()=> 'native',exitPlayerFullscreen:async()=>{doc.fullscreenElement=null;},enableWebFullscreenScrollRoom:()=>()=>{}},
+  },{document:doc,window:win,navigator:android});
+  usePlayerFullscreen({current:{contains:el=>el===child}});
+  doc.dispatchEvent(new Event('fullscreenchange'));
+  doc.dispatchEvent(new Event('webkitfullscreenchange'));
+  assert.equal(transfers,1);
+  doc.fullscreenElement=null;
+  doc.dispatchEvent(new Event('fullscreenchange'));
+  pending('web');await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(mode,'web');
+  doc.fullscreenElement=child;
+  doc.dispatchEvent(new Event('fullscreenchange'));
+  assert.equal(transfers,2);
+  cleanup();pending('native');await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(mode,'web');
+});

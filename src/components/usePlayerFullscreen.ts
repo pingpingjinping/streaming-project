@@ -5,6 +5,7 @@ import {
   enableWebFullscreenScrollRoom,
   exitPlayerFullscreen,
   getPlayerFullscreenElement,
+  preservePlayerFullscreen,
   requestPlayerFullscreen,
   type PlayerFullscreenMode,
 } from "@/lib/playerFullscreen";
@@ -43,6 +44,24 @@ export function usePlayerFullscreen(containerRef: RefObject<HTMLDivElement | nul
   useEffect(() => {
     mountedRef.current = true;
     const onChange = () => {
+      if (busyRef.current) return;
+      const container = containerRef.current;
+      const active = getPlayerFullscreenElement(document);
+      if (container && active && active !== container && container.contains(active)) {
+        busyRef.current = true;
+        void preservePlayerFullscreen(container, document, navigator)
+          .then((next) => {
+            if (!mountedRef.current) return;
+            if (next) updateMode(next);
+            else updateMode(getPlayerFullscreenElement(document) === container ? "native" : "inline");
+          })
+          .catch(() => {
+            // A rejected browser exit must not claim that captions are visible.
+            if (mountedRef.current) updateMode("inline");
+          })
+          .finally(() => { busyRef.current = false; });
+        return;
+      }
       // Native exit/back must clear native state; CSS mode has no native event.
       if (modeRef.current !== "web") {
         updateMode(containerRef.current && getPlayerFullscreenElement(document) === containerRef.current ? "native" : "inline");
@@ -69,3 +88,4 @@ export function usePlayerFullscreen(containerRef: RefObject<HTMLDivElement | nul
 
   return { mode, isFullscreen: mode !== "inline", toggleFullscreen };
 }
+

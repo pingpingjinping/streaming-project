@@ -73,3 +73,5 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Verify real ASS canvas rendering
         run: node scripts/test-subtitle-render-browser.cjs
+      - name: Verify provider fullscreen keeps subtitle overlays
+        run: node scripts/test-iframe-fullscreen-browser.cjs
