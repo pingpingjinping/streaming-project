@@ -150,6 +150,9 @@ export interface PlayerProps {
   initialCreator?: string;
   initialSubUrl?: string;
   videoSource?: string;
+  videoServer?: string;
+  sourceAnimeId?: string;
+  sourceEpisodeNumber?: number;
 }
 
 declare global {

@@ -1,4 +1,5 @@
 "use client";
+import VideoServerSelect from "./VideoServerSelect";
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { scaleAssFontSizes, subtitleRenderSize } from "@/lib/subtitlePresentation";
@@ -20,7 +21,6 @@ import {
   Check,
   Loader2,
   FolderOpen,
-  Film,
   Settings,
 } from "lucide-react";
 import { EpisodeItem } from "./Player";
@@ -67,6 +67,9 @@ interface IframePlayerProps {
   initialCreator?: string;
   initialSubUrl?: string;
   videoSource?: string;
+  videoServer?: string;
+  sourceAnimeId?: string;
+  sourceEpisodeNumber?: number;
 }
 
 function formatTime(sec: number): string {
@@ -91,8 +94,29 @@ export default function IframePlayer({
   initialCreator = "",
   initialSubUrl = "",
   videoSource,
+  videoServer,
+  sourceAnimeId,
+  sourceEpisodeNumber,
 }: IframePlayerProps) {
-  const episodeUrl = (number: number | string) => `/watch/${animeId}/${number}${videoSource ? `?video_source=${encodeURIComponent(videoSource)}` : ""}`;
+  const [activeEmbedUrl, setActiveEmbedUrl] = useState(embedUrl);
+  const [activeServerSources, setActiveServerSources] = useState(serverSources);
+  const [activeServerKey, setActiveServerKey] = useState(videoServer || serverSources.find(source => source.player_url === embedUrl)?.key);
+  const [serverBusy, setServerBusy] = useState(false);
+  const [serverError, setServerError] = useState('');
+  const switchRequest = useRef<AbortController | null>(null);
+  const serverResumePosition = useRef<number | null>(null);
+  useEffect(() => {
+    setActiveEmbedUrl(embedUrl); setActiveServerSources(serverSources);
+    setActiveServerKey(videoServer || serverSources.find(source => source.player_url === embedUrl)?.key);
+    setServerError(''); setServerBusy(false);
+    return () => { const pending = switchRequest.current; switchRequest.current = null; pending?.abort(); };
+  }, [embedUrl, serverSources, videoServer, animeId, episodeNumber]);
+  const episodeUrl = (number: number | string) => {
+    const query = new URLSearchParams();
+    if (videoSource) query.set('video_source', videoSource);
+    if (activeServerKey) query.set('video_server', activeServerKey);
+    return `/watch/${animeId}/${number}${query.size ? `?${query}` : ''}`;
+  };
   const containerRef = useRef<HTMLDivElement>(null);
   const mediaFrameRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -274,6 +298,41 @@ export default function IframePlayer({
     },
     [animeId, animeTitle, animePoster, episodeNumber, initialEpTitle, isPlaybackCompleted]
   );
+
+  async function selectServer(server: ServerSource) {
+    if (serverBusy || !server.key || server.key === activeServerKey) return;
+    setServerBusy(true); setServerError('');
+    const controller = new AbortController();
+    switchRequest.current?.abort(); switchRequest.current = controller;
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    try {
+      let url = server.player_url, sources = activeServerSources, key = server.key;
+      if (!url) {
+        if (!sourceAnimeId?.startsWith('ak_')) throw Error('영상 작품 정보를 확인하지 못했습니다.');
+        const query = new URLSearchParams({ id: sourceAnimeId, ep: String(sourceEpisodeNumber ?? episodeNumber), server: key });
+        const response = await fetch(`/api/anime/video-server?${query}`, { cache: 'no-store', signal: controller.signal });
+        const result = await response.json();
+        if (!response.ok || !result.success || !result.embed_url) throw Error(result.message || '선택한 서버를 불러오지 못했습니다.');
+        url = result.embed_url; sources = result.server_sources; key = result.video_server;
+      }
+      if (controller.signal.aborted) return;
+      syncHistory(false);
+      const time = lastCurrentTimeRef.current;
+      serverResumePosition.current = pendingResumeRef.current?.seconds ?? (playbackStatusKnownRef.current ? time : null);
+      if (time > 10) { try { localStorage.setItem(`anime_progress_${animeId}_ep${episodeNumber}`, String(time)); } catch {} }
+      setActiveEmbedUrl(url); setActiveServerSources(sources); setActiveServerKey(key);
+      const current = new URL(window.location.href);
+      current.searchParams.set('video_server', key);
+      if (videoSource) current.searchParams.set('video_source', videoSource);
+      window.history.replaceState(window.history.state, '', current.pathname + current.search);
+    } catch (error: any) {
+      if (switchRequest.current === controller) setServerError(error.name === 'AbortError'
+        ? '서버 응답이 늦습니다. 다른 서버를 선택해 주세요.' : error.message);
+    } finally {
+      clearTimeout(timeout);
+      if (switchRequest.current === controller) { setServerBusy(false); switchRequest.current = null; }
+    }
+  }
 
   // Helper: Strip HTML tags, ASS tags, and HTML entities
   const cleanSubtitleText = (raw: string): string => {
@@ -977,10 +1036,13 @@ export default function IframePlayer({
   useEffect(() => {
     let isCancelled = false;
     const retryTimers: Array<ReturnType<typeof setTimeout>> = [];
+    const switchedTime = serverResumePosition.current;
+    serverResumePosition.current = null;
     pendingResumeRef.current = null;
     resumeHistoryReadyRef.current = false;
     lastCurrentTimeRef.current = 0;
     lastDurationRef.current = 0;
+    setCurrentVideoTime(0); setVideoDuration(0);
     playbackPausedRef.current = true;
     playbackStatusKnownRef.current = false;
     subtitleClockRef.current = null;
@@ -991,7 +1053,7 @@ export default function IframePlayer({
         const localTime = parseFloat(localStorage.getItem(localKey) || "0") || 0;
 
         let data: any = null;
-        try {
+        if (switchedTime === null) try {
           const res = await fetch(`/api/anime/history?anime_id=${encodeURIComponent(animeId)}`,
             { signal: AbortSignal.timeout(3500) });
           if (res.ok) data = await res.json();
@@ -1014,13 +1076,13 @@ export default function IframePlayer({
         // completion threshold (95% or within the final 15 seconds).
         const trulyCompleted = Boolean(epItem?.is_completed)
           && (cloudDuration <= 0 || isPlaybackCompleted(cloudTime, cloudDuration));
-        if (trulyCompleted) {
+        if (switchedTime === null && trulyCompleted) {
           localStorage.removeItem(localKey);
           return;
         }
 
-        const savedTime = Math.max(localTime, cloudTime);
-        if (savedTime <= 10) return;
+        const savedTime = switchedTime ?? Math.max(localTime, cloudTime);
+        if (savedTime <= (switchedTime === null ? 10 : 0)) return;
 
         pendingResumeRef.current = {
           episode: episodeNumber,
@@ -1051,7 +1113,7 @@ export default function IframePlayer({
       retryTimers.forEach(clearTimeout);
       pendingResumeRef.current = null;
     };
-  }, [animeId, episodeNumber, showNotice, isPlaybackCompleted, tryResumeIframe]);
+  }, [animeId, episodeNumber, activeEmbedUrl, showNotice, isPlaybackCompleted, tryResumeIframe]);
 
   // Adjust Sync Offset
   const adjustSync = (delta: number) => {
@@ -1241,11 +1303,11 @@ export default function IframePlayer({
         {/* Keep video and all subtitle layers inside one contained 16:9 frame. */}
         <div ref={mediaFrameRef} className="relative h-full w-full shrink-0 overflow-hidden">
           {/* Layer 1: External player iframe */}
-          {embedUrl && !embedUrl.includes("reanime.to/watch") ? (
+          {activeEmbedUrl && !activeEmbedUrl.includes("reanime.to/watch") ? (
             <iframe
-              key={`${embedUrl}:${serverSources.some((source) => source.id === "anikoto") ? "anikoto" : "restricted"}`}
+              key={`${activeEmbedUrl}:${activeServerSources.some((source) => source.id === "anikoto") ? "anikoto" : "restricted"}`}
               ref={iframeRef}
-              src={embedUrl}
+              src={activeEmbedUrl}
               onLoad={() => {
                 iframeRef.current?.contentWindow?.postMessage({ command: "getStatus" }, "*");
                 tryResumeIframe(undefined, true);
@@ -1255,7 +1317,7 @@ export default function IframePlayer({
               allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
               // Anissia keeps its ani_ ID when it resolves to Anikoto. Use
               // the actual stream source, including direct Anikoto playback.
-              sandbox={serverSources.some((source) => source.id === "anikoto") ? undefined : "allow-scripts allow-same-origin allow-forms allow-presentation"}
+              sandbox={activeServerSources.some((source) => source.id === "anikoto") ? undefined : "allow-scripts allow-same-origin allow-forms allow-presentation"}
               allowFullScreen
               referrerPolicy="no-referrer-when-downgrade"
             />
@@ -1345,11 +1407,8 @@ export default function IframePlayer({
               {subtitles[currentSubIndex]?.name || "자막 연동 중..."}
             </span>
 
-            {/* 스트리밍 소스 뱃지 */}
-            <span className="flex items-center gap-1.5 rounded-lg bg-purple-500/15 border border-purple-500/30 px-2.5 py-1 text-xs font-bold text-purple-300">
-              <Film className="h-3.5 w-3.5 text-purple-400" />
-              {serverSources[0]?.label || "1080p 고화질 스트림"}
-            </span>
+            <VideoServerSelect sources={activeServerSources} selectedKey={activeServerKey}
+              busy={serverBusy} error={serverError} onSelect={selectServer} />
 
             <button
               onClick={() => setIsModalOpen(true)}

@@ -64,13 +64,15 @@ export default async function WatchPage({
     sub_url?: string;
     manual_source?: string;
     video_source?: string;
+    video_server?: string;
     source_ep?: string;
   }>;
 }) {
   const user = await requireAuth();
 
   const { id, ep } = await params;
-  const { dub, creator, sub_url, manual_source, video_source, source_ep } = await searchParams;
+  const { dub, creator, sub_url, manual_source, video_source, video_server, source_ep } = await searchParams;
+  const requestedVideoServer = video_server && video_server.length <= 200 ? video_server : undefined;
   const sourceEpisodeStart = await getSubtitleEpisodeStart(user.username, id);
   const requestedEp = parseInt(ep, 10) || 1;
   const epNum = source_ep === "1" && id.startsWith("ani_")
@@ -235,9 +237,9 @@ export default async function WatchPage({
           epNum, anime.title, anime.original_title, requestedVideoSource, id,
           sourceEpisodeStart,
           sourceEpisodeStart && sourceEpisodeStart > 1 ? anime.total_episodes : undefined,
-          true, anikotoDetails,
+          true, anikotoDetails, requestedVideoServer,
         )
-      : await provider.getEpisodeStream(watchUrl);
+      : await provider.getEpisodeStream(watchUrl, requestedVideoServer ? { serverKey: requestedVideoServer, allowServerFallback: true } : undefined);
   const preloadedSub = await subtitlePreload;
 
   let streamInfo = activeManual
@@ -247,7 +249,7 @@ export default async function WatchPage({
   if (!activeManual && isReanime && !isDub && !video_source &&
       (!streamInfo || (!streamInfo.embed_url && !streamInfo.m3u8_url))) {
     const fallback = await resolveAnissiaStream(null, epNum, anime.title, anime.original_title,
-      'anikoto', id, sourceEpisodeStart, undefined, true, anikotoDetails);
+      'anikoto', id, sourceEpisodeStart, undefined, true, anikotoDetails, requestedVideoServer);
     if (fallback && (fallback.embed_url || fallback.m3u8_url)) {
       streamInfo = fallback; requestedVideoSource = 'anikoto'; alternateSource = true;
     }
@@ -257,6 +259,10 @@ export default async function WatchPage({
     epList = attachEpisodeCaptions(streamInfo.video_episodes, anime.sub_episodes);
     anime = { ...anime, sub_episodes: epList, total_episodes: epList.length };
     matched = epList.find(e => e.number === epNum);
+  }
+  if (!activeManual && requestedVideoServer && streamInfo?.video_source !== 'anikoto') {
+    const { selectVideoServer } = await import('@/lib/videoServerSelection');
+    streamInfo = selectVideoServer(streamInfo, requestedVideoServer);
   }
   const activeVideoSource = streamInfo?.video_source || streamInfo?.server_sources?.[0]?.id || requestedVideoSource || (isAnissia ? "rean" : currentProviderSource);
 
@@ -393,6 +399,9 @@ export default async function WatchPage({
           embedUrl={embedUrl}
           serverSources={streamInfo.server_sources}
           videoSource={activeManual ? undefined : activeVideoSource}
+          videoServer={streamInfo.video_server}
+          sourceAnimeId={streamInfo.source_anime_id}
+          sourceEpisodeNumber={streamInfo.source_episode_number ?? epNum}
           initialSubtitle={preloadedSub}
           initialCreator={initialCreator}
           initialSubUrl={initialSubUrl}

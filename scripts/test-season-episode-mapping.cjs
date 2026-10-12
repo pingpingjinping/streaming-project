@@ -22,6 +22,7 @@ function load(file, deps = {}, globals = {}) {
     });
     if (name.endsWith('/episodeMapping')) return mapping;
     if (name === './ids') return load('src/lib/providers/ids.ts');
+    if (name === './VideoServerSelect') return {default:'VideoServerSelect'};
     return require(name);
   }, URL, URLSearchParams, AbortSignal, console, setTimeout, clearTimeout, ...globals});
   return exports;
@@ -109,13 +110,13 @@ test('video policy distinguishes cumulative sources, season-local sources and ex
   assert.equal(mapping.mapVideoEpisode(1,range(1,12),null,1,null),1);
 });
 function resolver({sourceTitle = 'Seihantai na Kimi to Boku', numbers = range(1,25), cached = true,
-  items, details, linked = [], provider = 'rean'} = {}) {
+  items, details, linked = [], provider = 'rean', serverSources = []} = {}) {
   const streams = [], mappingRequests = [];
   const detail = {title: sourceTitle, sub_episodes: numbers.map(number => ({number, watch_url:`https://video.example/${number}`}))};
   const source = {
     getAnimeDetail: async id => details ? details[id] : detail,
     searchAnime: async () => ({items: items || [{id:'merged',title:sourceTitle}]}),
-    getEpisodeStream: async url => {streams.push(url); return {success:true,embed_url:url,server_sources:[]};},
+    getEpisodeStream: async url => {streams.push(url); return {success:true,embed_url:url,server_sources:serverSources};},
   };
   const api = load('src/lib/resolvers/videoResolver.ts', {
     '../providers/reanime': {reanimeProvider:source},
@@ -149,6 +150,12 @@ test('ReAnime season-specific 1-13 stays local and cumulative 13-25 maps exactly
     await api.run(1);
     assert.deepEqual(api.streams,[`https://video.example/${expected}`]);
   }
+});
+test('canonical ReAnime playback retains its actual selectable servers instead of replacing them with a single provider badge', async () => {
+  const serverSources = [{key:'sub:HD-1',id:'rean',label:'HD-1',player_url:'https://video.example/1'},
+    {key:'sub:HD-2',id:'rean',label:'HD-2',player_url:'https://video.example/2'}];
+  const stream = await resolver({serverSources}).run(1);
+  assert.equal(stream.server_sources,serverSources);
 });
 test('a partially uploaded combined video source can play local 1 without waiting for source 25', async () => {
   const api = resolver({numbers:range(1,14)});
@@ -184,7 +191,9 @@ test('Anikoto reviewed multi ranges remain authoritative and never receive a sec
     const mapped = links.mapAnikotoEpisode(row,local);
     assert.equal(mapped,local+12);
     const api = resolver({provider:'anikoto', linked:[{animeId:'ak_merged',episodeNumber:mapped,mappingKind:'range'}]});
-    assert.equal((await api.run(local)).success,true);
+    const stream = await api.run(local);
+    assert.equal(stream.success,true);
+    assert.equal(stream.source_episode_number,mapped,'server switching keeps the actual source episode after a range mapping');
     assert.deepEqual(api.streams,[`https://video.example/${mapped}`]);
     assert.deepEqual(api.mappingRequests,[['ani_42',local]]);
   }

@@ -396,9 +396,9 @@ function cleanEpisodeUrl(watchUrl: string): { episodeUrl: string; token: string 
   return { episodeUrl: parsed.toString(), token };
 }
 
-function parsePreferredServer(html: string): { label: string; token: string } | null {
+function parseServers(html: string): Array<{ label: string; token: string; kind: string; key: string }> {
   const $ = cheerio.load(html);
-  const candidates: Array<{ label: string; token: string; kind: string }> = [];
+  const candidates: Array<{ label: string; token: string; kind: string; key: string }> = [];
 
   $("div.type").each((_, group) => {
     const kind = ($(group).attr("data-type") || "").toLowerCase();
@@ -411,21 +411,27 @@ function parsePreferredServer(html: string): { label: string; token: string } | 
         const token = $(item).attr("data-link-id")?.trim() || "";
         if (!token) return;
         const label = $(item).text().trim() || groupLabel || "Anikoto";
-        candidates.push({ label, token, kind });
+        const key = `${kind}:${label}`;
+        if (!candidates.some(candidate => candidate.key === key)) candidates.push({ label, token, kind, key });
       });
   });
 
-  if (!candidates.length) return null;
+  return candidates;
+}
 
+function preferredServer(candidates: ReturnType<typeof parseServers>) {
+  const isHd1 = (candidate: { label: string }) => /\bhd[\s_\-\u2010-\u2015]*1\b/i.test(candidate.label);
   const preferred =
+    candidates.find((candidate) => candidate.kind === "sub" && isHd1(candidate)) ||
+    candidates.find(isHd1) ||
     candidates.find((candidate) => /vidplay|vidstream|megaplay|mega/i.test(candidate.label)) ||
     candidates.find((candidate) => candidate.kind === "sub") ||
     candidates[0];
 
-  return { label: preferred.label, token: preferred.token };
+  return preferred;
 }
 
-async function resolveServerEmbed(watchUrl: string): Promise<{ url: string; label: string } | null> {
+async function resolveServerEmbed(watchUrl: string, serverKey?: string, allowServerFallback = false): Promise<{ url: string; label: string; key: string; sources: ServerSource[] } | null> {
   const baseUrl = await getBaseUrl();
   const { episodeUrl, token } = cleanEpisodeUrl(watchUrl);
   if (!token) return null;
@@ -441,7 +447,8 @@ async function resolveServerEmbed(watchUrl: string): Promise<{ url: string; labe
   });
   const listResult = providerResult(JSON.parse(list.text));
   const serverHtml = typeof listResult === "string" ? listResult : String(listResult?.html || "");
-  const server = parsePreferredServer(serverHtml);
+  const candidates = parseServers(serverHtml);
+  const server = serverKey ? candidates.find(candidate => candidate.key === serverKey) || (allowServerFallback ? preferredServer(candidates) : undefined) : preferredServer(candidates);
   if (!server) return null;
 
   const resolveUrl = new URL(`${baseUrl}/ajax/server`);
@@ -459,13 +466,17 @@ async function resolveServerEmbed(watchUrl: string): Promise<{ url: string; labe
       : String(result?.url || result?.src || result?.embedUrl || "");
 
   const url = absoluteUrl(raw, baseUrl);
-  return url ? { url, label: server.label } : null;
+  return url ? { url, label: server.label, key: server.key,
+    sources: [server, ...candidates.filter(candidate => candidate !== server)].map(candidate => ({
+      id: 'anikoto', key: candidate.key, label: `Anikoto · ${candidate.label}${candidate.kind === 'softsub' ? ' (softsub)' : ''}`,
+      player_url: candidate === server ? url : '',
+    })) } : null;
 }
 
-async function resolveCurrentServerEmbed(watchUrl: string): Promise<{ url: string; label: string } | null> {
+async function resolveCurrentServerEmbed(watchUrl: string, serverKey?: string, allowServerFallback = false): ReturnType<typeof resolveServerEmbed> {
   let initialError: unknown;
   try {
-    const embed = await resolveServerEmbed(watchUrl);
+    const embed = await resolveServerEmbed(watchUrl, serverKey, allowServerFallback);
     if (embed) return embed;
   } catch (error) {
     initialError = error;
@@ -489,7 +500,7 @@ async function resolveCurrentServerEmbed(watchUrl: string): Promise<{ url: strin
     const currentEpisode = cached.detail.sub_episodes.find(e =>
       new URL(cleanEpisodeUrl(e.watch_url).episodeUrl).pathname === requested.pathname);
     if (currentEpisode?.watch_url && currentEpisode.watch_url !== watchUrl) {
-      return resolveServerEmbed(currentEpisode.watch_url);
+      return resolveServerEmbed(currentEpisode.watch_url, serverKey, allowServerFallback);
     }
     const pending: Promise<string | null> = readAnimeDetail(cached.detail.id, true).then(fresh =>
       fresh?.sub_episodes.find(e => new URL(cleanEpisodeUrl(e.watch_url).episodeUrl).pathname === requested.pathname)?.watch_url || null
@@ -499,21 +510,13 @@ async function resolveCurrentServerEmbed(watchUrl: string): Promise<{ url: strin
   }
   const freshUrl = await refresh;
   if (!freshUrl || freshUrl === watchUrl) return unavailable();
-  return resolveServerEmbed(freshUrl);
+  return resolveServerEmbed(freshUrl, serverKey, allowServerFallback);
 }
 
-export async function getEpisodeStream(watchUrl: string): Promise<EpisodeStreamInfo | null> {
+export async function getEpisodeStream(watchUrl: string, options: { serverKey?: string; allowServerFallback?: boolean } = {}): Promise<EpisodeStreamInfo | null> {
   try {
-    const embed = await resolveCurrentServerEmbed(watchUrl);
+    const embed = await resolveCurrentServerEmbed(watchUrl, options.serverKey, options.allowServerFallback);
     if (!embed) return null;
-
-    const serverSources: ServerSource[] = [
-      {
-        id: "anikoto",
-        label: `Anikoto · ${embed.label}`,
-        player_url: embed.url,
-      },
-    ];
 
     return {
       success: true,
@@ -522,7 +525,10 @@ export async function getEpisodeStream(watchUrl: string): Promise<EpisodeStreamI
       player_url: embed.url,
       embed_url: embed.url,
       stream_type: "iframe",
-      server_sources: serverSources,
+      server_sources: embed.sources,
+      video_server: embed.key,
+      source_anime_id: toAnikotoId(extractSlug(cleanEpisodeUrl(watchUrl).episodeUrl)),
+      video_source: "anikoto",
       link_next: "",
       link_pre: "",
     };

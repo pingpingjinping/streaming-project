@@ -816,6 +816,8 @@ export async function getEpisodeStream(watchUrl: string): Promise<EpisodeStreamI
     }
 
     const serverSources: ServerSource[] = servers.map((s) => ({
+      key: `${s.dataType || "sub"}:${s.serverName || "HD"}`,
+      id: "rean",
       label: `${s.serverName || "HD"} (${s.dataType || "sub"})`,
       player_url: s.dataLink,
     }));
@@ -828,6 +830,8 @@ export async function getEpisodeStream(watchUrl: string): Promise<EpisodeStreamI
       vtt_url: "",
       stream_type: "iframe",
       server_sources: serverSources,
+      video_server: serverSources.find(server => server.player_url === embedUrl)?.key,
+      video_source: "rean",
       link_next: "",
       link_pre: "",
     };

@@ -191,3 +191,46 @@ test('explicit Anikoto playback never waits for unrelated ReAnime matching queri
  const stream=await run(42,15,'Work Season 2','作品 第2期','anikoto','ani_42',null,undefined,true);
  assert.equal(stream.video_source,'anikoto');assert.equal(stream.video_episodes.length,15);
 });
+
+test('Anikoto uses the working HD-1 server before Vidstream 2 and resolves only the chosen server',async()=>{
+ for(const label of ['HD-1','HD1','HD 1','HD‑1']) {
+  const resolved=[];
+  const api=load('src/lib/providers/anikoto.ts',{
+   '@/lib/db':{DEFAULT_ANIKOTO_URL:base,getAnikotoBaseUrl:async()=>base},
+   './ids':{toAnikotoId:id=>`ak_${id}`,stripAnikotoId:id=>id.replace(/^ak_/,'')},
+   '@/lib/anikotoCatalog':{},'@/lib/chromiumFetch':{},
+  },{fetch:async url=>{
+   const u=new URL(url);
+   if(u.pathname==='/ajax/server/list') return new Response(JSON.stringify({status:200,result:
+    `<div class="type" data-type="dub"><li data-link-id="dub">HD-1</li></div>
+     <div class="type" data-type="softsub"><li data-link-id="soft">HD-1</li></div>
+     <div class="type" data-type="sub"><li data-link-id="slow">Vidstream 2</li><li data-link-id="ten">HD-10</li><li data-link-id="hd1">${label}</li></div>`}));
+   if(u.pathname==='/ajax/server') {
+    resolved.push(u.searchParams.get('get'));return new Response(JSON.stringify({status:200,result:{url:'https://video.example/hd1'}}));
+   }
+   return new Response('<html>Episode</html>');
+  }});
+  const stream=await api.getEpisodeStream(`${base}/watch/show/ep-1?__ak_token=episode`);
+  assert.deepEqual(resolved,['hd1']);assert.equal(stream.embed_url,'https://video.example/hd1');
+  assert.equal(stream.server_sources[0].label,`Anikoto · ${label}`);
+ }
+});
+test('a show without HD-1 keeps its existing server choice and excludes dub HD-1',async()=>{
+ const resolved=[];
+ const api=load('src/lib/providers/anikoto.ts',{
+  '@/lib/db':{DEFAULT_ANIKOTO_URL:base,getAnikotoBaseUrl:async()=>base},
+  './ids':{toAnikotoId:id=>`ak_${id}`,stripAnikotoId:id=>id.replace(/^ak_/,'')},
+  '@/lib/anikotoCatalog':{},'@/lib/chromiumFetch':{},
+ },{fetch:async url=>{
+  const u=new URL(url);
+  if(u.pathname==='/ajax/server/list') return new Response(JSON.stringify({status:200,result:
+   '<div class="type" data-type="dub"><li data-link-id="dub">HD-1</li></div><div class="type" data-type="sub"><li data-link-id="ten">HD-10</li><li data-link-id="mega">Mega</li></div>'}));
+  if(u.pathname==='/ajax/server'){resolved.push(u.searchParams.get('get'));return new Response(JSON.stringify({status:200,result:{url:'https://video.example/mega'}}));}
+  return new Response('<html>Episode</html>');
+ }});
+ const stream=await api.getEpisodeStream(`${base}/watch/show/ep-1?__ak_token=episode`);
+ assert.deepEqual(resolved,['mega']);assert.equal(stream.server_sources[0].label,'Anikoto · Mega');
+});
+
+// Keep the server-selection regression in the existing playback test entry point.
+require('./test-video-server-selection.cjs');
