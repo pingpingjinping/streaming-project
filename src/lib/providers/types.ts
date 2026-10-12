@@ -113,7 +113,10 @@ export interface AnimeProvider {
     day?: number | string;
   }): Promise<AnimeListResponse>;
   searchAnime(keyword: string, page?: number, options?: Pick<AnimeListFilterParams, "year" | "sort" | "genre" | "typeLang" | "status">): Promise<AnimeListResponse>;
-  getAnimeDetail(animeId: string, options?: { subtitleEpisodeStart?: number | null }): Promise<AnimeDetail | null>;
+  getAnimeDetail(animeId: string, options?: {
+    subtitleEpisodeStart?: number | null;
+    videoSource?: "rean" | "anikoto" | "linkkf" | "ohli24";
+  }): Promise<AnimeDetail | null>;
   getEpisodeStream(watchUrl: string): Promise<EpisodeStreamInfo | null>;
 }
 

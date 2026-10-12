@@ -165,6 +165,7 @@ export async function resolveAnissiaStream(
   subtitleEpisodeStart?: number | null,
   seasonEpisodeCount?: number,
   nativeEpisodeNumbers = false,
+  anikotoDetails?: Map<string, AnimeDetail>,
 ): Promise<EpisodeStreamInfo | null> {
   const serverSources: ServerSource[] = [];
 
@@ -416,8 +417,12 @@ export async function resolveAnissiaStream(
         if (proof.anilistId) linkedCandidates.push(...await getAnikotoPlaybackCandidatesByAniList(proof.anilistId, episodeNumber, true));
       }
 
-      const linkedDetails = new Map<string, AnimeDetail>();
+      // The watch page may already have loaded this playlist to preserve
+      // native numbering and subtitle offsets. Reuse it within this request;
+      // never share signed playback URLs across requests or viewers.
+      const linkedDetails = anikotoDetails || new Map<string, AnimeDetail>();
       await Promise.allSettled([...new Set(linkedCandidates.map(c => c.animeId))].map(async id => {
+        if (linkedDetails.has(id)) return;
         const detail = await anikotoProvider.getAnimeDetail(id);
         if (detail) linkedDetails.set(id, detail);
       }));
@@ -494,7 +499,8 @@ export async function resolveAnissiaStream(
 
       const playable = [];
       for (const id of candidates) {
-        const detail = await anikotoProvider.getAnimeDetail(id);
+        const detail = linkedDetails.get(id) || await anikotoProvider.getAnimeDetail(id);
+        if (detail) linkedDetails.set(id, detail);
         // Recheck the detail page: a search label must not disguise a different
         // work. Complete titles preserve sequel, season, OVA and movie suffixes.
         if (!detail || !matchesVideoPlaybackIdentity(detail, aliases, anilistId, false)) continue;

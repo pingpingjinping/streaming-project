@@ -847,7 +847,10 @@ class AnissiaProvider implements AnimeProvider {
   /**
    * 작품 상세 정보 (/anime/animeNo/{animeNo})
    */
-  async getAnimeDetail(animeId: string, options: { subtitleEpisodeStart?: number | null } = {}): Promise<AnimeDetail | null> {
+  async getAnimeDetail(animeId: string, options: {
+    subtitleEpisodeStart?: number | null;
+    videoSource?: "rean" | "anikoto" | "linkkf" | "ohli24";
+  } = {}): Promise<AnimeDetail | null> {
     const rawId = stripAnissiaId(animeId);
     const animeNo = parseInt(rawId, 10);
     const subtitleEpisodeStart = options.subtitleEpisodeStart ?? defaultSubtitleEpisodeStart(animeId);
@@ -875,7 +878,12 @@ class AnissiaProvider implements AnimeProvider {
 
       // 확정 ReAnime 메타데이터 우선, 없을 때 AniList 조회
       const [links, linkedId] = await Promise.all([
-        getConfirmedReanimeIdsForAnissia([animeNo]), getPlaybackReanimeIdForAnissia(animeNo).catch(() => null),
+        getConfirmedReanimeIdsForAnissia([animeNo]),
+        // Artwork may still use its confirmed link, but an explicit alternate
+        // player does not need ReAnime's video playlist before it can open.
+        !options.videoSource || options.videoSource === "rean"
+          ? getPlaybackReanimeIdForAnissia(animeNo).catch(() => null)
+          : Promise.resolve(null),
       ]);
       const [meta, video] = await Promise.all([
         fetchAnissiaMeta(animeNo,animeData.originalSubject || animeData.subject,links),

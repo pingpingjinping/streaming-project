@@ -6,6 +6,7 @@ import { anikotoProvider } from './providers/anikoto';
 export async function reviewedProviderPlayback(
   anime: AnimeDetail,
   requestedSource?: string,
+  anikotoDetails?: Map<string, AnimeDetail>,
 ): Promise<AnimeDetail> {
   if (!(anime.id.startsWith('re_') || anime.id.startsWith('ani_')) ||
       (requestedSource && requestedSource !== 'anikoto') ||
@@ -15,7 +16,9 @@ export async function reviewedProviderPlayback(
       .filter(row => ['manual', 'reviewed', 'multi_reviewed', 'automatic'].includes(row.linkStatus));
     // Choose one source playlist, not a mixture of different releases.
     for (const candidate of candidates.slice(0, 3)) {
-      const detail = await anikotoProvider.getAnimeDetail(candidate.animeId);
+      const detail = anikotoDetails?.get(candidate.animeId)
+        || await anikotoProvider.getAnimeDetail(candidate.animeId);
+      if (detail) anikotoDetails?.set(candidate.animeId, detail);
       if (!detail?.sub_episodes?.length) continue;
       if (candidate.linkStatus === 'automatic') {
         const { matchesVideoPlaybackIdentity } = await import('./resolvers/videoResolver');

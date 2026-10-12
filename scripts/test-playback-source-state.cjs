@@ -46,6 +46,21 @@ test('canonical Anikoto lookup retains reviewed offsets and rejects unknown or i
  assert.equal(result.length,1);assert.equal(result[0].animeId,'ak_split');assert.equal(result[0].episodeNumber,13);assert.equal(result[0].targetEnd,13);
  rows=[];assert.equal((await links.getAnikotoPlaybackCandidatesByAniList(209983,1)).length,0);
 });
+test('reused automatic playlists still require season identity and cannot play a cached first season',async()=>{
+ let played=0,details=0;
+ const first={id:'ak_second',title:en,original_title:jp,sub_episodes:[{number:1,watch_url:'https://video.example/wrong-season/1'}]};
+ const api=load('src/lib/resolvers/videoResolver.ts',{
+  '../animeWorkIdentity':{...identity,getAnimeWorkIdentity:async()=>({titles:[ko,jp]}),getCatalogWorkIdentityByTitle:async()=>({titles:[jp+' 2nd Season',en+' 2nd Season'],anilistId:209983})},
+  '../db':{getAnissiaStreamCache:async()=>null},
+  '../provisionalWorkMatches':{getReservedReanimeIdsForOtherWorks:async()=>new Set(),hasWorkMatchCandidates:async()=>false},
+  '../workMatchOverrides':{getWorkMatchOverrides:async()=>[]},'../reanimeMatches':{getEffectiveReanimeIdsForAnissia:async()=>new Map()},
+  '../anikotoWorkOverrides':{getAnikotoWorkOverride:async()=>null},
+  '../anikotoLinks':{getAnikotoPlaybackCandidates:async()=>[{animeId:'ak_second',episodeNumber:1,mappingKind:'whole',linkStatus:'automatic'}]},
+  '../providers/anikoto':{anikotoProvider:{searchAnime:async()=>({items:[]}),getAnimeDetail:async()=>{details++;return first;},getEpisodeStream:async()=>{played++;return{success:true,embed_url:'https://video.example/wrong-season'};}}},
+ });
+ const result=await api.resolveAnissiaStream(3485,1,ko,jp,'anikoto','ani_3485',null,undefined,true,new Map([['ak_second',first]]));
+ assert.equal(result.success,false);assert.ok(!result.embed_url);assert.equal(details,0);assert.equal(played,0);
+});
 test('Hell Mode season 2 cannot match season 1 through its shared undecorated Japanese alias',()=>{
  const aliases=[ko,jp,en+' 2nd Season'];
  assert.equal(resolver.matchesVideoPlaybackIdentity({title:en,original_title:jp},aliases,null,false),false);

@@ -7,7 +7,7 @@ import AnissiaStreamFallback from "@/components/AnissiaStreamFallback";
 import ManualSourcePanel from "@/components/ManualSourcePanel";
 import AnissiaVideoSourceSelect from "@/components/AnissiaVideoSourceSelect";
 import { getProviderByAnimeId } from "@/lib/providers";
-import type { EpisodeStreamInfo } from "@/lib/providers/types";
+import type { AnimeDetail, EpisodeStreamInfo } from "@/lib/providers/types";
 import { fetchCreatorSubtitle, resolveKoreanTitle } from "@/lib/subtitles";
 import { resolveAnissiaStream } from "@/lib/resolvers/videoResolver";
 import { getManualStreamSourceById, getSubtitleEpisodeStart } from "@/lib/db";
@@ -104,11 +104,15 @@ export default async function WatchPage({
       : null;
 
   const provider = getProviderByAnimeId(id);
-  let anime = await provider.getAnimeDetail(id, { subtitleEpisodeStart: sourceEpisodeStart });
+  const anikotoDetails = new Map<string, AnimeDetail>();
+  let anime = await provider.getAnimeDetail(id, {
+    subtitleEpisodeStart: sourceEpisodeStart,
+    videoSource: requestedVideoSource,
+  });
   if (anime && (isReanime || isAnissia) && !isDub &&
       (anime.video_available === false || requestedVideoSource === 'anikoto')) {
     const { reviewedProviderPlayback } = await import('@/lib/reviewedProviderPlayback');
-    anime = await reviewedProviderPlayback(anime, requestedVideoSource);
+    anime = await reviewedProviderPlayback(anime, requestedVideoSource, anikotoDetails);
     requestedVideoSource ||= anime.playback_source || (isReanime && anime.video_available === false ? 'anikoto' : undefined);
   }
 
@@ -232,6 +236,7 @@ export default async function WatchPage({
             sourceEpisodeStart,
             sourceEpisodeStart && sourceEpisodeStart > 1 ? anime.total_episodes : undefined,
             true,
+            anikotoDetails,
           )
         : provider.getEpisodeStream(watchUrl),
     (!isDub && initialSubUrl && initialSubUrl.startsWith("http"))
@@ -258,7 +263,7 @@ export default async function WatchPage({
   if (!activeManual && isReanime && !isDub && !video_source &&
       (!streamInfo || (!streamInfo.embed_url && !streamInfo.m3u8_url))) {
     const fallback = await resolveAnissiaStream(null, epNum, anime.title, anime.original_title,
-      'anikoto', id, sourceEpisodeStart, undefined, true);
+      'anikoto', id, sourceEpisodeStart, undefined, true, anikotoDetails);
     if (fallback && (fallback.embed_url || fallback.m3u8_url)) {
       streamInfo = fallback; requestedVideoSource = 'anikoto'; alternateSource = true;
     }
