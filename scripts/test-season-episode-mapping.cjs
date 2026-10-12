@@ -372,7 +372,7 @@ test('Final Stage defaults to local 1-4 while its subtitle source remains 21-24'
   assert.equal(mapping.defaultSubtitleEpisodeStart('ani_1346'),21);
   assert.equal(mapping.defaultSubtitleEpisodeStart('ani_42'),null);
 });
-test('ReAnime Final projection uses the complete work streams 21/24 instead of AniList 0 episodes 1/4', async () => {
+test('ReAnime linked combined player retains all 24 videos and limits only subtitle membership', async () => {
   const requests=[];
   const provider = load('src/lib/providers/reanime.ts',{
     '@/lib/db':{DEFAULT_REANIME_URL:'https://rean.example',getReanimeBaseUrl:async()=> 'https://rean.example'},
@@ -384,14 +384,17 @@ test('ReAnime Final projection uses the complete work streams 21/24 instead of A
     return {ok:true,json:async()=>data};
   }});
   const detail=await provider.getAnimeDetail('re_beatless-final-stage-tmwejf');
-  assert.equal(detail.total_episodes,4);
-  assert.deepEqual(plain(detail.sub_episodes.map(e=>e.number)),range(1,4));
-  for (const [local,source] of [[1,21],[4,24]]) {
+  assert.equal(detail.total_episodes,24);
+  assert.deepEqual(plain(detail.sub_episodes.map(e=>e.number)),range(1,24));
+  for (const [local,source] of [[21,21],[24,24]]) {
     const url=new URL(detail.sub_episodes[local-1].watch_url);
     assert.equal(url.pathname,'/watch/beatless-yd63yf');
     assert.equal(url.searchParams.get('ep'),String(source));
     assert.equal(url.searchParams.get('anilist'),'100245');
   }
+  assert.equal(detail.sub_episodes[0].subtitle_episode,null);
+  assert.equal(detail.sub_episodes[20].subtitle_episode,1);
+  assert.equal(detail.sub_episodes[23].subtitle_episode,4);
   assert.ok(requests.every(url=>!url.includes('final-stage')));
 });
 test('Anikoto reviewed split builds a complete 1-24 playlist and maps 21/24 to Final 1/4', async () => {
