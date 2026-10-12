@@ -64,9 +64,10 @@ export function videoEpisodeList<T extends { number: number; title: string }>(
 
 /** Provider rows define navigation; caption rows only supply subtitle metadata. */
 export function attachEpisodeCaptions(videoEpisodes: EpisodeItem[], captions: EpisodeItem[]): EpisodeItem[] {
-  const byNumber = new Map(captions.map(e => [e.number, e]));
+  const byNumber = new Map(captions.filter(e => e.subtitle_episode !== null)
+    .map(e => [e.subtitle_episode ?? e.number, e]));
   return videoEpisodes.map(episode => {
-    const caption = byNumber.get(episode.number);
+    const caption = episode.subtitle_episode === null ? undefined : byNumber.get(episode.subtitle_episode ?? episode.number);
     return { ...episode, caption_url: caption?.caption_url, creator_name: caption?.creator_name };
   });
 }
@@ -109,3 +110,4 @@ export function mapVideoEpisode(
   const source = toSourceEpisode(localEpisode, start);
   return sourceEpisodes.includes(source) ? source : null;
 }
+

@@ -924,16 +924,20 @@ class AnissiaProvider implements AnimeProvider {
       // Artwork still requires a confirmed link; playback can also use the
       // selected provisional work or a cached ID with verified work identity.
       // Fuzzy AniList counts are fallback metadata, never expansion evidence.
-      const videoEpisodes = video?.video_available === true && validVideo ? videoEpisodeList(video.sub_episodes,
+      const videoEpisodes = video?.video_available === true && validVideo
+        ? [...video.sub_episodes].sort((a,b)=>a.number-b.number) : [];
+      const workVideoNumbers = new Map(video && videoEpisodes.length ? videoEpisodeList(
+        video.sub_episodes.map(e => ({...e, nativeNumber:e.number})),
         reviewedVideoStart(animeId, video.id) ?? subtitleEpisodeStart,
-        parseSeason(animeData.subject) || parseSeason(animeData.originalSubject || ""),
-        parseSeason(video.title) || parseSeason(video.original_title || ""), meta?.totalEpisodes || subtitleCount) : [];
+        targetSeason, parseSeason(video.title) || parseSeason(video.original_title || ''), meta?.totalEpisodes || subtitleCount,
+      ).map(e => [e.nativeNumber,e.number]) : []);
       const displayEpisodes = videoEpisodes.length ? videoEpisodes
         : Array.from({ length: Math.max(subtitleCount, 1) }, (_, index) => ({ number: index + 1, title: `${index + 1}화` }));
       const subEpisodes: EpisodeItem[] = [];
       for (const videoEpisode of displayEpisodes) {
         const i = videoEpisode.number;
-        const cap = captionMap.get(toSourceEpisode(i, subtitleEpisodeStart));
+        const workNumber = videoEpisodes.length ? workVideoNumbers.get(i) ?? null : i;
+        const cap = workNumber === null ? undefined : captionMap.get(toSourceEpisode(workNumber, subtitleEpisodeStart));
         const watchUrl = cap
           ? `/watch/${animeId}/${i}?creator=${encodeURIComponent(cap.creator)}&sub_url=${encodeURIComponent(cap.website)}`
           : `/watch/${animeId}/${i}`;
@@ -944,6 +948,7 @@ class AnissiaProvider implements AnimeProvider {
           watch_url: watchUrl,
           caption_url: cap?.website,
           creator_name: cap?.creator,
+          subtitle_episode: workNumber,
         });
       }
 
@@ -967,6 +972,8 @@ class AnissiaProvider implements AnimeProvider {
         rating: meta?.rating,
         caption_count: Number(animeData.captionCount || captions.length),
         original_title: animeData.originalSubject,
+        video_available: videoEpisodes.length > 0,
+        playback_source: videoEpisodes.length ? 'rean' : undefined,
       };
     } catch (err) {
       console.error("[AnissiaProvider] getAnimeDetail error:", err);
@@ -995,3 +1002,4 @@ class AnissiaProvider implements AnimeProvider {
 }
 
 export const anissiaProvider = new AnissiaProvider();
+

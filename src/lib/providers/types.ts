@@ -35,6 +35,8 @@ export interface EpisodeItem {
   watch_url: string;
   caption_url?: string;
   creator_name?: string;
+  // A video's corresponding subtitle work episode; null is outside that work.
+  subtitle_episode?: number | null;
 }
 
 export interface AnimeDetail {
@@ -56,6 +58,7 @@ export interface AnimeDetail {
   caption_count?: number;
   original_title?: string;
   video_available?: boolean;
+  playback_source?: 'rean' | 'anikoto' | 'linkkf' | 'ohli24';
 }
 
 export interface ServerSource {
@@ -113,4 +116,5 @@ export interface AnimeProvider {
   getAnimeDetail(animeId: string, options?: { subtitleEpisodeStart?: number | null }): Promise<AnimeDetail | null>;
   getEpisodeStream(watchUrl: string): Promise<EpisodeStreamInfo | null>;
 }
+
 

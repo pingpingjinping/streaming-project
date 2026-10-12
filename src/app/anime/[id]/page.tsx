@@ -18,18 +18,26 @@ export default async function AnimeDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ dub?: string }>;
+  searchParams: Promise<{ dub?: string; video_source?: string }>;
 }) {
   const user = await requireAuth();
   const currentUserId = await getCurrentUserId();
 
   const { id } = await params;
-  const { dub } = await searchParams;
+  const { dub, video_source } = await searchParams;
   const isDub = dub === "1";
 
   const provider = getProviderByAnimeId(id);
   const subtitleEpisodeStart = await getSubtitleEpisodeStart(user.username, id);
-  const anime = await provider.getAnimeDetail(id, { subtitleEpisodeStart });
+  let anime = await provider.getAnimeDetail(id, { subtitleEpisodeStart });
+  if (anime && (id.startsWith('re_') || id.startsWith('ani_')) && !isDub &&
+      (anime.video_available === false || video_source === 'anikoto')) {
+    const { reviewedProviderPlayback } = await import('@/lib/reviewedProviderPlayback');
+    anime = await reviewedProviderPlayback(anime, video_source);
+  }
+  if (anime?.video_available === false && id.startsWith('re_')) {
+    anime = { ...anime, sub_episodes: [], dub_episodes: [] };
+  }
   if (!anime) {
     if (id.startsWith("re_")) {
       return (
@@ -118,7 +126,7 @@ export default async function AnimeDetailPage({
               <div className="mt-6 flex flex-wrap items-center gap-3">
                 {episodes.length > 0 && (
                   <Link
-                    href={`/watch/${anime.id}/1${isDub ? "?dub=1" : ""}`}
+                    href={`/watch/${anime.id}/${episodes[0].number}${isDub ? "?dub=1" : anime.playback_source ? `?video_source=${anime.playback_source}` : ""}`}
                     className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 px-6 py-3 font-bold text-white shadow-xl shadow-purple-600/30 transition hover:scale-105 active:scale-95 text-sm"
                   >
                     <Play className="h-4 w-4 fill-white" />
@@ -136,6 +144,16 @@ export default async function AnimeDetailPage({
         </div>
 
         <WorkMatchSetting animeId={anime.id} />
+        {anime.video_available === false && id.startsWith('re_') && (
+          <p className="mt-4 rounded-xl border border-amber-500/20 bg-amber-950/20 p-4 text-sm text-amber-200">
+            작품 정보는 있지만 재생 가능한 영상 목록을 불러오지 못했습니다. 다른 영상 소스를 연결해 주세요.
+          </p>
+        )}
+        {anime.playback_source === 'anikoto' && (
+          <p className="mt-4 rounded-xl border border-purple-500/20 bg-purple-950/20 p-4 text-sm text-purple-200">
+            검수된 Anikoto 연결로 회차를 표시합니다. 영상과 자막은 이 작품의 회차 번호로 연결됩니다.
+          </p>
+        )}
         <SubtitleEpisodeStartSetting animeId={anime.id} />
         <SubtitleBundleAssignmentSetting animeId={anime.id} animeTitle={anime.title} />
 
@@ -146,8 +164,11 @@ export default async function AnimeDetailPage({
           dubEpisodes={anime.dub_episodes}
           initialIsDub={isDub}
           initialHistoryMap={initialHistoryMap}
+          videoSource={anime.playback_source}
         />
       </main>
     </div>
   );
 }
+
+

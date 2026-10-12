@@ -87,7 +87,7 @@ export default async function WatchPage({
     : id.startsWith("ol_")
     ? "ohli24"
     : "linkkf";
-  const requestedVideoSource = ["rean", "anikoto", "linkkf", "ohli24"].includes(video_source || "")
+  let requestedVideoSource = ["rean", "anikoto", "linkkf", "ohli24"].includes(video_source || "")
     ? video_source as "rean" | "anikoto" | "linkkf" | "ohli24"
     : undefined;
 
@@ -105,6 +105,12 @@ export default async function WatchPage({
 
   const provider = getProviderByAnimeId(id);
   let anime = await provider.getAnimeDetail(id, { subtitleEpisodeStart: sourceEpisodeStart });
+  if (anime && (isReanime || isAnissia) && !isDub &&
+      (anime.video_available === false || requestedVideoSource === 'anikoto')) {
+    const { reviewedProviderPlayback } = await import('@/lib/reviewedProviderPlayback');
+    anime = await reviewedProviderPlayback(anime, requestedVideoSource);
+    requestedVideoSource ||= anime.playback_source || (isReanime && anime.video_available === false ? 'anikoto' : undefined);
+  }
 
   // Provider 자체가 죽어 작품 상세를 못 읽어도 직접 링크는 사용할 수 있게 한다.
   if (!anime) {
@@ -183,7 +189,8 @@ export default async function WatchPage({
 
   // A verified video can contain additional episodes absent from the caption
   // catalog. Resolve those numbers before rejecting them; season bounds remain.
-  const canResolveExtra = isAnissia && !isDub && (!sourceEpisodeStart || sourceEpisodeStart === 1 || requestedVideoSource) && epNum > 0 && epNum <= 10000;
+  let alternateSource = !!requestedVideoSource && requestedVideoSource !== currentProviderSource;
+  const canResolveExtra = (isAnissia || alternateSource) && !isDub && (!sourceEpisodeStart || sourceEpisodeStart === 1 || requestedVideoSource) && epNum > 0 && epNum <= 10000;
   if (!watchUrl && !activeManual && !canResolveExtra) {
     return (
       <div className="min-h-screen bg-[#0b0f19] pb-16">
@@ -204,13 +211,16 @@ export default async function WatchPage({
   }
 
   const initialCreator = creator || matched?.creator_name || "";
-  const sourceEpisode = toSourceEpisode(epNum, sourceEpisodeStart);
+  const sourceEpisode = toSourceEpisode(!sub_url && typeof matched?.subtitle_episode === 'number'
+    ? matched.subtitle_episode : epNum, sourceEpisodeStart);
   const initialSubUrl = sub_url || matched?.caption_url || "";
   const subtitleTitle = anime.title;
 
   const [providerStreamInfo, preloadedSub] = await Promise.all([
     activeManual
       ? Promise.resolve(null)
+      : isReanime && anime.video_available === false && requestedVideoSource === 'rean'
+        ? Promise.resolve(null)
       : isAnissia || (requestedVideoSource && requestedVideoSource !== currentProviderSource)
         ? resolveAnissiaStream(
             isAnissia ? Number(id.replace(/^ani_/, "")) : null,
@@ -220,7 +230,8 @@ export default async function WatchPage({
             requestedVideoSource,
             id,
             sourceEpisodeStart,
-            sourceEpisodeStart && sourceEpisodeStart > 1 ? anime.total_episodes : undefined
+            sourceEpisodeStart && sourceEpisodeStart > 1 ? anime.total_episodes : undefined,
+            true,
           )
         : provider.getEpisodeStream(watchUrl),
     (!isDub && initialSubUrl && initialSubUrl.startsWith("http"))
@@ -240,11 +251,20 @@ export default async function WatchPage({
       : Promise.resolve(null),
   ]);
 
-  const streamInfo = activeManual
+  let streamInfo = activeManual
     ? manualSourceToStream(activeManual)
     : providerStreamInfo;
 
-  if (isAnissia && !activeManual && !isDub && streamInfo?.video_episodes?.length) {
+  if (!activeManual && isReanime && !isDub && !video_source &&
+      (!streamInfo || (!streamInfo.embed_url && !streamInfo.m3u8_url))) {
+    const fallback = await resolveAnissiaStream(null, epNum, anime.title, anime.original_title,
+      'anikoto', id, sourceEpisodeStart, undefined, true);
+    if (fallback && (fallback.embed_url || fallback.m3u8_url)) {
+      streamInfo = fallback; requestedVideoSource = 'anikoto'; alternateSource = true;
+    }
+  }
+
+  if ((isAnissia || alternateSource) && !activeManual && !isDub && streamInfo?.video_episodes?.length) {
     epList = attachEpisodeCaptions(streamInfo.video_episodes, anime.sub_episodes);
     anime = { ...anime, sub_episodes: epList, total_episodes: epList.length };
     matched = epList.find(e => e.number === epNum);
@@ -252,7 +272,7 @@ export default async function WatchPage({
   const activeVideoSource = streamInfo?.video_source || streamInfo?.server_sources?.[0]?.id || requestedVideoSource || (isAnissia ? "rean" : currentProviderSource);
 
   if (!streamInfo || (!streamInfo.m3u8_url && !streamInfo.embed_url)) {
-    if (isReanime) {
+    if (isReanime && !alternateSource) {
       return (
         <div className="min-h-screen bg-[#0b0f19] pb-16">
           <Navbar />
@@ -265,7 +285,7 @@ export default async function WatchPage({
         </div>
       );
     }
-    if (isAnissia) {
+    if (isAnissia || alternateSource) {
       return (
         <div className="min-h-screen bg-[#0b0f19] pb-16">
           <Navbar />
@@ -391,4 +411,5 @@ export default async function WatchPage({
     </div>
   );
 }
+
 

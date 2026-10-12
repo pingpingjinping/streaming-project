@@ -8,7 +8,7 @@ const root = path.join(__dirname, '..');
 const matchOverrides = {getWorkMatchOverrides:async()=>[], importedLinkIsOverridden:()=>false};
 const plain = value => JSON.parse(JSON.stringify(value));
 function load(file, deps = {}, globals = {}) {
-  deps={'../anikotoWorkOverrides':{getAnikotoWorkOverride:async()=>null},'./anikotoWorkOverrides':{getAnikotoWorkOverride:async()=>null},'../provisionalWorkMatches':{getReservedReanimeIdsForOtherWorks:async()=>new Set(),hasWorkMatchCandidates:async()=>false},'../workMatchOverrides':matchOverrides,'./workMatchOverrides':matchOverrides,'../reanimeMatches':{getConfirmedReanimeIdsForAnissia:async()=>new Map(),getEffectiveReanimeIdsForAnissia:async()=>new Map()},...deps};
+  deps={'@/lib/reviewedProviderPlayback':{reviewedProviderPlayback:async anime=>anime},'../anikotoWorkOverrides':{getAnikotoWorkOverride:async()=>null},'./anikotoWorkOverrides':{getAnikotoWorkOverride:async()=>null},'../provisionalWorkMatches':{getReservedReanimeIdsForOtherWorks:async()=>new Set(),hasWorkMatchCandidates:async()=>false},'../workMatchOverrides':matchOverrides,'./workMatchOverrides':matchOverrides,'../reanimeMatches':{getConfirmedReanimeIdsForAnissia:async()=>new Map(),getEffectiveReanimeIdsForAnissia:async()=>new Map()},...deps};
   const exports = {};
   const code = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {
     compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
@@ -202,7 +202,7 @@ function routes(start) {
     'next/server':{NextResponse:response}, '@/lib/auth':{getSessionUser:async()=>({username:'viewer'})},
     '@/lib/db':{getSubtitleEpisodeStart:async (user,id) => {assert.equal(user,'viewer');assert.equal(id,'ani_42');return start;}},
     '@/lib/providers':{getProviderByAnimeId:()=>anissia()},
-    '@/lib/resolvers/videoResolver':{resolveAnissiaStream:async (...args)=>{streamCalls.push(args);return {server_sources:[]};}},
+    '@/lib/resolvers/videoResolver':{resolveAnissiaStream:async (...args)=>{streamCalls.push(args);return {success:true,embed_url:'https://video.example',server_sources:[]};}},
   };
   return {detail:load('src/app/api/anime/detail/route.ts',deps),
     episode:load('src/app/api/anime/episode_info/route.ts',deps),streamCalls};
@@ -217,7 +217,7 @@ test('authenticated detail and episode APIs use the viewer offset and never publ
   assert.equal(episode.data.link_next_ep_num,2);
   assert.equal(episode.headers['Cache-Control'],'no-store');
   assert.deepEqual(api.streamCalls[0].slice(0,2),[42,1]);
-  assert.deepEqual(api.streamCalls[0].slice(5),['ani_42',13,13]);
+  assert.deepEqual(api.streamCalls[0].slice(5),['ani_42',13,13,true]);
   const last = await api.episode.GET({url:'https://app.example/api?id=ani_42&ep=13'});
   assert.equal(last.data.link_next_ep_num,null);
   const calls = api.streamCalls.length;
@@ -342,11 +342,11 @@ test('caption max 20 expands to a confirmed ReAnime 24; fuzzy or unavailable met
     }
   }
 });
-test('confirmed video expansion respects season-local and cumulative numbering without importing another season', async () => {
+test('confirmed video sources keep their full playlist while subtitle ranges remain separate', async () => {
   const local = await anissia([13,25],13,{video:videoDetail('re_season2',romaji,1,14)}).getAnimeDetail('ani_42',{subtitleEpisodeStart:13});
   assert.equal(local.total_episodes,14);
   const combined = await anissia([13,25],13,{video:videoDetail('re_complete','Seihantai na Kimi to Boku',1,37)}).getAnimeDetail('ani_42',{subtitleEpisodeStart:13});
-  assert.equal(combined.total_episodes,13);
+  assert.equal(combined.total_episodes,37);
 });
 test('detail uses the default playback ReAnime catalog even without a confirmed artwork link', async () => {
   const detail = await anissia([20],20,{confirmed:false,playbackLinked:true,
@@ -564,3 +564,4 @@ test('ReAnime browser fallback exposes DB connection only after failure, not dur
     if(expected){assert.equal(controls[0].props.animeId,'re_ensemble');assert.equal(controls[0].props.retryPlayback,true);}
   }
 });
+

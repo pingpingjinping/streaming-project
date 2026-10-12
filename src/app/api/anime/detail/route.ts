@@ -20,7 +20,16 @@ export async function GET(request: NextRequest) {
 
   const provider = getProviderByAnimeId(id);
   const subtitleEpisodeStart = await getSubtitleEpisodeStart(user.username, id);
-  const detail = await provider.getAnimeDetail(id, { subtitleEpisodeStart });
+  let detail = await provider.getAnimeDetail(id, { subtitleEpisodeStart });
+  const videoSource = searchParams.get('video_source') || undefined;
+  if (detail && ['anissia','reanime'].includes(provider.name) &&
+      (detail.video_available === false || videoSource === 'anikoto')) {
+    const { reviewedProviderPlayback } = await import('@/lib/reviewedProviderPlayback');
+    detail = await reviewedProviderPlayback(detail, videoSource);
+  }
+  if (detail?.video_available === false && provider.name === 'reanime') {
+    detail = { ...detail, sub_episodes: [], dub_episodes: [] };
+  }
   if (!detail) {
     return NextResponse.json({ error: "Anime not found" }, { status: 404 });
   }
@@ -34,3 +43,4 @@ export async function GET(request: NextRequest) {
     },
   });
 }
+
