@@ -72,6 +72,8 @@ interface IframePlayerProps {
   sourceEpisodeNumber?: number;
 }
 
+const EMPTY_SERVER_SOURCES: ServerSource[] = [];
+
 function formatTime(sec: number): string {
   if (isNaN(sec) || sec < 0) sec = 0;
   const m = Math.floor(sec / 60);
@@ -89,7 +91,7 @@ export default function IframePlayer({
   linkNextEp,
   subEpisodes = [],
   embedUrl = "",
-  serverSources = [],
+  serverSources = EMPTY_SERVER_SOURCES,
   initialSubtitle,
   initialCreator = "",
   initialSubUrl = "",
