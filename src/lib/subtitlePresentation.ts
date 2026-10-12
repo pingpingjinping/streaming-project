@@ -25,7 +25,8 @@ export function scaleAssFontSizes(content: string, scale: number): string {
       // positioning, karaoke and reset-style tags intact. Includes animated \t(\fs...).
       return line.replace(/\{[^}]*\}/g, (block) => block.replace(
         /\\fs([+-]?(?:\d+(?:\.\d*)?|\.\d+))(?=[\\)\s}]|$)/g,
-        (_, value) => "\\fs" + (value.startsWith("+") ? "+" : "") + scaled(value),
+        // Signed fs values are relative multipliers in libass, not font units.
+        (_, value) => "\\fs" + (/^[+-]/.test(value) ? value : scaled(value)),
       ));
     }
     return line;

@@ -29,7 +29,7 @@ test('ASS render copy scales style and animated inline sizes while retaining clo
   const big = scale(ass, 1.5);
   assert.match(big, /Style: Default,Arial,60,/);
   assert.match(big, /\\fs45\\pos\(640,680\)\\t\(0,100,\\fs75\)\\k20/);
-  assert.match(big, /\\rDefault\\fs\+6/);
+  assert.match(big, /\\rDefault\\fs\+4/);
   assert.match(big, /m 0 0 l 40 40/);
   assert.match(big, /literal fs30/);
   assert.match(big, /0:00:01\.00,0:00:04\.00/);
@@ -41,7 +41,7 @@ test('ASS render copy scales style and animated inline sizes while retaining clo
 });
 test('SSA, custom format order, decimals, reset sizes and CRLF survive presentation changes', () => {
   const input = '[V4 Styles]\r\nFormat: Name, Fontsize, Fontname\r\nStyle: Main,19.5,Arial\r\n[Events]\r\nDialogue: Marked=0,0:00:01.00,0:00:02.00,Main,,0,0,0,,{\\fs0\\fs-2.5}Test\r\n';
-  assert.equal(scale(input, 2), input.replace('19.5','39').replace('fs-2.5','fs-5'));
+  assert.equal(scale(input, 2), input.replace('19.5','39'));
   const noFormat = '[V4+ Styles]\nStyle: Default,Arial,40,white';
   assert.match(scale(noFormat, 1.25), /Default,Arial,50,white/);
 });
