@@ -98,7 +98,11 @@ export function matchesVideoPlaybackIdentity(
   const candidateSeasons = new Set(titles.map(parseSeason).filter((value): value is number => value !== null));
   if (requestedSeasons.size > 1 || candidateSeasons.size > 1) return false;
   const requestedSeason = [...requestedSeasons][0] || 1;
-  const candidateSeason = [...candidateSeasons][0] || 1;
+  // A canonical catalog can prove suffix-only numbering such as Smartphone 2.
+  // A bare shared franchise title still cannot prove a sequel.
+  const verifiedNumericSeason = !candidateSeasons.size && !!expectedAniListId && exact && requestedSeason > 1 &&
+    titles.some(title => new RegExp(`(?<!\\d)${requestedSeason}$`, 'u').test(normalizeIdentityTitle(title)));
+  const candidateSeason = [...candidateSeasons][0] || (verifiedNumericSeason ? requestedSeason : 1);
   if (candidateSeason !== requestedSeason && !combined) return false;
   if (!exact && !combined) return false;
   // Separate seasons can legitimately use one combined provider ID, but the
@@ -396,7 +400,7 @@ export async function resolveAnissiaStream(
       const getAutomaticIdentity = () => automaticIdentity ||= (async () => {
         const work = await getAnimeWorkIdentity(animeId || (anissiaId ? `ani_${anissiaId}` : ""));
         const aliases = [...new Set([...(work?.titles || []), ...requestedWorkTitles])];
-        const localIdentity = await getCatalogWorkIdentityByTitle(requestedJapaneseTitle || korTitle);
+        const localIdentity = await getCatalogWorkIdentityByTitle(jpTitle || korTitle, targetSeason || undefined);
         if (localIdentity) aliases.push(...localIdentity.titles);
         const hasCatalogRomanTitle = work?.titles.some(value => /^[a-z0-9]{4,}$/.test(normalizeIdentityTitle(value)));
         const meta = localIdentity || hasCatalogRomanTitle ? null

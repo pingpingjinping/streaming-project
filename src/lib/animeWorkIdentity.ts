@@ -33,17 +33,39 @@ function titles(payload: Record<string, unknown>): string[] {
 /** Resolve one exact local AniList title before depending on a remote search.
  * The caller supplies the complete, season-qualified title; shared franchise
  * titles must not contribute first-season aliases to a sequel request. */
-export async function getCatalogWorkIdentityByTitle(title: string): Promise<(AnimeWorkIdentity & { anilistId: number }) | null> {
+export function catalogSeasonTitleVariants(title: string, season?: number): string[] {
+  const original = title.normalize('NFKC').replace(/\s+/g, ' ').trim();
+  if (!original) return [];
+  if (!Number.isInteger(season) || !season || season < 2 || season > 99) return [...new Set([title.trim(), original])];
+  const ordinal = season % 100 >= 11 && season % 100 <= 13 ? 'th'
+    : season % 10 === 1 ? 'st' : season % 10 === 2 ? 'nd' : season % 10 === 3 ? 'rd' : 'th';
+  const roman = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'][season];
+  const suffix = new RegExp(`\\s*(?:第\\s*${season}\\s*期|${season}\\s*기|${season}${ordinal}\\s*season|season\\s*${season}|シーズン\\s*${season}|(?<![\\d/⁄])${season}${roman ? `|(?<![a-z])${roman}` : ''})\\s*$`, 'iu');
+  const base = original.replace(suffix, '').trim();
+  const explicit = new RegExp(`(?:第\\s*${season}\\s*期|${season}\\s*기|${season}${ordinal}\\s*season|season\\s*${season}|シーズン\\s*${season}${roman ? `|(?<![a-z])${roman}(?![a-z])` : ''})`, 'iu').test(original);
+  const qualified = base !== original || explicit;
+  const variants = [
+    ...(qualified ? [title.trim(), original] : []),
+    `${base} ${season}${ordinal} Season`, `${base} Season ${season}`,
+    `${base} 第${season}期`, `${base} シーズン${season}`, `${base} ${season}`,
+    ...(roman ? [`${base} ${roman}`] : []),
+  ];
+  // Do not remove chapter/part names or offer the undecorated first-season title.
+  return [...new Set(variants)];
+}
+
+export async function getCatalogWorkIdentityByTitle(title: string, season?: number): Promise<(AnimeWorkIdentity & { anilistId: number }) | null> {
   if (!title.trim()) return null;
   const sql = getDb();
   if (!sql) return null;
-  const queries = [...new Set([title.trim(), title.normalize('NFKC').replace(/\s+/g, ' ').trim()])];
+  const queries = catalogSeasonTitleVariants(title, season);
+  const keys = [...new Set(queries.map(normalizeIdentityTitle))];
   try {
     const rows = await sql`SELECT source_record_id, payload FROM anime_catalog_entries
       WHERE source='AniList' AND (
-        payload->>'title_native'=ANY(${queries}::text[]) OR
-        payload->>'title_romaji'=ANY(${queries}::text[]) OR
-        payload->>'title_english'=ANY(${queries}::text[])) LIMIT 3`;
+        regexp_replace(lower(normalize(payload->>'title_native', NFKD)), '[^[:alnum:]]', '', 'g')=ANY(${keys}::text[]) OR
+        regexp_replace(lower(normalize(payload->>'title_romaji', NFKD)), '[^[:alnum:]]', '', 'g')=ANY(${keys}::text[]) OR
+        regexp_replace(lower(normalize(payload->>'title_english', NFKD)), '[^[:alnum:]]', '', 'g')=ANY(${keys}::text[])) LIMIT 3`;
     const compatible = rows.filter(row => titles(object(row.payload)).some(value => matchesIdentityTitle(value, queries)));
     if (compatible.length !== 1) return null;
     const anilistId = Number(compatible[0].source_record_id);
