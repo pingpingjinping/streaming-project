@@ -416,6 +416,12 @@ test('Apple touch provider fullscreen still exits the video-only layer for capti
   assert.equal(await api.preservePlayerFullscreen(container,doc,iphone),'web');
   assert.deepEqual(events,['exit']);assert.equal(doc.fullscreenElement,null);
 });
+test('Android provider handoff retains its existing caption-preserving web fallback', async () => {
+  const child={},doc={fullscreenElement:child,exitFullscreen:async()=>{doc.fullscreenElement=null;}};
+  const container={contains:el=>el===child,requestFullscreen:async()=>{throw new Error('activation consumed');}};
+  assert.equal(await api.preservePlayerFullscreen(container,doc,android),'web');
+  assert.equal(doc.fullscreenElement,null);
+});
 test('fullscreen preservation never exits unrelated elements or overrides a user exit during transfer', async () => {
   const child={},unrelated={},container={contains:el=>el===child};
   let exits=0;const doc={fullscreenElement:unrelated,exitFullscreen:async()=>{exits++;}};
