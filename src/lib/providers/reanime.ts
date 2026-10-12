@@ -48,12 +48,41 @@ const REANIME_HEADERS: Record<string, string> = {
   Accept: "application/json, text/plain, */*",
 };
 
-// In-memory caches with timestamps
-const detailCache: Record<string, { data: AnimeDetail; anilistId: number; timestamp: number }> = {};
-const streamCache: Record<string, { data: EpisodeStreamInfo; timestamp: number }> = {};
+// Keep recent lookups only; expiration must release memory as well as reject hits.
+const detailCache = new Map<string, { data: AnimeDetail; anilistId: number; timestamp: number }>();
+const streamCache = new Map<string, { data: EpisodeStreamInfo; timestamp: number }>();
 let homeCache: { data: any; timestamp: number } | null = null;
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 const HOME_CACHE_TTL = 3 * 60 * 1000; // 3 minutes
+const DETAIL_CACHE_LIMIT = 128;
+const STREAM_CACHE_LIMIT = 256;
+
+function readCache<T extends { timestamp: number }>(cache: Map<string, T>, key: string): T | undefined {
+  const entry = cache.get(key);
+  if (!entry) return undefined;
+  if (Date.now() - entry.timestamp >= CACHE_TTL) {
+    cache.delete(key);
+    return undefined;
+  }
+  // Recency changes eviction order, not the ten-minute validity window.
+  cache.delete(key);
+  cache.set(key, entry);
+  return entry;
+}
+
+function pruneCache<T extends { timestamp: number }>(cache: Map<string, T>, limit: number) {
+  const now = Date.now();
+  for (const [key, entry] of cache) {
+    if (now - entry.timestamp >= CACHE_TTL) cache.delete(key);
+  }
+  while (cache.size > limit) cache.delete(cache.keys().next().value!);
+}
+
+function writeCache<T extends { timestamp: number }>(cache: Map<string, T>, key: string, entry: T, limit: number) {
+  cache.delete(key);
+  cache.set(key, entry);
+  pruneCache(cache, limit);
+}
 
 export async function getBaseUrl(): Promise<string> {
   return await getReanimeBaseUrl();
@@ -145,6 +174,20 @@ export interface ReanimeArtwork {
 }
 const artworkCache=new Map<string,{value:ReanimeArtwork|null;expires:number}>();
 const artworkPending=new Map<string,Promise<ReanimeArtwork|null>>();
+
+// Free expired entries even when nobody requests the old work again. This is
+// memory-only housekeeping, with no provider requests or persistent writes.
+if (typeof setInterval === 'function') {
+  const cleanupTimer = setInterval(() => {
+    pruneCache(detailCache, DETAIL_CACHE_LIMIT);
+    pruneCache(streamCache, STREAM_CACHE_LIMIT);
+    const now = Date.now();
+    for (const [key, entry] of artworkCache) {
+      if (entry.expires <= now) artworkCache.delete(key);
+    }
+  }, 60_000);
+  cleanupTimer.unref?.();
+}
 
 /** Fetch metadata only, without downloading episode lists or searching by title. */
 export async function getReanimeArtwork(reanimeId:string):Promise<ReanimeArtwork|null> {
@@ -573,7 +616,6 @@ export async function searchAnime(keyword: string, page = 1, options: { year?: s
 
 export async function getAnimeDetail(animeId: string, options: { videoSource?: "rean" | "anikoto" | "linkkf" | "ohli24" } = {}): Promise<AnimeDetail | null> {
   const normalizedId = toReanimeId(animeId);
-  const now = Date.now();
 
   // Switching players must not wait for the old provider's REST/Jina/Svelte
   // attempts. Exact catalog metadata is enough to resolve the selected source.
@@ -583,9 +625,8 @@ export async function getAnimeDetail(animeId: string, options: { videoSource?: "
     if (local) return local;
   }
 
-  if (detailCache[normalizedId] && now - detailCache[normalizedId].timestamp < CACHE_TTL) {
-    return detailCache[normalizedId].data;
-  }
+  const cachedDetail = readCache(detailCache, normalizedId);
+  if (cachedDetail) return cachedDetail.data;
 
   // Metadata-only catalog entries with a reviewed alternate need not probe
   // the unavailable provider first. The explicit ReAnime tab still reads live.
@@ -615,7 +656,7 @@ export async function getAnimeDetail(animeId: string, options: { videoSource?: "
         ? e.number - projection.start + 1 : null }));
     const detail = { ...complete, id: normalizedId, title: projection.title, sub_episodes: episodes,
       dub_episodes: [], total_episodes: episodes.length };
-    detailCache[normalizedId] = { data: detail, anilistId: detailCache[toReanimeId(projection.sourceId)]?.anilistId || 0, timestamp: now };
+    writeCache(detailCache, normalizedId, { data: detail, anilistId: complete.anilist_id || 0, timestamp: Date.now() }, DETAIL_CACHE_LIMIT);
     return detail;
   }
 
@@ -679,7 +720,7 @@ export async function getAnimeDetail(animeId: string, options: { videoSource?: "
         is_finished: isFinished,
       };
 
-      detailCache[normalizedId] = { data: detail, anilistId, timestamp: now };
+      writeCache(detailCache, normalizedId, { data: detail, anilistId, timestamp: Date.now() }, DETAIL_CACHE_LIMIT);
       return detail;
     }
   } catch (err) {
@@ -759,7 +800,7 @@ export async function getAnimeDetail(animeId: string, options: { videoSource?: "
       is_finished: isFinished,
     };
 
-    detailCache[normalizedId] = { data: detail, anilistId, timestamp: now };
+    writeCache(detailCache, normalizedId, { data: detail, anilistId, timestamp: Date.now() }, DETAIL_CACHE_LIMIT);
     return detail;
   } catch (error) {
     console.error("[ReAnime] getAnimeDetail error:", error);
@@ -768,10 +809,8 @@ export async function getAnimeDetail(animeId: string, options: { videoSource?: "
 }
 
 export async function getEpisodeStream(watchUrl: string): Promise<EpisodeStreamInfo | null> {
-  const now = Date.now();
-  if (streamCache[watchUrl] && now - streamCache[watchUrl].timestamp < CACHE_TTL) {
-    return streamCache[watchUrl].data;
-  }
+  const cachedStream = readCache(streamCache, watchUrl);
+  if (cachedStream) return cachedStream.data;
 
   try {
     const baseUrl = await getBaseUrl();
@@ -783,9 +822,8 @@ export async function getEpisodeStream(watchUrl: string): Promise<EpisodeStreamI
       // Fallback: extract slug and lookup detail
       const slug = url.pathname.replace(/^\/watch\/?/, "").split("/")[0];
       const detail = await getAnimeDetail(slug);
-      const cached = detailCache[toReanimeId(slug)];
-      if (cached?.anilistId) {
-        anilistIdStr = String(cached.anilistId);
+      if (detail?.anilist_id) {
+        anilistIdStr = String(detail.anilist_id);
       }
     }
 
@@ -832,7 +870,7 @@ export async function getEpisodeStream(watchUrl: string): Promise<EpisodeStreamI
       link_pre: "",
     };
 
-    streamCache[watchUrl] = { data: result, timestamp: now };
+    writeCache(streamCache, watchUrl, { data: result, timestamp: Date.now() }, STREAM_CACHE_LIMIT);
     return result;
   } catch (error) {
     console.error("[ReAnime] getEpisodeStream error:", error);
