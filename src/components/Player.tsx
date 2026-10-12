@@ -1,4 +1,5 @@
 "use client";
+import { scaleAssFontSizes } from "@/lib/subtitlePresentation";
 import { canCacheSubtitle } from "@/lib/subtitleCachePolicy";
 import { enableWebFullscreenScrollRoom, exitPlayerFullscreen, getPlayerFullscreenElement, requestPlayerFullscreen } from "@/lib/playerFullscreen";
 import LocalizedAnimeTitle from "@/components/LocalizedAnimeTitle";
@@ -191,6 +192,7 @@ export default function Player(props: PlayerProps) {
   const octopusRef = useRef<any>(null);
 
   // Hybrid PiP Refs
+  const subtitleLoadGenerationRef = useRef(0);
   const currentAssContentRef = useRef<string | null>(null);
   const currentSubRef = useRef<SubtitleItem | null>(null);
   const subtitleCacheProgressRef = useRef<{ key: string; seconds: number; lastTime: number | null; saving: boolean; saved: boolean }>({ key: "", seconds: 0, lastTime: null, saving: false, saved: false });
@@ -644,12 +646,14 @@ export default function Player(props: PlayerProps) {
       const saved = localStorage.getItem("anime_sub_size");
       if (saved) {
         const val = parseInt(saved, 10);
-        if (val === 28) return 22;
         return val || 22;
       }
     }
     return 22;
   });
+  const currentSubSizeRef = useRef(currentSubSize);
+  currentSubSizeRef.current = currentSubSize;
+  useEffect(() => () => { subtitleLoadGenerationRef.current++; }, []);
   const localFileInputRef = useRef<HTMLInputElement>(null);
   const uploadFileInputRef = useRef<HTMLInputElement>(null);
   const [uploadingSub, setUploadingSub] = useState(false);
@@ -1574,7 +1578,8 @@ export default function Player(props: PlayerProps) {
 
   // 15. Subtitle switcher
   const applySubtitle = useCallback(
-    (sub: SubtitleItem | null, offset = 0.0) => {
+    async (sub: SubtitleItem | null, offset = 0.0) => {
+      const generation = ++subtitleLoadGenerationRef.current;
       currentSubRef.current = sub;
       pendingSubtitleRef.current = sub;
       if (!artRef.current) return;
@@ -1618,40 +1623,39 @@ export default function Player(props: PlayerProps) {
         if (art.template?.$subtitle) {
           art.template.$subtitle.style.display = "none";
         }
-        let subBlobUrl = sub.url || "";
-        if (!subBlobUrl && sub.content) {
-          const blob = new Blob([sub.content], { type: "text/plain;charset=utf-8" });
-          subBlobUrl = URL.createObjectURL(blob);
+        currentAssContentRef.current = null;
+        let original = sub.content;
+        if (!original && sub.url) {
+          try {
+            const response = await fetch(toAbsoluteUrl(sub.url));
+            if (!response.ok) throw new Error(`Subtitle HTTP ${response.status}`);
+            original = await response.text();
+          } catch (error) {
+            if (generation === subtitleLoadGenerationRef.current) {
+              console.warn("ASS subtitle load failed:", error);
+              art.notice.show = "ASS 자막을 불러오지 못했습니다.";
+            }
+            return;
+          }
         }
-
-        if (!sub.content && sub.url) {
-          fetch(toAbsoluteUrl(sub.url))
-            .then((r) => r.text())
-            .then((txt) => {
-              currentAssContentRef.current = txt;
-              syncCuesToPipTrack(isNativePipActive());
-            })
-            .catch(() => {});
-        } else {
-          currentAssContentRef.current = sub.content || null;
-          syncCuesToPipTrack(isNativePipActive());
-        }
+        if (generation !== subtitleLoadGenerationRef.current || art !== artRef.current || !original) return;
+        currentAssContentRef.current = original;
+        syncCuesToPipTrack(isNativePipActive());
+        const renderContent = scaleAssFontSizes(original, currentSubSizeRef.current / 22);
 
         if (window.SubtitlesOctopus) {
           try {
             octopusRef.current = new window.SubtitlesOctopus({
               video: art.video,
-              subUrl: subBlobUrl,
-              subContent: sub.content || undefined,
+              subContent: renderContent,
               fonts: ["/libass/default.woff2"],
               fallbackFont: "/libass/default.woff2",
               // User-selectable ASS/SSA oversampling. devicePixelRatio is
               // still applied by SubtitlesOctopus itself before this factor.
               prescaleFactor: playerSettingsRef.current.subtitleSharpness || 1,
-              // Allow the quality modes to remain distinguishable on high-DPI
-              // phones while bounding the largest 2x render target.
-              prescaleHeightLimit:
-                (playerSettingsRef.current.subtitleSharpness || 1) > 1 ? 2160 : 1440,
+              // Keep 2.5x/3x distinct; cap the backing height for large/DPI screens.
+              prescaleHeightLimit: 1440 * (playerSettingsRef.current.subtitleSharpness || 1),
+              maxRenderHeight: 1440 * (playerSettingsRef.current.subtitleSharpness || 1),
               workerUrl: "/libass/subtitles-octopus-worker.js",
               legacyWorkerUrl: "/libass/subtitles-octopus-worker.js",
               timeOffset: adjustedOffset,
@@ -1735,6 +1739,11 @@ export default function Player(props: PlayerProps) {
     const numSize = parseInt(String(size), 10) || 22;
     const scale = (numSize / 22).toFixed(3);
     setCurrentSubSize(numSize);
+    currentSubSizeRef.current = numSize;
+    if (octopusRef.current && currentAssContentRef.current) {
+      octopusRef.current.setTrack(scaleAssFontSizes(currentAssContentRef.current, numSize / 22));
+      octopusRef.current.setCurrentTime(artRef.current?.currentTime + (appliedEffectiveOffsetRef.current || 0));
+    }
     try {
       localStorage.setItem("anime_sub_size", String(numSize));
     } catch {}
@@ -1757,7 +1766,8 @@ export default function Player(props: PlayerProps) {
       .art-video-player .art-subtitle .art-subtitle-line,
       .art-video-player .art-subtitle p,
       .art-video-player .art-subtitle div,
-      .art-video-player .art-subtitle span {
+      .art-video-player .art-subtitle span,
+      .art-video-player .art-subtitle * {
         font-size: ${numSize}px !important;
         --art-subtitle-font-size: ${numSize}px !important;
       }
@@ -4768,3 +4778,4 @@ export default function Player(props: PlayerProps) {
     </div>
   );
 }
+

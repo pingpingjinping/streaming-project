@@ -43,8 +43,9 @@ export interface PlayerSettings {
   mobileGesture: boolean;       // 모바일 화면 스와이프 탐색
 
   // 💬 자막 & 외부 데이터
+  subtitleOffsetY: number;      // 화면 기준 이동량, 양수는 아래쪽 (px)
   subtitleBottom: number;       // 일반 자막 최저 하단 여백 (15 / 25 / 35 px)
-  subtitleSharpness: 1 | 1.25 | 1.5 | 2; // ASS/SSA libass 렌더 선명도 배율
+  subtitleSharpness: 1 | 1.25 | 1.5 | 2 | 2.5 | 3; // ASS/SSA libass 렌더 선명도 배율
   localSubBtn: boolean;         // 로컬 자막 파일 열기 버튼 표시
   anissiaCard: boolean;         // 애니시아 등록 제작자 현황 카드 표시
 }
@@ -70,6 +71,7 @@ export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
   mobileGesture: false, // ⭐ 기본 OFF
 
   // 💬 자막 & 외부 데이터
+  subtitleOffsetY: 0,
   subtitleBottom: 15,
   subtitleSharpness: 1,
   localSubBtn: true,
@@ -82,9 +84,14 @@ export function getFullscreenExitOpacity(value: unknown): PlayerSettings["fullsc
   return value === 0 || value === 33 || value === 66 || value === 100 ? value : 100;
 }
 
+export function getSubtitleOffsetY(value: unknown): number {
+  const offset = Number(value);
+  return [-20, -10, 0, 10, 20, 30].includes(offset) ? offset : 0;
+}
+
 export function getSubtitleSharpness(value: unknown): PlayerSettings["subtitleSharpness"] {
   const numeric = Number(value);
-  return numeric === 1 || numeric === 1.25 || numeric === 1.5 || numeric === 2 ? numeric : 1;
+  return numeric === 1 || numeric === 1.25 || numeric === 1.5 || numeric === 2 || numeric === 2.5 || numeric === 3 ? numeric : 1;
 }
 
 let saveDbTimer: ReturnType<typeof setTimeout> | null = null;
@@ -124,6 +131,7 @@ export async function fetchUserSettingsFromDb(): Promise<{
       settings: data.settings ? {
         ...data.settings,
         subtitleSharpness: getSubtitleSharpness(data.settings.subtitleSharpness),
+        subtitleOffsetY: getSubtitleOffsetY(data.settings.subtitleOffsetY),
         fullscreenExitOpacity: getFullscreenExitOpacity(data.settings.fullscreenExitOpacity),
       } : null,
       authenticated: Boolean(data.authenticated),
@@ -173,6 +181,7 @@ export function loadPlayerSettings(): PlayerSettings {
       doubleTouchDuration: parsed.doubleTouchDuration === 5 ? 5 : 10,
       mobileGesture: parsed.mobileGesture !== undefined ? !!parsed.mobileGesture : false,
       subtitleBottom: subBottomVal,
+      subtitleOffsetY: getSubtitleOffsetY(parsed.subtitleOffsetY),
       subtitleSharpness: getSubtitleSharpness(parsed.subtitleSharpness),
       fullscreenExitOpacity: getFullscreenExitOpacity(parsed.fullscreenExitOpacity),
     };
@@ -213,6 +222,10 @@ export function applyPlayerSettingsStyles(settings: PlayerSettings) {
   styleEl.innerHTML = `
     .player-web-fullscreen-exit {
       opacity: ${getFullscreenExitOpacity(settings.fullscreenExitOpacity) / 100} !important;
+    }
+    .art-video-player .art-subtitle,
+    .art-video-player canvas.libassjs-canvas {
+      translate: 0 ${getSubtitleOffsetY(settings.subtitleOffsetY)}px !important;
     }
     .art-video-player,
     .art-video-player .art-subtitle {
@@ -411,8 +424,8 @@ export default function PlayerSettingsModal({
               <div className="text-sm font-semibold text-white">자막 선명도</div>
               <p className="mt-1 text-xs text-slate-400">ASS/SSA 자막 렌더 해상도 배율입니다. 높을수록 선명하지만 기기 부하가 늘어납니다.</p>
             </div>
-            <div className="grid grid-cols-4 gap-2" role="group" aria-label="자막 선명도">
-              {([1, 1.25, 1.5, 2] as const).map((value) => (
+            <div className="grid grid-cols-3 gap-2" role="group" aria-label="자막 선명도">
+              {([1, 1.25, 1.5, 2, 2.5, 3] as const).map((value) => (
                 <button
                   key={value}
                   type="button"
@@ -430,6 +443,25 @@ export default function PlayerSettingsModal({
                 >
                   {value === 1 ? "1.0x" : `${value}x`}
                 </button>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-3 rounded-2xl border border-white/5 bg-slate-900/60 p-3.5">
+            <div>
+              <div className="text-sm font-semibold text-white">자막 위치</div>
+              <p className="mt-1 text-xs text-slate-400">일반·ASS/SSA 자막을 함께 이동합니다. + 값은 아래쪽입니다.</p>
+            </div>
+            <div className="grid grid-cols-3 gap-2" role="group" aria-label="자막 위치">
+              {([-20, -10, 0, 10, 20, 30] as const).map((value) => (
+                <button key={value} type="button" aria-pressed={getSubtitleOffsetY(settings.subtitleOffsetY) === value}
+                  onClick={() => {
+                    const next = { ...settings, subtitleOffsetY: value };
+                    savePlayerSettings(next);
+                    applyPlayerSettingsStyles(next);
+                    onUpdateSettings(next);
+                  }}
+                  className={`rounded-xl border px-2 py-2 text-sm font-semibold transition ${getSubtitleOffsetY(settings.subtitleOffsetY) === value ? "border-pink-400 bg-pink-600 text-white" : "border-white/10 bg-slate-800 text-slate-300 hover:bg-slate-700"}`}
+                >{value === 0 ? "기본" : `${value > 0 ? "+" : ""}${value}px`}</button>
               ))}
             </div>
           </div>
@@ -913,3 +945,4 @@ function ToggleSwitch({
     </button>
   );
 }
+

@@ -478,7 +478,8 @@ test('iframe previous/next and dropdown navigation retain the actual video sourc
     'next/link':'Link','lucide-react':{},'./SubtitleSelectModal':'SubtitleSelectModal',
     './usePlayerFullscreen':{usePlayerFullscreen:()=>({mode:'native',isFullscreen:false,toggleFullscreen:()=>{}})},
     './useContainedPlayerFrame':{useContainedPlayerFrame:()=>{}},'@/lib/iframePlayback':{},
-    './PlayerSettingsModal':{default:'PlayerSettingsModal',DEFAULT_PLAYER_SETTINGS:{}},
+    './PlayerSettingsModal':{default:'PlayerSettingsModal',DEFAULT_PLAYER_SETTINGS:{},getSubtitleOffsetY:()=>0},
+    '@/lib/subtitlePresentation':load('src/lib/subtitlePresentation.ts'),
     './SponsorSubtitleSyncModal':{default:'SponsorSubtitleSyncModal'},
     '@/lib/sponsorSubtitleSync':{effectiveSubtitleOffset:(base)=>base,formatSyncTime:()=>''},
   },{window:{location},fetch:async()=>({ok:true,json:async()=>({})})}).default;
@@ -567,4 +568,5 @@ test('ReAnime browser fallback exposes DB connection only after failure, not dur
     if(expected){assert.equal(controls[0].props.animeId,'re_ensemble');assert.equal(controls[0].props.retryPlayback,true);}
   }
 });
+
 

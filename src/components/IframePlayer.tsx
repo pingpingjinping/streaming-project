@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import { scaleAssFontSizes, subtitleRenderSize } from "@/lib/subtitlePresentation";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -35,6 +36,7 @@ import PlayerSettingsModal, {
   loadPlayerSettings,
   fetchUserSettingsFromDb,
   applyPlayerSettingsStyles,
+  getSubtitleOffsetY,
   type PlayerSettings,
 } from "./PlayerSettingsModal";
 
@@ -132,6 +134,9 @@ export default function IframePlayer({
   const sponsorSyncRef = useRef<SponsorSubtitleSync>({ startSeconds: null, delaySeconds: 0 });
   const [isSubEnabled, setIsSubEnabled] = useState(true);
   const [subSize, setSubSize] = useState<"small" | "normal" | "large">("normal");
+  const subScale = { small: 0.8, normal: 1, large: 1.25 }[subSize];
+  const subScaleRef = useRef(subScale);
+  subScaleRef.current = subScale;
   const [isSavedSync, setIsSavedSync] = useState(false);
   const [isOctopusScriptLoaded, setIsOctopusScriptLoaded] = useState(() => {
     return typeof window !== "undefined" && Boolean(window.SubtitlesOctopus);
@@ -652,21 +657,21 @@ export default function IframePlayer({
           const w = mediaFrameRef.current?.clientWidth || 1920;
           const h = mediaFrameRef.current?.clientHeight || 1080;
           const sharpness = playerSettings.subtitleSharpness || 1;
-          const renderW = Math.max(1, Math.round(w * sharpness));
-          const renderH = Math.max(1, Math.round(h * sharpness));
+          const { width: renderW, height: renderH } = subtitleRenderSize(w, h, sharpness, window.devicePixelRatio);
           if (canvasRef.current) {
             canvasRef.current.width = renderW;
             canvasRef.current.height = renderH;
           }
 
-          const blob = new Blob([sub.content], { type: "text/plain;charset=utf-8" });
+          const renderContent = scaleAssFontSizes(sub.content, subScaleRef.current);
+          const blob = new Blob([renderContent], { type: "text/plain;charset=utf-8" });
           const blobUrl = URL.createObjectURL(blob);
           currentBlobUrlRef.current = blobUrl;
 
           octopusRef.current = new window.SubtitlesOctopus({
             canvas: canvasRef.current,
             subUrl: blobUrl,
-            subContent: sub.content,
+            subContent: renderContent,
             fonts: [],
             fallbackFont: "/libass/default.woff2",
             workerUrl: "/libass/subtitles-octopus-worker.js",
@@ -680,10 +685,8 @@ export default function IframePlayer({
                 const cw = mediaFrameRef.current?.clientWidth || 1920;
                 const ch = mediaFrameRef.current?.clientHeight || 1080;
                 const sharpness = playerSettings.subtitleSharpness || 1;
-                octopusRef.current?.resize(
-                  Math.max(1, Math.round(cw * sharpness)),
-                  Math.max(1, Math.round(ch * sharpness))
-                );
+                const size = subtitleRenderSize(cw, ch, sharpness, window.devicePixelRatio);
+                octopusRef.current?.resize(size.width, size.height);
                 if (octopusRef.current) subtitleClockRef.current = syncIframeSubtitleClock(
                   octopusRef.current, null, lastCurrentTimeRef.current + effectiveSubtitleOffset(syncOffsetRef.current, sponsorSyncRef.current, lastCurrentTimeRef.current), playbackPausedRef.current,
                   { offset: effectiveSubtitleOffset(syncOffsetRef.current, sponsorSyncRef.current, lastCurrentTimeRef.current) });
@@ -753,6 +756,16 @@ export default function IframePlayer({
     showNotice,
     playerSettings.subtitleSharpness,
   ]);
+
+  useEffect(() => {
+    const sub = subtitles[currentSubIndex];
+    if (!octopusRef.current || !sub?.is_ass || !sub.content) return;
+    octopusRef.current.setTrack(scaleAssFontSizes(sub.content, subScale));
+    subtitleClockRef.current = syncIframeSubtitleClock(
+      octopusRef.current, subtitleClockRef.current,
+      lastCurrentTimeRef.current + effectiveSubtitleOffset(syncOffsetRef.current, sponsorSyncRef.current, lastCurrentTimeRef.current),
+      playbackPausedRef.current, { reset: true });
+  }, [subScale, subtitles, currentSubIndex]);
 
   // 8. FlixCloud postMessage polling (100ms) & message listeners
   useEffect(() => {
@@ -885,8 +898,7 @@ export default function IframePlayer({
           const w = mediaFrameRef.current?.clientWidth || 1920;
           const h = mediaFrameRef.current?.clientHeight || 1080;
           const sharpness = playerSettings.subtitleSharpness || 1;
-          const renderW = Math.max(1, Math.round(w * sharpness));
-          const renderH = Math.max(1, Math.round(h * sharpness));
+          const { width: renderW, height: renderH } = subtitleRenderSize(w, h, sharpness, window.devicePixelRatio);
 
           // Do not mutate canvas.width/height here. Setting either property
           // clears the canvas immediately, and SubtitlesOctopus then sees the
@@ -1255,13 +1267,14 @@ export default function IframePlayer({
           {/* Layer 2a: SubtitlesOctopus ASS Canvas (WASM libass) */}
           <canvas
             ref={canvasRef}
+            style={{ translate: `0 ${getSubtitleOffsetY(playerSettings.subtitleOffsetY)}px` }}
             className={`absolute inset-0 h-full w-full pointer-events-none z-10 ${
               isSubEnabled && isOctopusActive ? "block" : "hidden"
             }`}
           />
 
           {/* Layer 2b-Top: Top Subtitle HUD Overlay (상단 설명/가사 자막) */}
-          <div className="absolute inset-0 pointer-events-none z-20 flex flex-col justify-start items-center pt-[5%] overflow-hidden">
+          <div style={{ translate: `0 ${getSubtitleOffsetY(playerSettings.subtitleOffsetY)}px` }} className="absolute inset-0 pointer-events-none z-20 flex flex-col justify-start items-center pt-[5%] overflow-hidden">
             <div
               ref={topHudTextRef}
               className={`font-black text-amber-300 text-center max-w-[88%] px-4 py-1.5 rounded-xl transition-all duration-75 select-none whitespace-pre-line ${subSizeClasses[subSize]}`}
@@ -1274,7 +1287,7 @@ export default function IframePlayer({
           </div>
 
           {/* Layer 2b: Text / VTT Subtitle HUD Overlay (하단 대사) */}
-          <div className="absolute inset-0 pointer-events-none z-20 flex flex-col justify-end items-center pb-[7.5%] overflow-hidden">
+          <div style={{ translate: `0 ${getSubtitleOffsetY(playerSettings.subtitleOffsetY)}px` }} className="absolute inset-0 pointer-events-none z-20 flex flex-col justify-end items-center pb-[7.5%] overflow-hidden">
             <div
               ref={hudTextRef}
               className={`font-black text-white text-center max-w-[88%] px-4 py-1.5 rounded-xl transition-all duration-75 select-none whitespace-pre-line ${subSizeClasses[subSize]}`}
@@ -1540,3 +1553,4 @@ export default function IframePlayer({
     </div>
   );
 }
+
