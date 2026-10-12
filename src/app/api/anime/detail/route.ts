@@ -20,8 +20,10 @@ export async function GET(request: NextRequest) {
 
   const provider = getProviderByAnimeId(id);
   const subtitleEpisodeStart = await getSubtitleEpisodeStart(user.username, id);
-  let detail = await provider.getAnimeDetail(id, { subtitleEpisodeStart });
   const videoSource = searchParams.get('video_source') || undefined;
+  const selectedSource = ['rean', 'anikoto', 'linkkf', 'ohli24'].includes(videoSource || '')
+    ? videoSource as 'rean' | 'anikoto' | 'linkkf' | 'ohli24' : undefined;
+  let detail = await provider.getAnimeDetail(id, { subtitleEpisodeStart, videoSource: selectedSource });
   if (detail && ['anissia','reanime'].includes(provider.name) &&
       (detail.video_available === false || videoSource === 'anikoto')) {
     const { reviewedProviderPlayback } = await import('@/lib/reviewedProviderPlayback');
@@ -37,7 +39,7 @@ export async function GET(request: NextRequest) {
   const noCache = searchParams.get("nocache") === "1";
   return NextResponse.json(detail, {
     headers: {
-      "Cache-Control": (noCache || provider.name === "anissia")
+      "Cache-Control": (noCache || provider.name === "anissia" || detail.video_available === false || videoSource === 'anikoto' || detail.playback_source === 'anikoto' || provider.name === 'anikoto')
         ? "no-store"
         : "public, s-maxage=600, stale-while-revalidate=3600",
     },

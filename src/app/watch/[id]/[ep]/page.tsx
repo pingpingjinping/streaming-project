@@ -8,11 +8,11 @@ import ManualSourcePanel from "@/components/ManualSourcePanel";
 import AnissiaVideoSourceSelect from "@/components/AnissiaVideoSourceSelect";
 import { getProviderByAnimeId } from "@/lib/providers";
 import type { AnimeDetail, EpisodeStreamInfo } from "@/lib/providers/types";
-import { fetchCreatorSubtitle, resolveKoreanTitle } from "@/lib/subtitles";
 import { resolveAnissiaStream } from "@/lib/resolvers/videoResolver";
 import { getManualStreamSourceById, getSubtitleEpisodeStart } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { attachEpisodeCaptions, toSourceEpisode, toLocalEpisode } from "@/lib/episodeMapping";
+import { preloadPlaybackSubtitle } from '@/lib/playbackSubtitlePreload';
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -107,7 +107,7 @@ export default async function WatchPage({
   const anikotoDetails = new Map<string, AnimeDetail>();
   let anime = await provider.getAnimeDetail(id, {
     subtitleEpisodeStart: sourceEpisodeStart,
-    videoSource: requestedVideoSource,
+    videoSource: isDub ? undefined : requestedVideoSource,
   });
   if (anime && (isReanime || isAnissia) && !isDub &&
       (anime.video_available === false || requestedVideoSource === 'anikoto')) {
@@ -220,41 +220,25 @@ export default async function WatchPage({
   const initialSubUrl = sub_url || matched?.caption_url || "";
   const subtitleTitle = anime.title;
 
-  const [providerStreamInfo, preloadedSub] = await Promise.all([
-    activeManual
-      ? Promise.resolve(null)
-      : isReanime && anime.video_available === false && requestedVideoSource === 'rean'
-        ? Promise.resolve(null)
-      : isAnissia || (requestedVideoSource && requestedVideoSource !== currentProviderSource)
-        ? resolveAnissiaStream(
-            isAnissia ? Number(id.replace(/^ani_/, "")) : null,
-            epNum,
-            anime.title,
-            anime.original_title,
-            requestedVideoSource,
-            id,
-            sourceEpisodeStart,
-            sourceEpisodeStart && sourceEpisodeStart > 1 ? anime.total_episodes : undefined,
-            true,
-            anikotoDetails,
-          )
-        : provider.getEpisodeStream(watchUrl),
-    (!isDub && initialSubUrl && initialSubUrl.startsWith("http"))
-      ? resolveKoreanTitle(anime.title)
-          .then((resolved) =>
-            fetchCreatorSubtitle(
-              initialCreator || "제작자",
-              initialSubUrl,
-              resolved || subtitleTitle,
-              sourceEpisode,
-              4000,
-              epNum,
-              id
-            )
-          )
-          .catch(() => null)
-      : Promise.resolve(null),
-  ]);
+  // The mounted player also loads subtitles; only use a quickly available
+  // preload and bound the entire title-resolution + blog-extraction wait.
+  const subtitlePreload = !isDub && initialSubUrl.startsWith('http')
+    ? preloadPlaybackSubtitle(initialCreator, initialSubUrl, subtitleTitle, sourceEpisode, epNum, id)
+    : Promise.resolve(null);
+  const providerStreamInfo = activeManual
+    ? null
+    : isReanime && anime.video_available === false && requestedVideoSource === 'rean'
+      ? null
+    : isAnissia || (requestedVideoSource && requestedVideoSource !== currentProviderSource)
+      ? await resolveAnissiaStream(
+          isAnissia ? Number(id.replace(/^ani_/, "")) : null,
+          epNum, anime.title, anime.original_title, requestedVideoSource, id,
+          sourceEpisodeStart,
+          sourceEpisodeStart && sourceEpisodeStart > 1 ? anime.total_episodes : undefined,
+          true, anikotoDetails,
+        )
+      : await provider.getEpisodeStream(watchUrl);
+  const preloadedSub = await subtitlePreload;
 
   let streamInfo = activeManual
     ? manualSourceToStream(activeManual)
@@ -329,7 +313,7 @@ export default async function WatchPage({
               기본 소스 대신 위에서 다른 사이트의 직접 링크를 추가할 수 있습니다.
             </p>
             <Link
-              href={`/anime/${id}`}
+              href={`/anime/${id}${requestedVideoSource ? `?video_source=${requestedVideoSource}` : ""}`} prefetch={false}
               className="mt-6 inline-flex items-center gap-2 rounded-xl bg-purple-600 px-5 py-2.5 text-sm font-semibold text-white"
             >
               <ArrowLeft className="h-4 w-4" /> 작품 회차 목록으로 돌아가기
@@ -392,6 +376,7 @@ export default async function WatchPage({
         />
 
         <Player
+          key={`${id}:${epNum}:${activeManual?.id || activeVideoSource}`}
           animeId={id}
           animeTitle={anime.title}
           animePoster={anime.poster}

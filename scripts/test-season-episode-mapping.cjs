@@ -16,10 +16,14 @@ function load(file, deps = {}, globals = {}) {
   }).outputText;
   vm.runInNewContext(code, {exports, require: name => {
     if (name in deps) return deps[name];
+    if (name === '@/components/PlaybackPlaylistRetry') return 'PlaybackPlaylistRetry';
+    if (name === '@/lib/playbackSubtitlePreload') return load('src/lib/playbackSubtitlePreload.ts', {
+      './subtitles': deps['@/lib/subtitles'] || {resolveKoreanTitle:async title=>title,fetchCreatorSubtitle:async()=>null},
+    });
     if (name.endsWith('/episodeMapping')) return mapping;
     if (name === './ids') return load('src/lib/providers/ids.ts');
     return require(name);
-  }, URL, URLSearchParams, AbortSignal, console, ...globals});
+  }, URL, URLSearchParams, AbortSignal, console, setTimeout, clearTimeout, ...globals});
   return exports;
 }
 const mapping = load('src/lib/episodeMapping.ts');
@@ -230,7 +234,7 @@ test('authenticated detail and episode APIs use the viewer offset and never publ
   assert.equal(episode.data.link_next_ep_num,2);
   assert.equal(episode.headers['Cache-Control'],'no-store');
   assert.deepEqual(api.streamCalls[0].slice(0,2),[42,1]);
-  assert.deepEqual(api.streamCalls[0].slice(5),['ani_42',13,13,true]);
+  assert.deepEqual(api.streamCalls[0].slice(5,9),['ani_42',13,13,true]);
   const last = await api.episode.GET({url:'https://app.example/api?id=ani_42&ep=13'});
   assert.equal(last.data.link_next_ep_num,null);
   const calls = api.streamCalls.length;

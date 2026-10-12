@@ -4022,7 +4022,7 @@ export default function Player(props: PlayerProps) {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-sm">
           <Link
-            href={`/anime/${animeId}`}
+            href={`/anime/${animeId}${props.videoSource ? `?video_source=${encodeURIComponent(props.videoSource)}` : ""}`} prefetch={false}
             onClick={() => setNavigatingTarget("anime")}
             className={`flex items-center gap-1.5 font-bold transition ${
               navigatingTarget === "anime"
@@ -4100,7 +4100,7 @@ export default function Player(props: PlayerProps) {
           )}
 
           <Link
-            href={`/anime/${animeId}`}
+            href={`/anime/${animeId}${props.videoSource ? `?video_source=${encodeURIComponent(props.videoSource)}` : ""}`} prefetch={false}
             onClick={() => setNavigatingTarget("list")}
             className={`flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-semibold transition ${
               navigatingTarget === "list"

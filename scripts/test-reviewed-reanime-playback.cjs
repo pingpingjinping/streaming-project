@@ -74,7 +74,7 @@ test('watch source switches fetch one Anikoto playlist and retain native episode
       '@/lib/auth':{requireAuth:async()=>({username:'viewer'})},'@/lib/db':{getSubtitleEpisodeStart:async()=>null},
       '@/lib/providers':{getProviderByAnimeId:()=>({getAnimeDetail:async(_,o)=>{options.push(o);return anime;},getEpisodeStream:async()=>{throw Error('Wrong provider');}})},
       '@/lib/reviewedProviderPlayback':helper,'@/lib/resolvers/videoResolver':resolver,
-      '@/lib/subtitles':{resolveKoreanTitle:async title=>title,fetchCreatorSubtitle:async(...args)=>{captions.push(args);return null;}},
+      '@/lib/playbackSubtitlePreload':{preloadPlaybackSubtitle:async(...args)=>{captions.push(args);return null;}},
       'next/navigation':{notFound:()=>{throw Error('Unexpected 404');}},
     }).default;
     const tree=await page({params:Promise.resolve({id:workId,ep:'51'}),searchParams:Promise.resolve({video_source:'anikoto'})});

@@ -5,6 +5,7 @@ import EpisodeListSection from "@/components/EpisodeListSection";
 import SubtitleEpisodeStartSetting from "@/components/SubtitleEpisodeStartSetting";
 import SubtitleBundleAssignmentSetting from "@/components/SubtitleBundleAssignmentSetting";
 import ReanimeDetailFallback from "@/components/ReanimeDetailFallback";
+import PlaybackPlaylistRetry from '@/components/PlaybackPlaylistRetry';
 import { getProviderByAnimeId } from "@/lib/providers";
 import { requireAuth, getCurrentUserId } from "@/lib/auth";
 import { getAnimeHistoryMap, getSubtitleEpisodeStart } from "@/lib/db";
@@ -29,7 +30,9 @@ export default async function AnimeDetailPage({
 
   const provider = getProviderByAnimeId(id);
   const subtitleEpisodeStart = await getSubtitleEpisodeStart(user.username, id);
-  let anime = await provider.getAnimeDetail(id, { subtitleEpisodeStart });
+  const videoSource = ['rean', 'anikoto', 'linkkf', 'ohli24'].includes(video_source || '')
+    ? video_source as 'rean' | 'anikoto' | 'linkkf' | 'ohli24' : undefined;
+  let anime = await provider.getAnimeDetail(id, { subtitleEpisodeStart, videoSource: isDub ? undefined : videoSource });
   if (anime && (id.startsWith('re_') || id.startsWith('ani_')) && !isDub &&
       (anime.video_available === false || video_source === 'anikoto')) {
     const { reviewedProviderPlayback } = await import('@/lib/reviewedProviderPlayback');
@@ -146,7 +149,8 @@ export default async function AnimeDetailPage({
         <WorkMatchSetting animeId={anime.id} />
         {anime.video_available === false && id.startsWith('re_') && (
           <p className="mt-4 rounded-xl border border-amber-500/20 bg-amber-950/20 p-4 text-sm text-amber-200">
-            작품 정보는 있지만 재생 가능한 영상 목록을 불러오지 못했습니다. 다른 영상 소스를 연결해 주세요.
+            영상 제공처의 회차 목록을 읽지 못했습니다. 잠시 후 다시 불러와 주세요.
+            <PlaybackPlaylistRetry key={id} />
           </p>
         )}
         {anime.playback_source === 'anikoto' && (

@@ -5,6 +5,7 @@ import { getSessionUser } from "@/lib/auth";
 import { getSubtitleEpisodeStart } from "@/lib/db";
 import { resolveAnissiaStream } from "@/lib/resolvers/videoResolver";
 import { attachEpisodeCaptions } from "@/lib/episodeMapping";
+import type { AnimeDetail } from '@/lib/providers/types';
 
 export async function GET(request: NextRequest) {
   // 보안: 미인증 사용자가 2회 외부 스크래핑을 유도하는 것을 방지
@@ -27,11 +28,12 @@ export async function GET(request: NextRequest) {
 
   const provider = getProviderByAnimeId(animeId);
   const subtitleEpisodeStart = await getSubtitleEpisodeStart(user.username, animeId);
-  let anime = await provider.getAnimeDetail(animeId, { subtitleEpisodeStart });
+  const anikotoDetails = new Map<string, AnimeDetail>();
+  let anime = await provider.getAnimeDetail(animeId, { subtitleEpisodeStart, videoSource: isDub ? undefined : requestedSource });
   if (anime && ['reanime','anissia'].includes(provider.name) && !isDub &&
       (anime.video_available === false || requestedSource === 'anikoto')) {
     const { reviewedProviderPlayback } = await import('@/lib/reviewedProviderPlayback');
-    anime = await reviewedProviderPlayback(anime, requestedSource);
+    anime = await reviewedProviderPlayback(anime, requestedSource, anikotoDetails);
     requestedSource ||= anime.playback_source || (provider.name === 'reanime' && anime.video_available === false ? 'anikoto' : undefined);
   }
   if (!anime) {
@@ -54,12 +56,12 @@ export async function GET(request: NextRequest) {
 
   let streamInfo = provider.name === "anissia" || alternateSource
     ? await resolveAnissiaStream(provider.name === 'anissia' ? Number(animeId.slice(4)) : null, epNum, anime.title, anime.original_title, requestedSource, animeId, subtitleEpisodeStart,
-        subtitleEpisodeStart && subtitleEpisodeStart > 1 ? anime.total_episodes : undefined, true)
+        subtitleEpisodeStart && subtitleEpisodeStart > 1 ? anime.total_episodes : undefined, true, anikotoDetails)
     : await provider.getEpisodeStream(watchUrl);
   if (provider.name === 'reanime' && !isDub && !videoSource &&
       (!streamInfo || (!streamInfo.embed_url && !streamInfo.m3u8_url))) {
     const fallback = await resolveAnissiaStream(null, epNum, anime.title, anime.original_title,
-      'anikoto', animeId, subtitleEpisodeStart, undefined, true);
+      'anikoto', animeId, subtitleEpisodeStart, undefined, true, anikotoDetails);
     if (fallback && (fallback.embed_url || fallback.m3u8_url)) {
       streamInfo = fallback; requestedSource = 'anikoto'; alternateSource = true;
     }
@@ -127,7 +129,7 @@ export async function GET(request: NextRequest) {
     },
     {
       headers: {
-        "Cache-Control": (noCache || provider.name === "anissia")
+        "Cache-Control": (noCache || provider.name === "anissia" || streamInfo.video_source === 'anikoto' || requestedSource === 'anikoto' || provider.name === 'anikoto')
           ? "no-store"
           : "public, s-maxage=1800, stale-while-revalidate=3600",
       },

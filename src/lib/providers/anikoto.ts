@@ -20,6 +20,7 @@ const PAGE_TIMEOUT_MS = 16_000;
 const PAGE_CACHE_TTL_MS = 60_000;
 const DETAIL_CACHE_TTL_MS = 30_000;
 const DETAIL_CACHE_LIMIT = 128;
+const DETAIL_STALE_TTL_MS = 10 * 60_000;
 const detailCache = new Map<string, { detail: AnimeDetail; expires: number }>();
 const detailPending = new Map<string, Promise<AnimeDetail | null>>();
 const episodeRefreshPending = new Map<string, Promise<string | null>>();
@@ -261,22 +262,30 @@ async function readAnimeDetail(animeId: string, refresh = false): Promise<AnimeD
   const baseUrl = await getBaseUrl();
   const key = `${baseUrl}|${slug}`;
   const cached = detailCache.get(key);
+  const stale = cached && cached.expires + DETAIL_STALE_TTL_MS > Date.now();
   if (!refresh && cached && cached.expires > Date.now()) return copyDetail(cached.detail);
-  detailCache.delete(key);
+  if (cached && cached.expires + DETAIL_STALE_TTL_MS <= Date.now()) detailCache.delete(key);
   const existing = !refresh && detailPending.get(key);
   if (existing) {
+    if (stale) return copyDetail(cached.detail);
     const detail = await existing;
     return detail ? copyDetail(detail) : null;
   }
   const pending: Promise<AnimeDetail | null> = fetchAnimeDetail(slug, baseUrl).then(detail => {
     // A forced refresh supersedes any older request still in flight.
     if (detail?.sub_episodes.length && detailPending.get(key) === pending) {
-      if (detailCache.size >= DETAIL_CACHE_LIMIT) detailCache.delete(detailCache.keys().next().value!);
+      if (!detailCache.has(key) && detailCache.size >= DETAIL_CACHE_LIMIT) detailCache.delete(detailCache.keys().next().value!);
       detailCache.set(key, { detail, expires: Date.now() + DETAIL_CACHE_TTL_MS });
     }
-    return detail;
+    // Keep a previously successful playlist through a brief upstream outage.
+    // Forced token refresh must still fail rather than return the old token.
+    return !refresh && !detail?.sub_episodes.length && cached && cached.expires + DETAIL_STALE_TTL_MS > Date.now()
+      ? cached.detail : detail;
   }).finally(() => { if (detailPending.get(key) === pending) detailPending.delete(key); });
   detailPending.set(key, pending);
+  // Refresh old metadata in the background while navigation uses the last
+  // successful playlist. Signed video URLs are still resolved on every play.
+  if (!refresh && stale) return copyDetail(cached.detail);
   const detail = await pending;
   return detail ? copyDetail(detail) : null;
 }
@@ -304,14 +313,18 @@ async function fetchAnimeDetail(slug: string, baseUrl: string): Promise<AnimeDet
     episodeListUrl.searchParams.set("style", "grid");
     episodeListUrl.searchParams.set("vrf", "");
 
-    const listResponse = await anikotoRequest(episodeListUrl.toString(), {
-      referer: canonical,
-      ajax: true,
-      cookie: show.cookie,
-    });
-    const result = providerResult(JSON.parse(listResponse.text));
-    const episodeHtml = typeof result === "string" ? result : String(result?.html || "");
-    const ep$ = cheerio.load(episodeHtml);
+    const readEpisodes = async (cookie: string) => {
+      const response = await anikotoRequest(episodeListUrl.toString(), {
+        referer: canonical, ajax: true, cookie,
+      });
+      const result = providerResult(JSON.parse(response.text));
+      return { $: cheerio.load(typeof result === 'string' ? result : String(result?.html || '')), cookie: response.cookie };
+    };
+    let list = await readEpisodes(show.cookie);
+    // A successful but temporarily empty AJAX response is not a zero-episode
+    // work. Retry only that request once, without repeating the show lookup.
+    if (!list.$('a[data-num][data-ids][data-sub="1"]').length) list = await readEpisodes(list.cookie);
+    const ep$ = list.$;
 
     const episodes: EpisodeItem[] = [];
     const seen = new Set<string>();

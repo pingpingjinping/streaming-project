@@ -1116,7 +1116,8 @@ export default function IframePlayer({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-purple-500/20 bg-slate-900/60 p-3 sm:p-4 backdrop-blur-md">
         <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
           <Link
-            href={`/anime/${animeId}`}
+            href={`/anime/${animeId}${videoSource ? `?video_source=${encodeURIComponent(videoSource)}` : ''}`}
+            prefetch={false}
             onClick={() => {
               setNavigatingTarget("anime");
               syncHistory(false);
@@ -1149,6 +1150,7 @@ export default function IframePlayer({
           {linkPreEp && (
             <Link
               href={episodeUrl(linkPreEp)}
+              prefetch={false}
               onClick={() => {
                 setNavigatingTarget("prev");
                 syncHistory(false);
@@ -1202,6 +1204,7 @@ export default function IframePlayer({
           {linkNextEp && (
             <Link
               href={episodeUrl(linkNextEp)}
+              prefetch={false}
               onClick={() => {
                 setNavigatingTarget("next");
                 // Manual navigation is not proof that the current episode ended.
