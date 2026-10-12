@@ -20,6 +20,7 @@ interface EpisodeListSectionProps {
   dubEpisodes: EpisodeItem[];
   initialIsDub?: boolean;
   initialHistoryMap?: Record<number, EpisodeHistory>;
+  videoSource?: 'rean' | 'anikoto' | 'linkkf' | 'ohli24';
 }
 
 export interface EpisodeHistory {
@@ -36,6 +37,7 @@ export default function EpisodeListSection({
   dubEpisodes,
   initialIsDub = false,
   initialHistoryMap,
+  videoSource,
 }: EpisodeListSectionProps) {
   const [isDub, setIsDub] = useState<boolean>(initialIsDub);
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
@@ -356,7 +358,7 @@ export default function EpisodeListSection({
             <Link
               key={ep.number}
               id={`ep-card-${ep.number}`}
-              href={`/watch/${animeId}/${ep.number}${isDub ? "?dub=1" : ""}`}
+              href={`/watch/${animeId}/${ep.number}${isDub ? "?dub=1" : videoSource ? `?video_source=${videoSource}` : ""}`}
               onClick={() => setLoadingEp(ep.number)}
               className={`group relative flex flex-col items-center justify-center rounded-2xl border p-4 transition duration-200 overflow-hidden text-decoration-none ${
                 isLoadingThis
@@ -428,3 +430,4 @@ export default function EpisodeListSection({
     </div>
   );
 }
+

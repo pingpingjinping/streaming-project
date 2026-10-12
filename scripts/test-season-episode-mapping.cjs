@@ -8,7 +8,7 @@ const root = path.join(__dirname, '..');
 const matchOverrides = {getWorkMatchOverrides:async()=>[], importedLinkIsOverridden:()=>false};
 const plain = value => JSON.parse(JSON.stringify(value));
 function load(file, deps = {}, globals = {}) {
-  deps={'../anikotoWorkOverrides':{getAnikotoWorkOverride:async()=>null},'./anikotoWorkOverrides':{getAnikotoWorkOverride:async()=>null},'../provisionalWorkMatches':{getReservedReanimeIdsForOtherWorks:async()=>new Set(),hasWorkMatchCandidates:async()=>false},'../workMatchOverrides':matchOverrides,'./workMatchOverrides':matchOverrides,'../reanimeMatches':{getConfirmedReanimeIdsForAnissia:async()=>new Map(),getEffectiveReanimeIdsForAnissia:async()=>new Map()},...deps};
+  deps={'@/lib/reviewedProviderPlayback':{reviewedProviderPlayback:async anime=>anime},'../anikotoWorkOverrides':{getAnikotoWorkOverride:async()=>null},'./anikotoWorkOverrides':{getAnikotoWorkOverride:async()=>null},'../provisionalWorkMatches':{getReservedReanimeIdsForOtherWorks:async()=>new Set(),hasWorkMatchCandidates:async()=>false},'../workMatchOverrides':matchOverrides,'./workMatchOverrides':matchOverrides,'../reanimeMatches':{getConfirmedReanimeIdsForAnissia:async()=>new Map(),getEffectiveReanimeIdsForAnissia:async()=>new Map()},...deps};
   const exports = {};
   const code = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {
     compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
@@ -202,7 +202,7 @@ function routes(start) {
     'next/server':{NextResponse:response}, '@/lib/auth':{getSessionUser:async()=>({username:'viewer'})},
     '@/lib/db':{getSubtitleEpisodeStart:async (user,id) => {assert.equal(user,'viewer');assert.equal(id,'ani_42');return start;}},
     '@/lib/providers':{getProviderByAnimeId:()=>anissia()},
-    '@/lib/resolvers/videoResolver':{resolveAnissiaStream:async (...args)=>{streamCalls.push(args);return {server_sources:[]};}},
+    '@/lib/resolvers/videoResolver':{resolveAnissiaStream:async (...args)=>{streamCalls.push(args);return {success:true,embed_url:'https://video.example',server_sources:[]};}},
   };
   return {detail:load('src/app/api/anime/detail/route.ts',deps),
     episode:load('src/app/api/anime/episode_info/route.ts',deps),streamCalls};
@@ -217,7 +217,7 @@ test('authenticated detail and episode APIs use the viewer offset and never publ
   assert.equal(episode.data.link_next_ep_num,2);
   assert.equal(episode.headers['Cache-Control'],'no-store');
   assert.deepEqual(api.streamCalls[0].slice(0,2),[42,1]);
-  assert.deepEqual(api.streamCalls[0].slice(5),['ani_42',13,13]);
+  assert.deepEqual(api.streamCalls[0].slice(5),['ani_42',13,13,true]);
   const last = await api.episode.GET({url:'https://app.example/api?id=ani_42&ep=13'});
   assert.equal(last.data.link_next_ep_num,null);
   const calls = api.streamCalls.length;
@@ -342,11 +342,11 @@ test('caption max 20 expands to a confirmed ReAnime 24; fuzzy or unavailable met
     }
   }
 });
-test('confirmed video expansion respects season-local and cumulative numbering without importing another season', async () => {
+test('confirmed video sources keep their full playlist while subtitle ranges remain separate', async () => {
   const local = await anissia([13,25],13,{video:videoDetail('re_season2',romaji,1,14)}).getAnimeDetail('ani_42',{subtitleEpisodeStart:13});
   assert.equal(local.total_episodes,14);
   const combined = await anissia([13,25],13,{video:videoDetail('re_complete','Seihantai na Kimi to Boku',1,37)}).getAnimeDetail('ani_42',{subtitleEpisodeStart:13});
-  assert.equal(combined.total_episodes,13);
+  assert.equal(combined.total_episodes,37);
 });
 test('detail uses the default playback ReAnime catalog even without a confirmed artwork link', async () => {
   const detail = await anissia([20],20,{confirmed:false,playbackLinked:true,
@@ -372,7 +372,7 @@ test('Final Stage defaults to local 1-4 while its subtitle source remains 21-24'
   assert.equal(mapping.defaultSubtitleEpisodeStart('ani_1346'),21);
   assert.equal(mapping.defaultSubtitleEpisodeStart('ani_42'),null);
 });
-test('ReAnime Final projection uses the complete work streams 21/24 instead of AniList 0 episodes 1/4', async () => {
+test('ReAnime linked combined player retains all 24 videos and limits only subtitle membership', async () => {
   const requests=[];
   const provider = load('src/lib/providers/reanime.ts',{
     '@/lib/db':{DEFAULT_REANIME_URL:'https://rean.example',getReanimeBaseUrl:async()=> 'https://rean.example'},
@@ -384,14 +384,17 @@ test('ReAnime Final projection uses the complete work streams 21/24 instead of A
     return {ok:true,json:async()=>data};
   }});
   const detail=await provider.getAnimeDetail('re_beatless-final-stage-tmwejf');
-  assert.equal(detail.total_episodes,4);
-  assert.deepEqual(plain(detail.sub_episodes.map(e=>e.number)),range(1,4));
-  for (const [local,source] of [[1,21],[4,24]]) {
+  assert.equal(detail.total_episodes,24);
+  assert.deepEqual(plain(detail.sub_episodes.map(e=>e.number)),range(1,24));
+  for (const [local,source] of [[21,21],[24,24]]) {
     const url=new URL(detail.sub_episodes[local-1].watch_url);
     assert.equal(url.pathname,'/watch/beatless-yd63yf');
     assert.equal(url.searchParams.get('ep'),String(source));
     assert.equal(url.searchParams.get('anilist'),'100245');
   }
+  assert.equal(detail.sub_episodes[0].subtitle_episode,null);
+  assert.equal(detail.sub_episodes[20].subtitle_episode,1);
+  assert.equal(detail.sub_episodes[23].subtitle_episode,4);
   assert.ok(requests.every(url=>!url.includes('final-stage')));
 });
 test('Anikoto reviewed split builds a complete 1-24 playlist and maps 21/24 to Final 1/4', async () => {
@@ -564,3 +567,4 @@ test('ReAnime browser fallback exposes DB connection only after failure, not dur
     if(expected){assert.equal(controls[0].props.animeId,'re_ensemble');assert.equal(controls[0].props.retryPlayback,true);}
   }
 });
+

@@ -586,9 +586,11 @@ export async function getAnimeDetail(animeId: string): Promise<AnimeDetail | nul
   if (projection) {
     const complete = await getAnimeDetail(projection.sourceId);
     if (!complete) return null;
-    const episodes = complete.sub_episodes.filter(e => e.number >= projection.start && e.number <= projection.end)
-      .map(e => ({ ...e, number: e.number - projection.start + 1,
-        title: e.title.replace(/^\d+화/, `${e.number - projection.start + 1}화`) }));
+    // The connection points to the complete source player. Keep every native
+    // video number; the reviewed work range only identifies its subtitles.
+    const episodes = complete.sub_episodes.map(e => ({ ...e,
+      subtitle_episode: e.number >= projection.start && e.number <= projection.end
+        ? e.number - projection.start + 1 : null }));
     const detail = { ...complete, id: normalizedId, title: projection.title, sub_episodes: episodes,
       dub_episodes: [], total_episodes: episodes.length };
     detailCache[normalizedId] = { data: detail, anilistId: detailCache[toReanimeId(projection.sourceId)]?.anilistId || 0, timestamp: now };
@@ -826,3 +828,4 @@ export const reanimeProvider: AnimeProvider = {
   getAnimeDetail,
   getEpisodeStream,
 };
+

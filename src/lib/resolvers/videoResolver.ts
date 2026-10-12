@@ -150,7 +150,8 @@ export async function resolveAnissiaStream(
   requestedSource?: "rean" | "anikoto" | "linkkf" | "ohli24",
   animeId?: string,
   subtitleEpisodeStart?: number | null,
-  seasonEpisodeCount?: number
+  seasonEpisodeCount?: number,
+  nativeEpisodeNumbers = false,
 ): Promise<EpisodeStreamInfo | null> {
   const serverSources: ServerSource[] = [];
 
@@ -213,6 +214,7 @@ export async function resolveAnissiaStream(
   const episodeHint = (detail: AnimeDetail) => reviewedVideoStart(animeId || `ani_${anissiaId}`, detail.id) ?? subtitleEpisodeStart;
   const videoEpisode = (detail: AnimeDetail | null): number | null => {
     if (!detail) return null;
+    if (nativeEpisodeNumbers) return detail.sub_episodes.some(e => e.number === episodeNumber) ? episodeNumber : null;
     const numbers = detail.sub_episodes.map(e => e.number);
     const sourceSeason = parseSeason(detail.title) || parseSeason(detail.original_title || "");
     const start = videoEpisodeStart(numbers, episodeHint(detail), targetSeason, sourceSeason, seasonEpisodeCount);
@@ -230,11 +232,24 @@ export async function resolveAnissiaStream(
       seasonEpisodeCount ? Math.min(latest, seasonEpisodeCount) : latest);
   };
 
-  const playbackCatalog = (detail: AnimeDetail, source: NonNullable<EpisodeStreamInfo["video_source"]>, episodes?: EpisodeItem[]) => ({
+  const playbackCatalog = (detail: AnimeDetail, source: NonNullable<EpisodeStreamInfo["video_source"]>, episodes?: EpisodeItem[],
+    mapping?: {mappingKind:string;sourceStart?:number;targetStart?:number;targetEnd?:number}) => ({
     video_source: source,
-    video_episodes: (episodes || videoEpisodeList(detail.sub_episodes, episodeHint(detail), targetSeason,
+    video_episodes: (nativeEpisodeNumbers ? detail.sub_episodes : episodes || videoEpisodeList(detail.sub_episodes, episodeHint(detail), targetSeason,
       parseSeason(detail.title) || parseSeason(detail.original_title || ""), seasonEpisodeCount))
-      .map(e => ({ ...e, watch_url: `/watch/${animeId || `ani_${anissiaId}`}/${e.number}?video_source=${source}` })),
+      .map(e => {
+        let workNumber = e.number;
+        let subtitleEpisode: number | null | undefined;
+        if (nativeEpisodeNumbers && mapping) {
+          if (mapping.mappingKind !== 'whole') {
+            workNumber = mapping.targetStart !== undefined && mapping.sourceStart !== undefined
+              ? mapping.targetStart + e.number - mapping.sourceStart : -1;
+            subtitleEpisode = workNumber >= (mapping.targetStart ?? Infinity) && workNumber <= (mapping.targetEnd ?? -Infinity) ? workNumber : null;
+          } else subtitleEpisode = workNumber;
+        }
+        return { ...e, ...(subtitleEpisode !== undefined ? {subtitle_episode:subtitleEpisode} : {}),
+          watch_url: `/watch/${animeId || `ani_${anissiaId}`}/${e.number}?video_source=${source}` };
+      }),
   });
 
 
@@ -409,11 +424,11 @@ export async function resolveAnissiaStream(
       }
 
       for (const linked of usableLinks) {
-        if (linked.episodeNumber < 1) continue;
+        if (!nativeEpisodeNumbers && linked.episodeNumber < 1) continue;
         const detail = linkedDetails.get(linked.animeId);
         if (!detail?.sub_episodes?.length) continue;
 
-        const sourceEpisode = linked.mappingKind === "whole" ? videoEpisode(detail) : linked.episodeNumber;
+        const sourceEpisode = nativeEpisodeNumbers ? episodeNumber : linked.mappingKind === "whole" ? videoEpisode(detail) : linked.episodeNumber;
         const epItem = detail.sub_episodes.find(episode => episode.number === sourceEpisode);
         if (!epItem?.watch_url) continue;
 
@@ -421,7 +436,7 @@ export async function resolveAnissiaStream(
         if (stream && (stream.embed_url || stream.player_url || stream.m3u8_url)) {
           return {
             ...stream,
-            ...playbackCatalog(detail, "anikoto", linkedEpisodes.size ? [...linkedEpisodes.values()].sort((a,b) => a.number-b.number) : undefined),
+            ...playbackCatalog(detail, "anikoto", linkedEpisodes.size ? [...linkedEpisodes.values()].sort((a,b) => a.number-b.number) : undefined, linked),
             server_sources: stream.server_sources?.length
               ? stream.server_sources
               : [{ label: "Anikoto · DB 연결", player_url: epItem.watch_url, id: "anikoto" }],
@@ -591,3 +606,4 @@ export async function resolveAnissiaStream(
     unsupported_reason: unsupportedReason,
   };
 }
+

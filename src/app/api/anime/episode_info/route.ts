@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
   const epNum = parseInt(searchParams.get("ep") || "1", 10) || 1;
   const isDub = searchParams.get("is_dub") === "1" || searchParams.get("is_dub") === "true";
   const videoSource = searchParams.get("video_source");
-  const requestedSource = ["rean", "anikoto", "linkkf", "ohli24"].includes(videoSource || "")
+  let requestedSource = ["rean", "anikoto", "linkkf", "ohli24"].includes(videoSource || "")
     ? videoSource as "rean" | "anikoto" | "linkkf" | "ohli24" : undefined;
 
   if (!animeId) {
@@ -27,7 +27,13 @@ export async function GET(request: NextRequest) {
 
   const provider = getProviderByAnimeId(animeId);
   const subtitleEpisodeStart = await getSubtitleEpisodeStart(user.username, animeId);
-  const anime = await provider.getAnimeDetail(animeId, { subtitleEpisodeStart });
+  let anime = await provider.getAnimeDetail(animeId, { subtitleEpisodeStart });
+  if (anime && ['reanime','anissia'].includes(provider.name) && !isDub &&
+      (anime.video_available === false || requestedSource === 'anikoto')) {
+    const { reviewedProviderPlayback } = await import('@/lib/reviewedProviderPlayback');
+    anime = await reviewedProviderPlayback(anime, requestedSource);
+    requestedSource ||= anime.playback_source || (provider.name === 'reanime' && anime.video_available === false ? 'anikoto' : undefined);
+  }
   if (!anime) {
     return NextResponse.json({ success: false, message: "Anime not found" }, { status: 404 });
   }
@@ -39,20 +45,33 @@ export async function GET(request: NextRequest) {
   const matched = epList.find((e) => e.number === epNum);
   const watchUrl = matched?.watch_url || "";
 
-  const canResolveExtra = provider.name === "anissia" && !isDub && (!subtitleEpisodeStart || subtitleEpisodeStart === 1 || requestedSource) && epNum > 0 && epNum <= 10000;
+  const providerSource = provider.name === 'reanime' ? 'rean' : provider.name;
+  let alternateSource = !!requestedSource && requestedSource !== providerSource;
+  const canResolveExtra = (provider.name === "anissia" || alternateSource) && !isDub && (!subtitleEpisodeStart || subtitleEpisodeStart === 1 || requestedSource) && epNum > 0 && epNum <= 10000;
   if (!watchUrl && !canResolveExtra) {
     return NextResponse.json({ success: false, message: "Watch URL not found" }, { status: 404 });
   }
 
-  const streamInfo = provider.name === "anissia"
-    ? await resolveAnissiaStream(Number(animeId.slice(4)), epNum, anime.title, anime.original_title, requestedSource, animeId, subtitleEpisodeStart,
-        subtitleEpisodeStart && subtitleEpisodeStart > 1 ? anime.total_episodes : undefined)
+  let streamInfo = provider.name === "anissia" || alternateSource
+    ? await resolveAnissiaStream(provider.name === 'anissia' ? Number(animeId.slice(4)) : null, epNum, anime.title, anime.original_title, requestedSource, animeId, subtitleEpisodeStart,
+        subtitleEpisodeStart && subtitleEpisodeStart > 1 ? anime.total_episodes : undefined, true)
     : await provider.getEpisodeStream(watchUrl);
-  if (provider.name === "anissia" && !isDub && streamInfo?.video_episodes?.length) {
+  if (provider.name === 'reanime' && !isDub && !videoSource &&
+      (!streamInfo || (!streamInfo.embed_url && !streamInfo.m3u8_url))) {
+    const fallback = await resolveAnissiaStream(null, epNum, anime.title, anime.original_title,
+      'anikoto', animeId, subtitleEpisodeStart, undefined, true);
+    if (fallback && (fallback.embed_url || fallback.m3u8_url)) {
+      streamInfo = fallback; requestedSource = 'anikoto'; alternateSource = true;
+    }
+  }
+  if ((provider.name === "anissia" || alternateSource) && !isDub && streamInfo?.video_episodes?.length) {
     epList = attachEpisodeCaptions(streamInfo.video_episodes, anime.sub_episodes);
   }
-  if (!epList.some(e => e.number === epNum) || (provider.name === "anissia" && streamInfo?.success === false)) {
+  if (!epList.some(e => e.number === epNum) || streamInfo?.success === false) {
     return NextResponse.json({ success: false, message: "Video episode not found" }, { status: 404 });
+  }
+  if (!streamInfo || (!streamInfo.m3u8_url && !streamInfo.embed_url && !streamInfo.player_url)) {
+    return NextResponse.json({ success: false, message: 'Video stream unavailable' }, { status: 502 });
   }
   const playerRef = streamInfo?.player_url || "";
   const rawM3u8 = streamInfo?.m3u8_url || "";
@@ -115,3 +134,4 @@ export async function GET(request: NextRequest) {
     }
   );
 }
+
