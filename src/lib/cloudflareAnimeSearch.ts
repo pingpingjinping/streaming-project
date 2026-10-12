@@ -24,7 +24,7 @@ export async function searchCloudflareAnimeFirst(
     const response = await fetch(endpoint, {
       headers: { Accept: "application/json" },
       cache: "no-store",
-      signal: AbortSignal.timeout(2500),
+      signal: AbortSignal.timeout(5000),
     });
     if (!response.ok) throw new Error("Cloudflare search HTTP " + response.status);
     const result = convertCloudflareSearchResponse(await response.json(), page, captionsOnly);
