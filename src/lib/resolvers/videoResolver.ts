@@ -214,12 +214,23 @@ export async function resolveAnissiaStream(
 
   // 과거 작품은 Anissia 원제가 비어 있는 경우가 많다. 같은 한국어 제목의
   // OVA/후속 항목에서 공통 일본어 원제를 복구해 ReAnime 매칭에 사용한다.
-  const requestedWorkTitles = [korTitle, jpTitle].filter(Boolean);
-  const requestedJapaneseTitle = jpTitle;
+  let targetSeason = parseSeason(korTitle) || parseSeason(jpTitle);
+  // Anissia can retain season 1's originalSubject on a season-2 card. Carry
+  // the card's explicit terminal season into metadata lookup, rather than
+  // fetching season 1's AniList ID and romanized aliases from that shared title.
+  const declaredSeasonSuffix = /(?:第\s*\d+\s*期|\d+\s*기|season\s*\d+|\d+(?:st|nd|rd|th)\s*season)\s*$/iu.test(korTitle);
+  const ordinal = targetSeason && targetSeason % 100 >= 11 && targetSeason % 100 <= 13 ? "th"
+    : targetSeason && targetSeason % 10 === 1 ? "st"
+    : targetSeason && targetSeason % 10 === 2 ? "nd"
+    : targetSeason && targetSeason % 10 === 3 ? "rd" : "th";
+  const requestedJapaneseTitle = jpTitle && declaredSeasonSuffix && targetSeason && targetSeason > 1 && !parseSeason(jpTitle)
+    ? `${jpTitle} ${targetSeason}${ordinal} Season` : jpTitle;
+  const requestedWorkTitles = [...new Set([korTitle, jpTitle, requestedJapaneseTitle].filter(Boolean))];
   const relatedJapaneseTitles = jpTitle || anissiaId === null ? [] : await findRelatedJapaneseTitles(anissiaId, korTitle);
   if (!jpTitle && relatedJapaneseTitles.length > 0) jpTitle = relatedJapaneseTitles[0];
 
-  const targetSeason = parseSeason(korTitle) || parseSeason(jpTitle);
+  targetSeason ||= parseSeason(jpTitle);
+
   const episodeHint = (detail: AnimeDetail) => reviewedVideoStart(animeId || `ani_${anissiaId}`, detail.id) ?? subtitleEpisodeStart;
   const videoEpisode = (detail: AnimeDetail | null): number | null => {
     if (!detail) return null;

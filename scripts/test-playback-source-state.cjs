@@ -46,3 +46,27 @@ test('ReAnime to Anikoto changes iframe identity as well as sandbox before the n
  assert.notEqual(before.key,frame('https://video.example/embed/one','anikoto').key,'same URL with new sandbox policy still gets a fresh iframe document');
  assert.equal(after.key,frame('https://video.example/embed/two','anikoto').key);
 });
+test('shared Anissia original title looks up season-2 metadata and selects its separate 13-episode Anikoto source',async()=>{
+ const queries=[],played=[];
+ const first={id:'ak_first',title:en,original_title:en,sub_episodes:Array.from({length:12},(_,i)=>({number:i+1,title:`${i+1}화`,watch_url:`https://video.example/first/${i+1}`}))};
+ const second={id:'ak_second',title:en+' 2nd Season',original_title:en+' 2nd Season',sub_episodes:Array.from({length:13},(_,i)=>({number:i+1,title:`${i+1}화`,watch_url:`https://video.example/second/${i+1}`}))};
+ const api=load('src/lib/resolvers/videoResolver.ts',{
+  '../animeWorkIdentity':{...identity,getAnimeWorkIdentity:async()=>({titles:[ko,jp],format:'TV'})},
+  '../db':{getAnissiaStreamCache:async()=>null,setAnissiaStreamCache:async()=>{}},
+  '../provisionalWorkMatches':{getReservedReanimeIdsForOtherWorks:async()=>new Set(),hasWorkMatchCandidates:async()=>false},
+  '../workMatchOverrides':{getWorkMatchOverrides:async()=>[]},
+  '../reanimeMatches':{getEffectiveReanimeIdsForAnissia:async()=>new Map()},
+  '../anikotoWorkOverrides':{getAnikotoWorkOverride:async()=>null},
+  '../anikotoLinks':{getAnikotoPlaybackCandidates:async()=>[]},
+  '../providers/anissia':{fetchAniListMeta:async q=>{queries.push(q);return{anilistId:209983,nativeTitle:jp+' 2nd Season',romajiTitle:en+' 2nd Season'};}},
+  '../providers/anikoto':{anikotoProvider:{searchAnime:async()=>({items:[first,second]}),getAnimeDetail:async id=>id==='ak_first'?first:second,
+    getEpisodeStream:async url=>{played.push(url);return {success:true,embed_url:url,stream_type:'iframe'};}}},
+ });
+ const result=await api.resolveAnissiaStream(3485,1,ko,jp,'anikoto','ani_3485',null,undefined,true);
+ assert.deepEqual(queries,[jp+' 2nd Season']);
+ assert.deepEqual(played,['https://video.example/second/1']);
+ assert.equal(result.video_source,'anikoto');
+ assert.equal(result.video_episodes.length,13);
+ assert.equal(result.video_episodes[0].number,1);
+ assert.equal(result.video_episodes[12].number,13);
+});
