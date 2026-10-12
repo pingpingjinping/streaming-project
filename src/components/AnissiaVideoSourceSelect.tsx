@@ -39,6 +39,7 @@ export default function AnissiaVideoSourceSelect({
           const active = selectedSource === source.id;
           return (
             <Link
+              prefetch={false}
               key={source.id}
               href={`/watch/${animeId}/${episodeNumber}?${query.toString()}`}
               aria-current={active ? "page" : undefined}

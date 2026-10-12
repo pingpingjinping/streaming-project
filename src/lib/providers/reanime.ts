@@ -571,12 +571,34 @@ export async function searchAnime(keyword: string, page = 1, options: { year?: s
   return { items: [], page, has_next: false, total_pages: 1 };
 }
 
-export async function getAnimeDetail(animeId: string): Promise<AnimeDetail | null> {
+export async function getAnimeDetail(animeId: string, options: { videoSource?: "rean" | "anikoto" | "linkkf" | "ohli24" } = {}): Promise<AnimeDetail | null> {
   const normalizedId = toReanimeId(animeId);
   const now = Date.now();
 
+  // Switching players must not wait for the old provider's REST/Jina/Svelte
+  // attempts. Exact catalog metadata is enough to resolve the selected source.
+  if (options.videoSource && options.videoSource !== 'rean') {
+    const { getLocalReanimeDetail } = await import('../localReanimeDetail');
+    const local = await getLocalReanimeDetail(normalizedId);
+    if (local) return local;
+  }
+
   if (detailCache[normalizedId] && now - detailCache[normalizedId].timestamp < CACHE_TTL) {
     return detailCache[normalizedId].data;
+  }
+
+  // Metadata-only catalog entries with a reviewed alternate need not probe
+  // the unavailable provider first. The explicit ReAnime tab still reads live.
+  if (!options.videoSource) {
+    try {
+      const { getLocalReanimeDetail } = await import('../localReanimeDetail');
+      const local = await getLocalReanimeDetail(normalizedId, true);
+      if (local) {
+        const { getAnikotoPlaybackCandidates } = await import('../anikotoLinks');
+        const candidates = await getAnikotoPlaybackCandidates(normalizedId, 1, true);
+        if (candidates.some(row => ['manual', 'reviewed', 'multi_reviewed'].includes(row.linkStatus))) return local;
+      }
+    } catch { /* Older catalog databases retain the live-provider fallback. */ }
   }
 
   const slug = stripReanimeId(animeId);

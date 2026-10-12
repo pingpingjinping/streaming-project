@@ -174,7 +174,7 @@ export async function resolveAnissiaStream(
   let cachedLinkkfId: string | null = null;
 
   try {
-    if (anissiaId !== null) {
+    if (anissiaId !== null && (!requestedSource || requestedSource === 'rean' || requestedSource === 'linkkf')) {
       const cache = await getAnissiaStreamCache(anissiaId);
       if (cache) {
         cachedReanimeId = cache.reanime_id || null;
@@ -186,14 +186,15 @@ export async function resolveAnissiaStream(
   }
 
   const manualAnikoto = anissiaId === null ? null : await getAnikotoWorkOverride(anissiaId);
-  const workOverrides = await getWorkMatchOverrides();
-  const reservedIds = await getReservedReanimeIdsForOtherWorks(anissiaId);
+  const useReanime = (!requestedSource && !manualAnikoto) || requestedSource === 'rean';
+  const workOverrides = useReanime ? await getWorkMatchOverrides() : [];
+  const reservedIds = useReanime ? await getReservedReanimeIdsForOtherWorks(anissiaId) : new Set<string>();
   const reservedForAnotherWork = (id: string) => reservedIds.has(id.replace(/^re_/, "")) || workOverrides.some(row =>
     row.reanimeId === id.replace(/^re_/, "") && row.anissiaNo !== anissiaId);
   if (cachedReanimeId && reservedForAnotherWork(cachedReanimeId)) cachedReanimeId = null;
-  const selectedReanimeId = anissiaId === null ? null
+  const selectedReanimeId = !useReanime || anissiaId === null ? null
     : (await getEffectiveReanimeIdsForAnissia([anissiaId])).get(anissiaId) || null;
-  const hasCatalogCandidates=await hasWorkMatchCandidates(anissiaId);
+  const hasCatalogCandidates=useReanime && await hasWorkMatchCandidates(anissiaId);
   if (selectedReanimeId) cachedReanimeId = selectedReanimeId;
   else if(hasCatalogCandidates)cachedReanimeId=null;
 
