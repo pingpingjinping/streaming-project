@@ -421,62 +421,91 @@ export async function resolveAnissiaStream(
       // native numbering and subtitle offsets. Reuse it within this request;
       // never share signed playback URLs across requests or viewers.
       const linkedDetails = anikotoDetails || new Map<string, AnimeDetail>();
-      await Promise.allSettled([...new Set(linkedCandidates.map(c => c.animeId))].map(async id => {
-        if (linkedDetails.has(id)) return;
-        const detail = await anikotoProvider.getAnimeDetail(id);
-        if (detail) linkedDetails.set(id, detail);
-      }));
-      // Reviewed ranges/manual links are authoritative. Imported automatic
-      // links need the same work proof as a fresh search before contributing
-      // either a stream or a playlist.
-      const usableLinks = [];
-      for (const linked of linkedCandidates) {
-        if (["manual", "reviewed", "multi_reviewed"].includes(linked.linkStatus)) {
-          usableLinks.push(linked);
-          continue;
+      if (nativeEpisodeNumbers) {
+        // Watch-page navigation uses one player's complete native playlist.
+        // Resolve candidates in their reviewed priority order; a playable
+        // first source must not wait for unrelated alternate-source details.
+        for (const linked of linkedCandidates) {
+          try {
+            const detail = linkedDetails.get(linked.animeId)
+              || await anikotoProvider.getAnimeDetail(linked.animeId);
+            if (!detail?.sub_episodes?.length) continue;
+            linkedDetails.set(linked.animeId, detail);
+            if (!["manual", "reviewed", "multi_reviewed"].includes(linked.linkStatus)) {
+              const proof = await getAutomaticIdentity();
+              if (!matchesVideoPlaybackIdentity(detail, proof.aliases, proof.anilistId,
+                linked.mappingKind === "whole" && !!targetSeason && targetSeason > 1 && Number(subtitleEpisodeStart) > 1)) continue;
+            }
+            const episode = detail.sub_episodes.find(e => e.number === episodeNumber);
+            if (!episode?.watch_url) continue;
+            const stream = await anikotoProvider.getEpisodeStream(episode.watch_url);
+            if (stream && (stream.embed_url || stream.player_url || stream.m3u8_url)) {
+              return { ...stream, ...playbackCatalog(detail, "anikoto", undefined, linked),
+                server_sources: stream.server_sources?.length ? stream.server_sources
+                  : [{ label: "Anikoto · DB 연결", player_url: episode.watch_url, id: "anikoto" }] };
+            }
+          } catch (error) {
+            console.warn("[videoResolver] Linked Anikoto source unavailable:", error);
+          }
         }
-        const detail = linkedDetails.get(linked.animeId);
-        if (!detail) continue;
-        const proof = await getAutomaticIdentity();
-        if (matchesVideoPlaybackIdentity(detail, proof.aliases, proof.anilistId,
-          linked.mappingKind === "whole" && !!targetSeason && targetSeason > 1 && Number(subtitleEpisodeStart) > 1)) {
-          usableLinks.push(linked);
+      } else {
+        await Promise.allSettled([...new Set(linkedCandidates.map(c => c.animeId))].map(async id => {
+          if (linkedDetails.has(id)) return;
+          const detail = await anikotoProvider.getAnimeDetail(id);
+          if (detail) linkedDetails.set(id, detail);
+        }));
+        // Reviewed ranges/manual links are authoritative. Imported automatic
+        // links need the same work proof as a fresh search before contributing
+        // either a stream or a playlist.
+        const usableLinks = [];
+        for (const linked of linkedCandidates) {
+          if (["manual", "reviewed", "multi_reviewed"].includes(linked.linkStatus)) {
+            usableLinks.push(linked);
+            continue;
+          }
+          const detail = linkedDetails.get(linked.animeId);
+          if (!detail) continue;
+          const proof = await getAutomaticIdentity();
+          if (matchesVideoPlaybackIdentity(detail, proof.aliases, proof.anilistId,
+            linked.mappingKind === "whole" && !!targetSeason && targetSeason > 1 && Number(subtitleEpisodeStart) > 1)) {
+            usableLinks.push(linked);
+          }
         }
-      }
-      const linkedEpisodes = new Map<number, EpisodeItem>();
-      for (const linked of usableLinks) {
-        const detail = linkedDetails.get(linked.animeId);
-        if (!detail) continue;
-        const episodes = linked.mappingKind === "whole"
-          ? videoEpisodeList(detail.sub_episodes, episodeHint(detail), targetSeason,
-              parseSeason(detail.title) || parseSeason(detail.original_title || ""), seasonEpisodeCount)
-          : detail.sub_episodes.flatMap(e => {
-              if (linked.sourceStart === undefined || linked.targetStart === undefined || linked.targetEnd === undefined) return [];
-              const number = linked.targetStart + e.number - linked.sourceStart;
-              return number >= linked.targetStart && number <= linked.targetEnd
-                ? [{ ...e, number, title: e.title?.replace(/^\d+화/, `${number}화`) || `${number}화` }] : [];
-            });
-        for (const e of episodes) if (!linkedEpisodes.has(e.number)) linkedEpisodes.set(e.number, e);
-      }
+        const linkedEpisodes = new Map<number, EpisodeItem>();
+        for (const linked of usableLinks) {
+          const detail = linkedDetails.get(linked.animeId);
+          if (!detail) continue;
+          const episodes = linked.mappingKind === "whole"
+            ? videoEpisodeList(detail.sub_episodes, episodeHint(detail), targetSeason,
+                parseSeason(detail.title) || parseSeason(detail.original_title || ""), seasonEpisodeCount)
+            : detail.sub_episodes.flatMap(e => {
+                if (linked.sourceStart === undefined || linked.targetStart === undefined || linked.targetEnd === undefined) return [];
+                const number = linked.targetStart + e.number - linked.sourceStart;
+                return number >= linked.targetStart && number <= linked.targetEnd
+                  ? [{ ...e, number, title: e.title?.replace(/^\d+화/, `${number}화`) || `${number}화` }] : [];
+              });
+          for (const e of episodes) if (!linkedEpisodes.has(e.number)) linkedEpisodes.set(e.number, e);
+        }
 
-      for (const linked of usableLinks) {
-        if (!nativeEpisodeNumbers && linked.episodeNumber < 1) continue;
-        const detail = linkedDetails.get(linked.animeId);
-        if (!detail?.sub_episodes?.length) continue;
+        for (const linked of usableLinks) {
+          if (!nativeEpisodeNumbers && linked.episodeNumber < 1) continue;
+          const detail = linkedDetails.get(linked.animeId);
+          if (!detail?.sub_episodes?.length) continue;
 
-        const sourceEpisode = nativeEpisodeNumbers ? episodeNumber : linked.mappingKind === "whole" ? videoEpisode(detail) : linked.episodeNumber;
-        const epItem = detail.sub_episodes.find(episode => episode.number === sourceEpisode);
-        if (!epItem?.watch_url) continue;
+          const sourceEpisode = nativeEpisodeNumbers ? episodeNumber : linked.mappingKind === "whole" ? videoEpisode(detail) : linked.episodeNumber;
+          const epItem = detail.sub_episodes.find(episode => episode.number === sourceEpisode);
+          if (!epItem?.watch_url) continue;
 
-        const stream = await anikotoProvider.getEpisodeStream(epItem.watch_url);
-        if (stream && (stream.embed_url || stream.player_url || stream.m3u8_url)) {
-          return {
-            ...stream,
-            ...playbackCatalog(detail, "anikoto", linkedEpisodes.size ? [...linkedEpisodes.values()].sort((a,b) => a.number-b.number) : undefined, linked),
-            server_sources: stream.server_sources?.length
-              ? stream.server_sources
-              : [{ label: "Anikoto · DB 연결", player_url: epItem.watch_url, id: "anikoto" }],
-          };
+          const stream = await anikotoProvider.getEpisodeStream(epItem.watch_url);
+          if (stream && (stream.embed_url || stream.player_url || stream.m3u8_url)) {
+            return {
+              ...stream,
+              ...playbackCatalog(detail, "anikoto", linkedEpisodes.size ? [...linkedEpisodes.values()].sort((a,b) => a.number-b.number) : undefined, linked),
+              server_sources: stream.server_sources?.length
+                ? stream.server_sources
+                : [{ label: "Anikoto · DB 연결", player_url: epItem.watch_url, id: "anikoto" }],
+            };
+          }
         }
       }
 
