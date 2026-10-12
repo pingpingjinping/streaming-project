@@ -149,3 +149,19 @@ test('next-episode API automatically falls back after a supposedly available ReA
   assert.equal(result.data.success,true);assert.equal(result.data.link_next_ep_num,31);
   assert.equal(result.data.video_source,'anikoto');assert.equal(alternate,1);
 });
+
+test('metadata-only ReAnime without an available alternate exposes no fictitious play buttons',async()=>{
+  const {helper}=fixture(undefined,null);
+  const page=load('src/app/anime/[id]/page.tsx',{
+    '@/lib/auth':{requireAuth:async()=>({username:'viewer'}),getCurrentUserId:async()=>1},
+    '@/lib/db':{getSubtitleEpisodeStart:async()=>5,getAnimeHistoryMap:async()=>({})},
+    '@/lib/providers':{getProviderByAnimeId:()=>({getAnimeDetail:async()=>raw})},
+    '@/lib/reviewedProviderPlayback':helper,'next/navigation':{notFound:()=>{throw Error('Unexpected 404');}},
+  }).default;
+  const tree=await page({params:Promise.resolve({id}),searchParams:Promise.resolve({})});
+  function nodes(v){return !v||typeof v!=='object'?[]:[v,...Object.values(v).flatMap(nodes)];}
+  const list=nodes(tree).find(n=>n.type==='EpisodeListSection');
+  assert.equal(list.props.subEpisodes.length,0);
+  assert.ok(!nodes(tree).some(n=>n.type==='Link'&&n.props.href.startsWith('/watch/')));
+  assert.ok(nodes(tree).some(n=>n.type==='WorkMatchSetting'&&n.props.animeId===id));
+});
