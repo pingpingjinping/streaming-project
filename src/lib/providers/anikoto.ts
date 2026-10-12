@@ -18,6 +18,11 @@ export const ANIKOTO_BASE_URL = DEFAULT_ANIKOTO_URL;
 
 const PAGE_TIMEOUT_MS = 16_000;
 const PAGE_CACHE_TTL_MS = 60_000;
+const DETAIL_CACHE_TTL_MS = 30_000;
+const DETAIL_CACHE_LIMIT = 128;
+const detailCache = new Map<string, { detail: AnimeDetail; expires: number }>();
+const detailPending = new Map<string, Promise<AnimeDetail | null>>();
+const episodeRefreshPending = new Map<string, Promise<string | null>>();
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36";
 
@@ -244,11 +249,43 @@ function episodeWatchUrl(canonical: string, slug: string, token: string): string
   return url.toString();
 }
 
-export async function getAnimeDetail(animeId: string): Promise<AnimeDetail | null> {
+function copyDetail(detail: AnimeDetail): AnimeDetail {
+  return { ...detail, genres: [...detail.genres],
+    sub_episodes: detail.sub_episodes.map(e => ({ ...e })),
+    dub_episodes: detail.dub_episodes.map(e => ({ ...e })) };
+}
+
+async function readAnimeDetail(animeId: string, refresh = false): Promise<AnimeDetail | null> {
   const slug = stripAnikotoId(animeId);
   if (!slug) return null;
-
   const baseUrl = await getBaseUrl();
+  const key = `${baseUrl}|${slug}`;
+  const cached = detailCache.get(key);
+  if (!refresh && cached && cached.expires > Date.now()) return copyDetail(cached.detail);
+  detailCache.delete(key);
+  const existing = !refresh && detailPending.get(key);
+  if (existing) {
+    const detail = await existing;
+    return detail ? copyDetail(detail) : null;
+  }
+  const pending: Promise<AnimeDetail | null> = fetchAnimeDetail(slug, baseUrl).then(detail => {
+    // A forced refresh supersedes any older request still in flight.
+    if (detail?.sub_episodes.length && detailPending.get(key) === pending) {
+      if (detailCache.size >= DETAIL_CACHE_LIMIT) detailCache.delete(detailCache.keys().next().value!);
+      detailCache.set(key, { detail, expires: Date.now() + DETAIL_CACHE_TTL_MS });
+    }
+    return detail;
+  }).finally(() => { if (detailPending.get(key) === pending) detailPending.delete(key); });
+  detailPending.set(key, pending);
+  const detail = await pending;
+  return detail ? copyDetail(detail) : null;
+}
+
+export async function getAnimeDetail(animeId: string): Promise<AnimeDetail | null> {
+  return readAnimeDetail(animeId);
+}
+
+async function fetchAnimeDetail(slug: string, baseUrl: string): Promise<AnimeDetail | null> {
   const requestedUrl = `${baseUrl}/watch/${encodeURIComponent(slug)}`;
 
   try {
@@ -412,9 +449,49 @@ async function resolveServerEmbed(watchUrl: string): Promise<{ url: string; labe
   return url ? { url, label: server.label } : null;
 }
 
-export async function getEpisodeStream(watchUrl: string): Promise<EpisodeStreamInfo | null> {
+async function resolveCurrentServerEmbed(watchUrl: string): Promise<{ url: string; label: string } | null> {
+  let initialError: unknown;
   try {
     const embed = await resolveServerEmbed(watchUrl);
+    if (embed) return embed;
+  } catch (error) {
+    initialError = error;
+  }
+  const unavailable = (): null => { if (initialError) throw initialError; return null; };
+  // Only playlist metadata is cached. If its episode token expired, reload
+  // that exact show/episode once; never cache or reuse the signed embed URL.
+  const requested = new URL(cleanEpisodeUrl(watchUrl).episodeUrl);
+  const match = requested.pathname.match(/^\/watch\/([^/]+)\/ep-[^/]+\/?$/i);
+  if (!match) return unavailable();
+  const slug = decodeURIComponent(match[1]);
+  const baseUrl = await getBaseUrl();
+  const refreshKey = `${baseUrl}|${watchUrl}`;
+  let refresh = episodeRefreshPending.get(refreshKey);
+  if (!refresh) {
+    // The source may redirect an old slug to a newer canonical watch URL.
+    const cached = detailCache.get(`${baseUrl}|${slug}`) || [...detailCache.entries()]
+      .find(([key, value]) => key.startsWith(`${baseUrl}|`) &&
+        value.detail.sub_episodes.some(e => cleanEpisodeUrl(e.watch_url).episodeUrl === requested.toString()))?.[1];
+    if (!cached) return unavailable();
+    const currentEpisode = cached.detail.sub_episodes.find(e =>
+      new URL(cleanEpisodeUrl(e.watch_url).episodeUrl).pathname === requested.pathname);
+    if (currentEpisode?.watch_url && currentEpisode.watch_url !== watchUrl) {
+      return resolveServerEmbed(currentEpisode.watch_url);
+    }
+    const pending: Promise<string | null> = readAnimeDetail(cached.detail.id, true).then(fresh =>
+      fresh?.sub_episodes.find(e => new URL(cleanEpisodeUrl(e.watch_url).episodeUrl).pathname === requested.pathname)?.watch_url || null
+    ).finally(() => { if (episodeRefreshPending.get(refreshKey) === pending) episodeRefreshPending.delete(refreshKey); });
+    episodeRefreshPending.set(refreshKey, pending);
+    refresh = pending;
+  }
+  const freshUrl = await refresh;
+  if (!freshUrl || freshUrl === watchUrl) return unavailable();
+  return resolveServerEmbed(freshUrl);
+}
+
+export async function getEpisodeStream(watchUrl: string): Promise<EpisodeStreamInfo | null> {
+  try {
+    const embed = await resolveCurrentServerEmbed(watchUrl);
     if (!embed) return null;
 
     const serverSources: ServerSource[] = [
@@ -452,3 +529,4 @@ export const anikotoProvider: AnimeProvider = {
   getAnimeDetail,
   getEpisodeStream,
 };
+
