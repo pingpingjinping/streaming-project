@@ -1,4 +1,4 @@
-name: Read-only Hell Mode provider check
+name: Read-only selected season provider checks
 on:
   push:
     branches: ['codex/hellmode-readonly-probe-20261012']
@@ -31,15 +31,17 @@ jobs:
             '@/lib/anikotoCatalog':load('src/lib/anikotoCatalog.ts'),
           });
           (async()=>{
-            for(const id of [
-              'ak_hell-mode-the-hardcore-gamer-dominates-in-another-world-with-garbage-balancing-g6kbs',
-              'ak_hell-mode-yarikomi-zuki-no-gamer-wa-haisettei-no-isekai-de-musou-suru-2nd-season',
-            ]) {
+            for(const id of ["ak_one-piece-wano-kuni-sp-r0xwk","ak_fairy-gone-season-1-part-2-uyi61","ak_gintama-season-4-xolmv","ak_gintama-season-5-gz9uz","ak_swallowed-star-2nd-season-vsdyj","ak_ginga-eiyuu-densetsu-die-neue-these-4th-season-gt8lv"]) {
               const d=await provider.getAnimeDetail(id);
               if(!d){console.log(JSON.stringify({id,status:'FAILED: no public detail/episode response'}));continue;}
               const numbers=d.sub_episodes.map(e=>e.number);
               const path=d.sub_episodes[0]?.watch_url ? new URL(d.sub_episodes[0].watch_url).pathname.split('/ep-')[0] : '';
-              console.log(JSON.stringify({id,status:'OK',title:d.title,original:d.original_title,episodeCount:numbers.length,numbers,canonicalPath:path}));
+              console.log(JSON.stringify({id,status:'OK',title:d.title,original:d.original_title,episodeCount:numbers.length,firstEpisode:numbers[0],lastEpisode:numbers[numbers.length-1],numbers,canonicalPath:path}));
+            }
+            for(const id of ['urusei-yatsura-2022-season-3-djb8eh','pok-mon-concierge-season-1-part-2-ujrvk5']) {
+              const response=await fetch('https://reanime.to/api/anime/'+encodeURIComponent(id),{signal:AbortSignal.timeout(15000)});
+              if(!response.ok){console.log(JSON.stringify({source:'ReAnime',id,status:'FAILED',http:response.status}));continue;}
+              const text=await response.text();try{const raw=JSON.parse(text);console.log(JSON.stringify({source:'ReAnime',id,status:'OK',metadata:raw.data||raw}));}catch{console.log(JSON.stringify({source:'ReAnime',id,status:'FAILED: non-JSON response'}));}
             }
             const response=await fetch('https://api.anissia.net/anime/animeNo/3485',{signal:AbortSignal.timeout(15000)});
             if(response.ok){const j=await response.json(),d=j.data;console.log(JSON.stringify({source:'Anissia',animeNo:d?.animeNo,subject:d?.subject,originalSubject:d?.originalSubject}));}
