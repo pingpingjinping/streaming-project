@@ -105,3 +105,57 @@ test('regular player size controller updates active libass from original text an
   assert.equal(context.currentSubSizeRef.current,22);
   assert.doesNotMatch(source,/if \(val === 28\) return 22/);
 });
+test('external player size choices update active ASS including paused playback without recreating the canvas', () => {
+  const source=fs.readFileSync(path.join(root,'src/components/IframePlayer.tsx'),'utf8');
+  const start=source.indexOf('  useEffect(() => {\n    const sub = subtitles[currentSubIndex];\n    if (!octopusRef.current');
+  const end=source.indexOf('  }, [subScale, subtitles, currentSubIndex]);',start);
+  assert.ok(start>0&&end>start);
+  const calls=[],clock=[];
+  const context={useEffect:fn=>fn(),subtitles:[{is_ass:true,content:ass}],currentSubIndex:0,
+    octopusRef:{current:{setTrack:v=>calls.push(v)}},subScale:0.8,scaleAssFontSizes:scale,
+    subtitleClockRef:{current:null},lastCurrentTimeRef:{current:10},syncOffsetRef:{current:0.5},
+    sponsorSyncRef:{current:{}},playbackPausedRef:{current:true},
+    effectiveSubtitleOffset:v=>v,syncIframeSubtitleClock:(...args)=>{clock.push(args);return{};}};
+  const code=ts.transpileModule(source.slice(start,end)+'  }, [subScale, subtitles, currentSubIndex]);',{
+    compilerOptions:{target:ts.ScriptTarget.ES2022},
+  }).outputText;
+  for(const factor of [0.8,1.25,1]){context.subScale=factor;vm.runInNewContext(code,context);}
+  assert.match(calls[0],/Style: Default,Arial,32,/);
+  assert.match(calls[1],/Style: Default,Arial,50,/);
+  assert.equal(calls[2],ass);
+  assert.equal(clock[0][2],10.5);
+  assert.equal(clock[0][3],true);
+  assert.equal(clock[0][4].reset,true);
+});
+test('late URL subtitle fetch cannot restore ASS after subtitles are switched off', async () => {
+  const source=fs.readFileSync(path.join(root,'src/components/Player.tsx'),'utf8');
+  const start=source.indexOf('  const applySubtitle = useCallback(');
+  const end=source.indexOf('\n  useEffect(() => {\n    applySubtitleRef.current = applySubtitle;',start);
+  let resolveFetch;const calls=[];
+  const art={currentTime:5,subtitle:{},notice:{},video:{}};
+  const context={useCallback:fn=>fn,subtitleLoadGenerationRef:{current:0},currentSubRef:{current:null},
+    pendingSubtitleRef:{current:null},artRef:{current:art},octopusRef:{current:null},containerRef:{current:null},
+    currentAssContentRef:{current:null},currentSubSizeRef:{current:28},currentSyncOffsetRef:{current:0},
+    sponsorSyncRef:{current:{}},appliedEffectiveOffsetRef:{current:0},nativePipTextTrackRef:{current:null},
+    effectiveSubtitleOffset:v=>v,syncCuesToPipTrack(){},isNativePipActive:()=>false,
+    updateNativeTrackElement(){},hideAllNativeVideoTracks(){},toAbsoluteUrl:v=>v,
+    fetch:()=>new Promise(resolve=>{resolveFetch=resolve;}),scaleAssFontSizes:scale,
+    playerSettingsRef:{current:{subtitleSharpness:3}},window:{SubtitlesOctopus:function(opts){calls.push(opts);}},console};
+  const code=ts.transpileModule(source.slice(start,end)+'\nexports.apply=applySubtitle;',{
+    compilerOptions:{target:ts.ScriptTarget.ES2022},
+  }).outputText;
+  context.exports={};vm.runInNewContext(code,context);
+  const pending=context.exports.apply({name:'Remote',is_ass:true,url:'/subtitle.ass'});
+  await context.exports.apply(null);
+  resolveFetch({ok:true,text:async()=>ass});await pending;
+  assert.equal(calls.length,0);
+  assert.equal(context.currentAssContentRef.current,null);
+  assert.equal(art.subtitle.show,false);
+  // A subsequent successful load uses the saved 28px size in its render copy.
+  await context.exports.apply({name:'Local',is_ass:true,content:ass});
+  assert.equal(calls.length,1);
+  assert.match(calls[0].subContent,/Style: Default,Arial,50\.909,/);
+  assert.equal(context.currentAssContentRef.current,ass);
+  assert.equal(calls[0].prescaleFactor,3);
+  assert.equal(calls[0].maxRenderHeight,4320);
+});
