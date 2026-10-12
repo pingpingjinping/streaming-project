@@ -25,12 +25,13 @@ test('Anissia auto-matched Anikoto iframe has the same sandbox policy as direct 
   };
   const {default: Player} = load('src/components/IframePlayer.tsx', {
     react, 'next/link': {}, 'lucide-react': {}, './SubtitleSelectModal': {},
-    './PlayerSettingsModal': {DEFAULT_PLAYER_SETTINGS: {}},
+    './PlayerSettingsModal': {DEFAULT_PLAYER_SETTINGS: {}, getSubtitleOffsetY:()=>0},
     './SponsorSubtitleSyncModal': {default:()=>null},
     '@/lib/sponsorSubtitleSync': {effectiveSubtitleOffset:(v)=>v, formatSyncTime:()=>''},
     './usePlayerFullscreen': {usePlayerFullscreen: () => ({mode: 'inline', isFullscreen: false, toggleFullscreen() {}})},
     './useContainedPlayerFrame': {useContainedPlayerFrame() {}},
     '@/lib/iframePlayback': load('src/lib/iframePlayback.ts'),
+    '@/lib/subtitlePresentation': load('src/lib/subtitlePresentation.ts'),
   });
   function findIframe(node) {
     if (!node || typeof node !== 'object') return;
@@ -342,15 +343,15 @@ test('ASS subtitle sharpness is shown beside fullscreen exit opacity and applies
   assert.match(settings, /subtitleSharpness:\s*1 \| 1\.25 \| 1\.5 \| 2/);
   assert.match(settings, /subtitleSharpness:\s*1,/);
   assert.match(settings, /종료 버튼 투명도[\s\S]*?자막 선명도[\s\S]*?!fullscreenExitOnly/);
-  assert.match(settings, /\(\[1, 1\.25, 1\.5, 2\] as const\)/);
+  assert.match(settings, /\(\[1, 1\.25, 1\.5, 2, 2\.5, 3\] as const\)/);
   assert.match(src, /prescaleFactor:\s*playerSettingsRef\.current\.subtitleSharpness \|\| 1/);
   assert.match(src, /sharpnessChanged[\s\S]*?applySubtitleRef\.current\(activeSub, currentSyncOffsetRef\.current\)/);
   assert.doesNotMatch(src, /name:\s*"subtitleSharpness"/);
   assert.match(iframe, /const sharpness = playerSettings\.subtitleSharpness \|\| 1/);
-  assert.match(iframe, /Math\.round\(w \* sharpness\)/);
+  assert.match(iframe, /subtitleRenderSize\(w, h, sharpness, window\.devicePixelRatio\)/);
   assert.match(
     iframe,
-    /const syncOctopusCanvasSize = \(\) => \{[\s\S]*?const renderW = Math\.max\(1, Math\.round\(w \* sharpness\)\)[\s\S]*?octopusRef\.current\.resize\(renderW, renderH\)/
+    /const syncOctopusCanvasSize = \(\) => \{[\s\S]*?const \{ width: renderW, height: renderH \} = subtitleRenderSize\(w, h, sharpness, window\.devicePixelRatio\)[\s\S]*?octopusRef\.current\.resize\(renderW, renderH\)/
   );
   const syncResizeBlock = iframe.match(
     /const syncOctopusCanvasSize = \(\) => \{([\s\S]*?)\n    \};/
@@ -392,3 +393,4 @@ test('libass keeps the old frame until a forced resize frame is ready', () => {
   assert.match(worker, /self\.getRenderMethod\(\)\(message\.data\.forceRender===true\)/);
   assert.doesNotMatch(src, /hasResizeSnapshot|bufferCanvasCtx\.drawImage\(self\.canvas/);
 });
+
