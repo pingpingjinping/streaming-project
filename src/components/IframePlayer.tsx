@@ -1240,6 +1240,7 @@ export default function IframePlayer({
           {/* Layer 1: External player iframe */}
           {embedUrl && !embedUrl.includes("reanime.to/watch") ? (
             <iframe
+              key={`${embedUrl}:${serverSources.some((source) => source.id === "anikoto") ? "anikoto" : "restricted"}`}
               ref={iframeRef}
               src={embedUrl}
               onLoad={() => {

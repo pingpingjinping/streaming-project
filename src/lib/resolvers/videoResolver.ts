@@ -91,6 +91,15 @@ export function matchesVideoPlaybackIdentity(
       return base !== alias && normalizeIdentityTitle(base) === key;
     });
   });
+  // Some catalogs reuse the first season's undecorated Japanese title on
+  // sequel cards. That alias alone must not make season 1 an exact season-2
+  // match. Only a separately validated combined-source boundary may cross it.
+  const requestedSeasons = new Set(aliases.map(parseSeason).filter((value): value is number => value !== null));
+  const candidateSeasons = new Set(titles.map(parseSeason).filter((value): value is number => value !== null));
+  if (requestedSeasons.size > 1 || candidateSeasons.size > 1) return false;
+  const requestedSeason = [...requestedSeasons][0] || 1;
+  const candidateSeason = [...candidateSeasons][0] || 1;
+  if (candidateSeason !== requestedSeason && !combined) return false;
   if (!exact && !combined) return false;
   // Separate seasons can legitimately use one combined provider ID, but the
   // existing episode mapper must still validate the configured boundary.
@@ -606,4 +615,5 @@ export async function resolveAnissiaStream(
     unsupported_reason: unsupportedReason,
   };
 }
+
 
