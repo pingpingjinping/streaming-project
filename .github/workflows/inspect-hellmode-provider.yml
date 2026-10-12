@@ -1,0 +1,48 @@
+name: Read-only Hell Mode provider check
+on:
+  push:
+    branches: ['codex/hellmode-readonly-probe-20261012']
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Read public episode metadata without requesting video streams
+        run: |
+          node <<'JS'
+          const fs=require('node:fs'),vm=require('node:vm'),ts=require('typescript');
+          function load(file,deps={}) {
+            const exports={};
+            const code=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+            vm.runInNewContext(code,{exports,require:name=>deps[name]||require(name),fetch,URL,AbortSignal,console});
+            return exports;
+          }
+          const provider=load('src/lib/providers/anikoto.ts',{
+            '@/lib/db':{DEFAULT_ANIKOTO_URL:'https://anikoto.cz',getAnikotoBaseUrl:async()=>'https://anikoto.cz'},
+            '@/lib/chromiumFetch':{fetchHtmlWithChromium:async()=>{throw Error('Browser fallback was not used in this check');}},
+            './ids':load('src/lib/providers/ids.ts'),
+            '@/lib/anikotoCatalog':load('src/lib/anikotoCatalog.ts'),
+          });
+          (async()=>{
+            for(const id of [
+              'ak_hell-mode-the-hardcore-gamer-dominates-in-another-world-with-garbage-balancing-g6kbs',
+              'ak_hell-mode-yarikomi-zuki-no-gamer-wa-haisettei-no-isekai-de-musou-suru-2nd-season',
+            ]) {
+              const d=await provider.getAnimeDetail(id);
+              if(!d){console.log(JSON.stringify({id,status:'FAILED: no public detail/episode response'}));continue;}
+              const numbers=d.sub_episodes.map(e=>e.number);
+              const path=d.sub_episodes[0]?.watch_url ? new URL(d.sub_episodes[0].watch_url).pathname.split('/ep-')[0] : '';
+              console.log(JSON.stringify({id,status:'OK',title:d.title,original:d.original_title,episodeCount:numbers.length,numbers,canonicalPath:path}));
+            }
+            const response=await fetch('https://api.anissia.net/anime/animeNo/3485',{signal:AbortSignal.timeout(15000)});
+            if(response.ok){const j=await response.json(),d=j.data;console.log(JSON.stringify({source:'Anissia',animeNo:d?.animeNo,subject:d?.subject,originalSubject:d?.originalSubject}));}
+            else console.log(JSON.stringify({source:'Anissia',status:response.status}));
+          })().catch(e=>{console.error(e.message);process.exitCode=1;});
+          JS
