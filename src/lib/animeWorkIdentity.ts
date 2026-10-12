@@ -30,6 +30,31 @@ function titles(payload: Record<string, unknown>): string[] {
     .map(key => String(payload[key] || "").trim()).filter(Boolean);
 }
 
+/** Resolve one exact local AniList title before depending on a remote search.
+ * The caller supplies the complete, season-qualified title; shared franchise
+ * titles must not contribute first-season aliases to a sequel request. */
+export async function getCatalogWorkIdentityByTitle(title: string): Promise<(AnimeWorkIdentity & { anilistId: number }) | null> {
+  if (!title.trim()) return null;
+  const sql = getDb();
+  if (!sql) return null;
+  const queries = [...new Set([title.trim(), title.normalize('NFKC').replace(/\s+/g, ' ').trim()])];
+  try {
+    const rows = await sql`SELECT source_record_id, payload FROM anime_catalog_entries
+      WHERE source='AniList' AND (
+        payload->>'title_native'=ANY(${queries}::text[]) OR
+        payload->>'title_romaji'=ANY(${queries}::text[]) OR
+        payload->>'title_english'=ANY(${queries}::text[])) LIMIT 3`;
+    const compatible = rows.filter(row => titles(object(row.payload)).some(value => matchesIdentityTitle(value, queries)));
+    if (compatible.length !== 1) return null;
+    const anilistId = Number(compatible[0].source_record_id);
+    if (!Number.isInteger(anilistId) || anilistId <= 0) return null;
+    const payload = object(compatible[0].payload);
+    return { titles: titles(payload), format: String(payload.format || '').toUpperCase() || null, anilistId };
+  } catch {
+    return null;
+  }
+}
+
 /** Read the exact catalog ID. Declared foreign IDs need a full title match
  * before contributing aliases or format; fuzzy search cannot prove a movie. */
 export async function getAnimeWorkIdentity(animeId: string): Promise<AnimeWorkIdentity | null> {
@@ -75,3 +100,4 @@ export function canSelectUnnumberedMovie(
   return work?.format === "MOVIE" && episode === 1 && sourceEpisode === 1
     && (!season || season === 1) && matchesIdentityTitle(title, work.titles);
 }
+

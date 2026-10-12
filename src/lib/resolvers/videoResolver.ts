@@ -11,7 +11,7 @@ import { getAnissiaStreamCache, setAnissiaStreamCache } from "../db";
 import { fetchAniListMeta } from "../providers/anissia";
 import { getAnikotoPlaybackCandidates } from "../anikotoLinks";
 import { getAnikotoWorkOverride } from "../anikotoWorkOverrides";
-import { getAnimeWorkIdentity, matchesIdentityTitle, normalizeIdentityTitle } from "../animeWorkIdentity";
+import { getAnimeWorkIdentity, getCatalogWorkIdentityByTitle, matchesIdentityTitle, normalizeIdentityTitle } from "../animeWorkIdentity";
 
 const HEADERS: Record<string, string> = {
   "User-Agent":
@@ -396,13 +396,15 @@ export async function resolveAnissiaStream(
       const getAutomaticIdentity = () => automaticIdentity ||= (async () => {
         const work = await getAnimeWorkIdentity(animeId || (anissiaId ? `ani_${anissiaId}` : ""));
         const aliases = [...new Set([...(work?.titles || []), ...requestedWorkTitles])];
+        const localIdentity = await getCatalogWorkIdentityByTitle(requestedJapaneseTitle || korTitle);
+        if (localIdentity) aliases.push(...localIdentity.titles);
         const hasCatalogRomanTitle = work?.titles.some(value => /^[a-z0-9]{4,}$/.test(normalizeIdentityTitle(value)));
-        const meta = hasCatalogRomanTitle ? null
+        const meta = localIdentity || hasCatalogRomanTitle ? null
           : await fetchAniListMeta(requestedJapaneseTitle || korTitle).catch(() => null);
         const verifiedMeta = meta && [meta.nativeTitle, meta.romajiTitle]
           .some(value => matchesIdentityTitle(value || "", aliases));
         if (verifiedMeta) aliases.push(...[meta.nativeTitle, meta.romajiTitle].filter(Boolean));
-        return { aliases: [...new Set(aliases)], anilistId: verifiedMeta && meta.anilistId > 0 ? meta.anilistId : null };
+        return { aliases: [...new Set(aliases)], anilistId: localIdentity?.anilistId || (verifiedMeta && meta.anilistId > 0 ? meta.anilistId : null) };
       })();
 
       const linkedDetails = new Map<string, AnimeDetail>();
@@ -611,7 +613,7 @@ export async function resolveAnissiaStream(
   if (latestAvailableEp && latestAvailableEp < episodeNumber) {
     unsupportedReason = `해당 작품은 현재 해외 스트리밍 서버에 ${latestAvailableEp}화까지만 등록되어 있어, ${episodeNumber}화 영상은 등록 대기 중입니다.`;
   } else if (!latestAvailableEp) {
-    unsupportedReason = "해당 작품(웹 숏폼/유튜브 전용 등)은 외부 스트리밍 제공처에 영상이 등록되지 않았거나 지원되지 않는 작품입니다.";
+    unsupportedReason = "선택한 영상 제공처의 작품·회차 연결을 확인하지 못했습니다. 작품 매칭이나 제공처 조회가 일시적으로 실패했을 수 있습니다.";
   }
 
   return {
@@ -626,5 +628,6 @@ export async function resolveAnissiaStream(
     unsupported_reason: unsupportedReason,
   };
 }
+
 
 

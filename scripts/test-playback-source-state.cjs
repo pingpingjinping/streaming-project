@@ -7,7 +7,7 @@ function load(file,deps={}){
  }).outputText;
  vm.runInNewContext(code,{exports,require:name=>deps[name]||{},URL,AbortSignal,console});return exports;
 }
-const identity=load('src/lib/animeWorkIdentity.ts');
+const identity=load('src/lib/animeWorkIdentity.ts',{'@/lib/db':{getDb:()=>null}});
 const resolver=load('src/lib/resolvers/videoResolver.ts',{'../animeWorkIdentity':identity});
 const jp='ヘルモード ～やり込み好きのゲーマーは廃設定の異世界で無双する～';
 const ko='헬 모드 ~파고들기 좋아하는 게이머는 폐급 설정 이세계에서 무쌍한다~ 2nd Season';
@@ -76,3 +76,39 @@ test('shared Anissia original title looks up season-2 metadata and selects its s
  assert.equal(result.video_episodes[0].number,1);
  assert.equal(result.video_episodes[12].number,13);
 });
+
+test('ani_3485 provider switch uses exact local season-2 metadata when remote AniList is unavailable',async()=>{
+ const played=[],localQueries=[];let remoteCalls=0;
+ const native=jp+' 2nd Season',romaji=en+' 2nd Season';
+ const localIdentity=load('src/lib/animeWorkIdentity.ts',{'@/lib/db':{getDb:()=>async(strings,...values)=>{
+   localQueries.push(values);assert.match(strings.join(''),/source='AniList'/);
+   assert.ok(values.every(list=>list.includes(native)&&!list.includes(jp)));
+   return [{source_record_id:'209983',payload:{title_native:native,title_romaji:romaji,title_english:'HELL MODE: The Hardcore Gamer Dominates in Another World with Garbage Balancing Season 2',format:'TV'}}];
+ }}});
+ const first={id:'ak_first',title:en,original_title:jp,sub_episodes:[{number:1,watch_url:'https://video.example/first/1'}]};
+ const second={id:'ak_second',title:romaji,original_title:romaji,sub_episodes:Array.from({length:13},(_,i)=>({number:i+1,watch_url:`https://video.example/second/${i+1}`}))};
+ const api=load('src/lib/resolvers/videoResolver.ts',{
+  '../animeWorkIdentity':{...localIdentity,getAnimeWorkIdentity:async()=>({titles:[ko,jp],format:'TV'})},
+  '../db':{getAnissiaStreamCache:async()=>null,setAnissiaStreamCache:async()=>{}},
+  '../provisionalWorkMatches':{getReservedReanimeIdsForOtherWorks:async()=>new Set(),hasWorkMatchCandidates:async()=>false},
+  '../workMatchOverrides':{getWorkMatchOverrides:async()=>[]},'../reanimeMatches':{getEffectiveReanimeIdsForAnissia:async()=>new Map()},
+  '../anikotoWorkOverrides':{getAnikotoWorkOverride:async()=>null},'../anikotoLinks':{getAnikotoPlaybackCandidates:async()=>[]},
+  '../providers/anissia':{fetchAniListMeta:async()=>{remoteCalls++;return null;}},
+  '../providers/anikoto':{anikotoProvider:{searchAnime:async()=>({items:[first,second]}),getAnimeDetail:async id=>id==='ak_first'?first:second,
+    getEpisodeStream:async url=>{played.push(url);return {success:true,embed_url:url,stream_type:'iframe'};}}},
+ });
+ const result=await api.resolveAnissiaStream(3485,1,ko,jp,'anikoto','ani_3485',null,undefined,true);
+ assert.equal(remoteCalls,0);assert.equal(localQueries.length,1);
+ assert.deepEqual(played,['https://video.example/second/1']);assert.equal(result.video_source,'anikoto');assert.equal(result.video_episodes.length,13);
+});
+
+test('local title lookup rejects conflicting catalog IDs and a different season returned by storage',async()=>{
+ const requested=jp+' 2nd Season';
+ const row={source_record_id:'209983',payload:JSON.stringify({title_native:requested,title_romaji:en+' 2nd Season',format:'TV'})};
+ let rows=[row];
+ const local=load('src/lib/animeWorkIdentity.ts',{'@/lib/db':{getDb:()=>async()=>rows}});
+ assert.equal((await local.getCatalogWorkIdentityByTitle(requested)).anilistId,209983);
+ rows=[row,{...row,source_record_id:'999'}];assert.equal(await local.getCatalogWorkIdentityByTitle(requested),null);
+ rows=[{source_record_id:'185262',payload:{title_native:jp,title_romaji:en}}];assert.equal(await local.getCatalogWorkIdentityByTitle(requested),null);
+});
+

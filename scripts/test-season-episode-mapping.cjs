@@ -111,6 +111,7 @@ function resolver({sourceTitle = 'Seihantai na Kimi to Boku', numbers = range(1,
       setAnissiaStreamCache: async () => {}},
     '../anikotoLinks': {getAnikotoPlaybackCandidates: async (id,ep) => {mappingRequests.push([id,ep]);return linked.map(row => ({linkStatus:'reviewed',...row}));}},
     '../animeWorkIdentity': {getAnimeWorkIdentity: async () => ({titles:[romaji]}),
+      getCatalogWorkIdentityByTitle: async () => null,
       normalizeIdentityTitle: value => value.toLowerCase().replace(/\W/g,''),
       matchesIdentityTitle: (value,aliases) => aliases.includes(value)},
   }, {fetch: () => {throw Error('unexpected network');}});
@@ -568,5 +569,6 @@ test('ReAnime browser fallback exposes DB connection only after failure, not dur
     if(expected){assert.equal(controls[0].props.animeId,'re_ensemble');assert.equal(controls[0].props.retryPlayback,true);}
   }
 });
+
 
 
