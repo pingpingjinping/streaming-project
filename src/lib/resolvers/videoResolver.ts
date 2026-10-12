@@ -9,7 +9,7 @@ import { ohli24Provider } from "../providers/ohli24";
 import { anikotoProvider } from "../providers/anikoto";
 import { getAnissiaStreamCache, setAnissiaStreamCache } from "../db";
 import { fetchAniListMeta } from "../providers/anissia";
-import { getAnikotoPlaybackCandidates } from "../anikotoLinks";
+import { getAnikotoPlaybackCandidates, getAnikotoPlaybackCandidatesByAniList } from "../anikotoLinks";
 import { getAnikotoWorkOverride } from "../anikotoWorkOverrides";
 import { getAnimeWorkIdentity, getCatalogWorkIdentityByTitle, matchesIdentityTitle, normalizeIdentityTitle } from "../animeWorkIdentity";
 
@@ -165,6 +165,7 @@ export async function resolveAnissiaStream(
   subtitleEpisodeStart?: number | null,
   seasonEpisodeCount?: number,
   nativeEpisodeNumbers = false,
+  anikotoDetails?: Map<string, AnimeDetail>,
 ): Promise<EpisodeStreamInfo | null> {
   const serverSources: ServerSource[] = [];
 
@@ -411,8 +412,17 @@ export async function resolveAnissiaStream(
         return { aliases: [...new Set(aliases)], anilistId: localIdentity?.anilistId || (verifiedMeta && meta.anilistId > 0 ? meta.anilistId : null) };
       })();
 
-      const linkedDetails = new Map<string, AnimeDetail>();
+      if (!linkedCandidates.length && !manualAnikoto) {
+        const proof = await getAutomaticIdentity();
+        if (proof.anilistId) linkedCandidates.push(...await getAnikotoPlaybackCandidatesByAniList(proof.anilistId, episodeNumber, true));
+      }
+
+      // The watch page may already have loaded this playlist to preserve
+      // native numbering and subtitle offsets. Reuse it within this request;
+      // never share signed playback URLs across requests or viewers.
+      const linkedDetails = anikotoDetails || new Map<string, AnimeDetail>();
       await Promise.allSettled([...new Set(linkedCandidates.map(c => c.animeId))].map(async id => {
+        if (linkedDetails.has(id)) return;
         const detail = await anikotoProvider.getAnimeDetail(id);
         if (detail) linkedDetails.set(id, detail);
       }));
@@ -489,7 +499,8 @@ export async function resolveAnissiaStream(
 
       const playable = [];
       for (const id of candidates) {
-        const detail = await anikotoProvider.getAnimeDetail(id);
+        const detail = linkedDetails.get(id) || await anikotoProvider.getAnimeDetail(id);
+        if (detail) linkedDetails.set(id, detail);
         // Recheck the detail page: a search label must not disguise a different
         // work. Complete titles preserve sequel, season, OVA and movie suffixes.
         if (!detail || !matchesVideoPlaybackIdentity(detail, aliases, anilistId, false)) continue;
@@ -632,6 +643,7 @@ export async function resolveAnissiaStream(
     unsupported_reason: unsupportedReason,
   };
 }
+
 
 
 

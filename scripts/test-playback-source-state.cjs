@@ -2,6 +2,7 @@ const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const assert=require('node:assert/strict'),{test}=require('node:test'),ts=require('typescript');
 const root=path.join(__dirname,'..');
 function load(file,deps={}){
+ if(deps['../anikotoLinks'])deps={...deps,'../anikotoLinks':{getAnikotoPlaybackCandidatesByAniList:async()=>[],...deps['../anikotoLinks']}};
  const exports={};const code=ts.transpileModule(fs.readFileSync(path.join(root,file),'utf8'),{
   compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX},
  }).outputText;
@@ -17,6 +18,48 @@ test('season parser does not read Knights or second-year curriculum numbers as t
  assert.equal(resolver.parseSeason('ようこそ実力至上主義の教室へ 4th Season 2年生編1学期'),4);
  assert.equal(resolver.parseSeason('Classroom of the Elite 4th Season 2-nensei-hen 1-gakki'),4);
  assert.equal(resolver.parseSeason('작품 Season 2'),2);
+});
+
+test('canonical Anikoto DB identity avoids remote title searches and preserves its native 13-episode playlist',async()=>{
+ const played=[],canonical=[];let searches=0;
+ const second={id:'ak_second',title:en+' 2nd Season',original_title:en+' 2nd Season',sub_episodes:Array.from({length:13},(_,i)=>({number:i+1,watch_url:`https://video.example/second/${i+1}`}))};
+ const api=load('src/lib/resolvers/videoResolver.ts',{
+  '../animeWorkIdentity':{...identity,getAnimeWorkIdentity:async()=>({titles:[ko,jp]}),getCatalogWorkIdentityByTitle:async()=>({titles:[jp+' 2nd Season',en+' 2nd Season'],anilistId:209983})},
+  '../db':{getAnissiaStreamCache:async()=>null,setAnissiaStreamCache:async()=>{}},
+  '../provisionalWorkMatches':{getReservedReanimeIdsForOtherWorks:async()=>new Set(),hasWorkMatchCandidates:async()=>false},
+  '../workMatchOverrides':{getWorkMatchOverrides:async()=>[]},'../reanimeMatches':{getEffectiveReanimeIdsForAnissia:async()=>new Map()},
+  '../anikotoWorkOverrides':{getAnikotoWorkOverride:async()=>null},
+  '../anikotoLinks':{getAnikotoPlaybackCandidates:async()=>[],getAnikotoPlaybackCandidatesByAniList:async(...args)=>{canonical.push(args);return[{animeId:'ak_second',episodeNumber:1,mappingKind:'whole',linkStatus:'automatic'}];}},
+  '../providers/anikoto':{anikotoProvider:{searchAnime:async()=>{searches++;throw Error('unneeded slow search');},getAnimeDetail:async()=>second,getEpisodeStream:async url=>{played.push(url);return{success:true,embed_url:url};}}},
+  '../episodeMapping':load('src/lib/episodeMapping.ts'),
+ });
+ const result=await api.resolveAnissiaStream(3485,1,ko,jp,'anikoto','ani_3485',null,undefined,true);
+ assert.equal(searches,0);assert.deepEqual(canonical,[[209983,1,true]]);assert.deepEqual(played,['https://video.example/second/1']);assert.equal(result.video_episodes.length,13);
+});
+
+test('canonical Anikoto lookup retains reviewed offsets and rejects unknown or irregular ranges',async()=>{
+ let rows=[{anikoto_id:'split',mapping_kind:'range',link_status:'multi_reviewed',anikoto_episode_start:13,anikoto_episode_end:25,target_episode_start:1,target_episode_end:13},
+  {anikoto_id:'held',mapping_kind:'unknown_order',link_status:'multi_reviewed'},
+  {anikoto_id:'irregular',mapping_kind:'range',link_status:'reviewed',anikoto_episode_start:1,anikoto_episode_end:20,target_episode_start:1,target_episode_end:12}];
+ const links=load('src/lib/anikotoLinks.ts',{'./db':{getDb:()=>async(strings,...values)=>{assert.match(strings.join(''),/target_source='AniList'/);assert.deepEqual(values,['209983']);return rows;}}});
+ const result=await links.getAnikotoPlaybackCandidatesByAniList(209983,1,true);
+ assert.equal(result.length,1);assert.equal(result[0].animeId,'ak_split');assert.equal(result[0].episodeNumber,13);assert.equal(result[0].targetEnd,13);
+ rows=[];assert.equal((await links.getAnikotoPlaybackCandidatesByAniList(209983,1)).length,0);
+});
+test('reused automatic playlists still require season identity and cannot play a cached first season',async()=>{
+ let played=0,details=0;
+ const first={id:'ak_second',title:en,original_title:jp,sub_episodes:[{number:1,watch_url:'https://video.example/wrong-season/1'}]};
+ const api=load('src/lib/resolvers/videoResolver.ts',{
+  '../animeWorkIdentity':{...identity,getAnimeWorkIdentity:async()=>({titles:[ko,jp]}),getCatalogWorkIdentityByTitle:async()=>({titles:[jp+' 2nd Season',en+' 2nd Season'],anilistId:209983})},
+  '../db':{getAnissiaStreamCache:async()=>null},
+  '../provisionalWorkMatches':{getReservedReanimeIdsForOtherWorks:async()=>new Set(),hasWorkMatchCandidates:async()=>false},
+  '../workMatchOverrides':{getWorkMatchOverrides:async()=>[]},'../reanimeMatches':{getEffectiveReanimeIdsForAnissia:async()=>new Map()},
+  '../anikotoWorkOverrides':{getAnikotoWorkOverride:async()=>null},
+  '../anikotoLinks':{getAnikotoPlaybackCandidates:async()=>[{animeId:'ak_second',episodeNumber:1,mappingKind:'whole',linkStatus:'automatic'}]},
+  '../providers/anikoto':{anikotoProvider:{searchAnime:async()=>({items:[]}),getAnimeDetail:async()=>{details++;return first;},getEpisodeStream:async()=>{played++;return{success:true,embed_url:'https://video.example/wrong-season'};}}},
+ });
+ const result=await api.resolveAnissiaStream(3485,1,ko,jp,'anikoto','ani_3485',null,undefined,true,new Map([['ak_second',first]]));
+ assert.equal(result.success,false);assert.ok(!result.embed_url);assert.equal(details,0);assert.equal(played,0);
 });
 test('Hell Mode season 2 cannot match season 1 through its shared undecorated Japanese alias',()=>{
  const aliases=[ko,jp,en+' 2nd Season'];
@@ -150,6 +193,14 @@ test('Postgres local lookup handles 第2期, II, Japanese season labels and full
   for(const [id,,base,season] of fixtures)assert.equal((await local.getCatalogWorkIdentityByTitle(base,season))?.anilistId,Number(id));
   await tx`INSERT INTO anime_catalog_entries VALUES ('AniList','999',${tx.json({title_native:'ダンダダン 第２期'})})`;
   assert.equal(await local.getCatalogWorkIdentityByTitle('ダンダダン',2),null);
+  await tx`CREATE TEMP TABLE anime_anikoto_work_targets (anikoto_id text, target_order int, target_source text, target_id text,
+    link_status text, mapping_kind text, anikoto_episode_start int, anikoto_episode_end int, target_episode_start int, target_episode_end int) ON COMMIT DROP`;
+  await tx`INSERT INTO anime_anikoto_work_targets VALUES ('hell-second',1,'AniList','209983','automatic','whole',null,null,null,null),
+    ('held',2,'AniList','209983','multi_reviewed','unknown_order',null,null,null,null)`;
+  const links=load('src/lib/anikotoLinks.ts',{'./db':{getDb:()=>tx}});
+  const direct=await links.getAnikotoPlaybackCandidatesByAniList(209983,1,true);
+  assert.equal(direct.length,1);assert.equal(direct[0].animeId,'ak_hell-second');
  });} finally {await sql.end();}
 });
+
 

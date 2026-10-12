@@ -402,11 +402,24 @@ test('provider iframe fullscreen promotes the caption container when native tran
   assert.equal(doc.fullscreenElement,container);
   assert.deepEqual(requests,[container]);
 });
-test('consumed provider activation exits iframe fullscreen before caption-preserving web fallback', async () => {
+test('denied desktop provider promotion retains native fullscreen and never traps Escape in CSS mode', async () => {
   const child={},events=[],doc={fullscreenElement:child,exitFullscreen:async()=>{events.push('exit');doc.fullscreenElement=null;}};
   const container={contains:el=>el===child,requestFullscreen:async()=>{events.push('request');throw new Error('activation consumed');}};
+  const desktop={userAgent:'Mozilla/5.0 Chrome/150 Whale/5.39',maxTouchPoints:0};
+  assert.equal(await api.preservePlayerFullscreen(container,doc,desktop),null);
+  assert.deepEqual(events,['request']);
+  assert.equal(doc.fullscreenElement,child);
+});
+test('Apple touch provider fullscreen still exits the video-only layer for caption-preserving web mode', async () => {
+  const child={},events=[],doc={fullscreenElement:child,exitFullscreen:async()=>{events.push('exit');doc.fullscreenElement=null;}};
+  const container={contains:el=>el===child};
+  assert.equal(await api.preservePlayerFullscreen(container,doc,iphone),'web');
+  assert.deepEqual(events,['exit']);assert.equal(doc.fullscreenElement,null);
+});
+test('Android provider handoff retains its existing caption-preserving web fallback', async () => {
+  const child={},doc={fullscreenElement:child,exitFullscreen:async()=>{doc.fullscreenElement=null;}};
+  const container={contains:el=>el===child,requestFullscreen:async()=>{throw new Error('activation consumed');}};
   assert.equal(await api.preservePlayerFullscreen(container,doc,android),'web');
-  assert.deepEqual(events,['request','exit']);
   assert.equal(doc.fullscreenElement,null);
 });
 test('fullscreen preservation never exits unrelated elements or overrides a user exit during transfer', async () => {
@@ -445,3 +458,4 @@ test('native provider fullscreen handoff coalesces duplicate events and ignores 
   cleanup();pending('native');await new Promise(resolve=>setImmediate(resolve));
   assert.equal(mode,'web');
 });
+

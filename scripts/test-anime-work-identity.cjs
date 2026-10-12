@@ -6,6 +6,7 @@ const {test} = require('node:test');
 const ts = require('typescript');
 const matchOverrides = {getWorkMatchOverrides:async()=>[],importedLinkIsOverridden:()=>false};
 function load(file, deps) {
+  if(deps?.['../anikotoLinks'])deps={...deps,'../anikotoLinks':{getAnikotoPlaybackCandidatesByAniList:async()=>[],...deps['../anikotoLinks']}};
   deps={'../anikotoWorkOverrides':{getAnikotoWorkOverride:async()=>null},'../provisionalWorkMatches':{getReservedReanimeIdsForOtherWorks:async()=>new Set(),hasWorkMatchCandidates:async()=>false},'../workMatchOverrides':matchOverrides,'./workMatchOverrides':matchOverrides,'../reanimeMatches':{getConfirmedReanimeIdsForAnissia:async()=>new Map(),getEffectiveReanimeIdsForAnissia:async()=>new Map()},...deps};
   const exports = {};
   const code = ts.transpileModule(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), {
@@ -247,3 +248,4 @@ test('Anikoto exact automatic link still plays without a title search',async()=>
   assert.equal((await api.run()).success,true);
   assert.equal(api.searches.length,0);
 });
+

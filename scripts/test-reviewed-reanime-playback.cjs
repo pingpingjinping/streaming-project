@@ -55,6 +55,37 @@ test('explicit ReAnime choice and unrelated works retain their existing playlist
   const other={...raw,id:'re_other',video_available:true};
   assert.equal(await helper.reviewedProviderPlayback(other),other);
 });
+test('watch source switches fetch one Anikoto playlist and retain native episodes and caption ranges',async()=>{
+  for (const workId of [id,'ani_42']) {
+    let details=0;const streams=[],captions=[],options=[];
+    const {links}=fixture();
+    const provider={getAnimeDetail:async()=>{details++;return full;},getEpisodeStream:async url=>{
+      streams.push(url);return {success:true,embed_url:'https://video.example',stream_type:'iframe',server_sources:[{id:'anikoto',player_url:'https://video.example',label:'Anikoto'}]};}};
+    const helper=load('src/lib/reviewedProviderPlayback.ts',{'./anikotoLinks':links,'./providers/anikoto':{anikotoProvider:provider}});
+    const resolver=load('src/lib/resolvers/videoResolver.ts',{
+      '../provisionalWorkMatches':{getReservedReanimeIdsForOtherWorks:async()=>new Set(),hasWorkMatchCandidates:async()=>false},
+      '../workMatchOverrides':{getWorkMatchOverrides:async()=>[]},'../reanimeMatches':{getEffectiveReanimeIdsForAnissia:async()=>new Map()},
+      '../anikotoWorkOverrides':{getAnikotoWorkOverride:async()=>null},'../db':{getAnissiaStreamCache:async()=>null},
+      '../providers/reanime':{},'../providers/linkkf':{},'../providers/ohli24':{},'../providers/anissia':{},
+      '../animeWorkIdentity':{},'../anikotoLinks':links,'../providers/anikoto':{anikotoProvider:provider},
+    });
+    const anime={...raw,id:workId,sub_episodes:range(47).map(number=>({number,title:`${number}화`,watch_url:'/unused',caption_url:`https://caption.example/${number}`,creator_name:'creator'}))};
+    const page=load('src/app/watch/[id]/[ep]/page.tsx',{
+      '@/lib/auth':{requireAuth:async()=>({username:'viewer'})},'@/lib/db':{getSubtitleEpisodeStart:async()=>null},
+      '@/lib/providers':{getProviderByAnimeId:()=>({getAnimeDetail:async(_,o)=>{options.push(o);return anime;},getEpisodeStream:async()=>{throw Error('Wrong provider');}})},
+      '@/lib/reviewedProviderPlayback':helper,'@/lib/resolvers/videoResolver':resolver,
+      '@/lib/subtitles':{resolveKoreanTitle:async title=>title,fetchCreatorSubtitle:async(...args)=>{captions.push(args);return null;}},
+      'next/navigation':{notFound:()=>{throw Error('Unexpected 404');}},
+    }).default;
+    const tree=await page({params:Promise.resolve({id:workId,ep:'51'}),searchParams:Promise.resolve({video_source:'anikoto'})});
+    function nodes(v){return !v||typeof v!=='object'?[]:[v,...Object.values(v).flatMap(nodes)];}
+    const player=nodes(tree).find(n=>n.type==='Player');
+    assert.equal(details,1);assert.deepEqual(streams,['https://anikoto.example/51']);
+    assert.equal(options[0].videoSource,'anikoto');assert.equal(player.props.subEpisodes.length,51);
+    assert.equal(player.props.videoSource,'anikoto');assert.equal(player.props.initialSubUrl,'https://caption.example/47');
+    assert.equal(captions[0][3],47);
+  }
+});
 test('custom reviewed ranges are preserved and missing source episodes are never invented',async()=>{
   const row={anikoto_id:ak.slice(3),link_status:'reviewed',mapping_kind:'range',anikoto_episode_start:8,
     anikoto_episode_end:12,target_episode_start:1,target_episode_end:5};

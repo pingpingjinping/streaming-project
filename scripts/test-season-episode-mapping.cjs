@@ -37,8 +37,8 @@ function anissia(captionNumbers = range(13,25), metaCount = 13, options = {}) {
   return load('src/lib/providers/anissia.ts', {
     '../reanimeMatches': {getConfirmedReanimeIdsForAnissia: async () => options.video && options.confirmed !== false
       ? new Map([[options.animeNo || 42,'linked']]) : new Map(),getEffectiveReanimeIdsForAnissia:async()=>new Map(),
-      getPlaybackReanimeIdForAnissia:async()=> options.video && (options.confirmed !== false || options.playbackLinked) ? 'linked' : null},
-    './reanime': {getReanimeArtwork: async () => null,getAnimeDetail:async()=>options.video},
+      getPlaybackReanimeIdForAnissia:async()=> {options.onPlaybackLink?.();return options.video && (options.confirmed !== false || options.playbackLinked) ? 'linked' : null;}},
+    './reanime': {getReanimeArtwork: async () => null,getAnimeDetail:async()=>{options.onVideoDetail?.();return options.video;}},
     '../resolvers/videoResolver': {matchesVideoPlaybackIdentity:videoIdentity.matchesVideoPlaybackIdentity,parseSeason: text => Number(text?.match(/(?:Season\s*|第)(\d+)/i)?.[1] || text?.match(/(\d+)기/)?.[1]) || null},
   }, {fetch: async url => {
     if (String(url).includes('graphql')) return {ok: true, json: async () => ({data: {Media: {
@@ -50,6 +50,18 @@ function anissia(captionNumbers = range(13,25), metaCount = 13, options = {}) {
     return {ok: true, json: async () => ({data})};
   }}).anissiaProvider;
 }
+test('explicit alternate watch sources skip ReAnime video lookup while default/ReAnime retain it',async()=>{
+  for(const videoSource of [undefined,'rean','anikoto','linkkf','ohli24']) {
+    let links=0,details=0;
+    const provider=anissia(range(13,25),13,{video:{id:'re_linked',title:romaji,video_available:true,sub_episodes:range(1,13).map(number=>({number,title:`${number}화`,watch_url:`https://video.example/${number}`}))},
+      onPlaybackLink:()=>links++,onVideoDetail:()=>details++});
+    const result=await provider.getAnimeDetail('ani_42',{subtitleEpisodeStart:13,videoSource});
+    const useReanime=!videoSource||videoSource==='rean';
+    assert.equal(links,useReanime?1:0);assert.equal(details,useReanime?1:0);
+    assert.equal(result.total_episodes,13);assert.equal(result.sub_episodes[0].caption_url,'https://blog.example/13');
+    assert.equal(result.sub_episodes.at(-1).caption_url,'https://blog.example/25');
+  }
+});
 test('configured Anissia 13-25 produces only local 1-13 and attaches source 13/25 posts', async () => {
   const detail = await anissia().getAnimeDetail('ani_42', {subtitleEpisodeStart: 13});
   assert.equal(detail.total_episodes, 13);
@@ -569,6 +581,7 @@ test('ReAnime browser fallback exposes DB connection only after failure, not dur
     if(expected){assert.equal(controls[0].props.animeId,'re_ensemble');assert.equal(controls[0].props.retryPlayback,true);}
   }
 });
+
 
 
 
