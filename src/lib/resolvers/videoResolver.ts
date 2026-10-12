@@ -27,12 +27,12 @@ const SUBTITLE_DELIMITERS = /[~～〜―—–\-:：].*$/;
  */
 export function parseSeason(text: string): number | null {
   if (!text) return null;
-  const m1 = text.match(/(?:第\s*)?(\d+)\s*(?:기|期)/);
+  const m1 = text.match(/(?:第\s*)?(\d+)\s*(?:기(?![가-힣])|期)/);
   if (m1) return parseInt(m1[1], 10);
-  const m2 = text.match(/season\s*(\d+)/i);
-  if (m2) return parseInt(m2[1], 10);
   const m3 = text.match(/(\d+)(?:st|nd|rd|th)\s*season/i);
   if (m3) return parseInt(m3[1], 10);
+  const m2 = text.match(/season\s*(\d+)/i);
+  if (m2) return parseInt(m2[1], 10);
 
   const part = text.match(/part\s*(\d+)/i);
   if (part) return Number(part[1]);

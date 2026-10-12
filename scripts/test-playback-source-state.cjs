@@ -12,6 +12,12 @@ const resolver=load('src/lib/resolvers/videoResolver.ts',{'../animeWorkIdentity'
 const jp='ヘルモード ～やり込み好きのゲーマーは廃設定の異世界で無双する～';
 const ko='헬 모드 ~파고들기 좋아하는 게이머는 폐급 설정 이세계에서 무쌍한다~ 2nd Season';
 const en='Hell Mode: Yarikomi-zuki no Gamer wa Haisettei no Isekai de Musou Suru';
+test('season parser does not read Knights or second-year curriculum numbers as the season',()=>{
+ assert.equal(resolver.parseSeason('일곱 개의 대죄: 묵시록의 4기사 2기'),2);
+ assert.equal(resolver.parseSeason('ようこそ実力至上主義の教室へ 4th Season 2年生編1学期'),4);
+ assert.equal(resolver.parseSeason('Classroom of the Elite 4th Season 2-nensei-hen 1-gakki'),4);
+ assert.equal(resolver.parseSeason('작품 Season 2'),2);
+});
 test('Hell Mode season 2 cannot match season 1 through its shared undecorated Japanese alias',()=>{
  const aliases=[ko,jp,en+' 2nd Season'];
  assert.equal(resolver.matchesVideoPlaybackIdentity({title:en,original_title:jp},aliases,null,false),false);
