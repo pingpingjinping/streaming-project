@@ -10,7 +10,7 @@ function load(file, deps = {}, globals = {}) {
   const code = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {
     compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX},
   }).outputText;
-  vm.runInNewContext(code, {exports, require: name => deps[name] || require(name), ...globals});
+  vm.runInNewContext(code, {exports, require: name => name === './VideoServerSelect' ? {default:'VideoServerSelect'} : deps[name] || require(name), ...globals});
   return exports;
 }
 const api = load('src/lib/playerFullscreen.ts');

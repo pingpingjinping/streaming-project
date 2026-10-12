@@ -166,6 +166,7 @@ export async function resolveAnissiaStream(
   seasonEpisodeCount?: number,
   nativeEpisodeNumbers = false,
   anikotoDetails?: Map<string, AnimeDetail>,
+  serverKey?: string,
 ): Promise<EpisodeStreamInfo | null> {
   const serverSources: ServerSource[] = [];
 
@@ -375,7 +376,7 @@ export async function resolveAnissiaStream(
             return {
               ...stream,
               ...playbackCatalog(detail, "rean"),
-              server_sources: serverSources,
+              server_sources: stream.server_sources?.length ? stream.server_sources : serverSources,
             };
           }
         }
@@ -439,9 +440,9 @@ export async function resolveAnissiaStream(
             }
             const episode = detail.sub_episodes.find(e => e.number === episodeNumber);
             if (!episode?.watch_url) continue;
-            const stream = await anikotoProvider.getEpisodeStream(episode.watch_url);
+            const stream = await anikotoProvider.getEpisodeStream(episode.watch_url, serverKey ? { serverKey, allowServerFallback: true } : undefined);
             if (stream && (stream.embed_url || stream.player_url || stream.m3u8_url)) {
-              return { ...stream, ...playbackCatalog(detail, "anikoto", undefined, linked),
+              return { ...stream, source_episode_number: episode.number, ...playbackCatalog(detail, "anikoto", undefined, linked),
                 server_sources: stream.server_sources?.length ? stream.server_sources
                   : [{ label: "Anikoto · DB 연결", player_url: episode.watch_url, id: "anikoto" }] };
             }
@@ -497,10 +498,11 @@ export async function resolveAnissiaStream(
           const epItem = detail.sub_episodes.find(episode => episode.number === sourceEpisode);
           if (!epItem?.watch_url) continue;
 
-          const stream = await anikotoProvider.getEpisodeStream(epItem.watch_url);
+          const stream = await anikotoProvider.getEpisodeStream(epItem.watch_url, serverKey ? { serverKey, allowServerFallback: true } : undefined);
           if (stream && (stream.embed_url || stream.player_url || stream.m3u8_url)) {
             return {
               ...stream,
+              source_episode_number: epItem.number,
               ...playbackCatalog(detail, "anikoto", linkedEpisodes.size ? [...linkedEpisodes.values()].sort((a,b) => a.number-b.number) : undefined, linked),
               server_sources: stream.server_sources?.length
                 ? stream.server_sources
@@ -541,10 +543,11 @@ export async function resolveAnissiaStream(
       // Duplicate title matches need a reviewed DB link, not result-order luck.
       if (playable.length === 1) {
         const { epItem, detail } = playable[0];
-        const stream = await anikotoProvider.getEpisodeStream(epItem.watch_url);
+        const stream = await anikotoProvider.getEpisodeStream(epItem.watch_url, serverKey ? { serverKey, allowServerFallback: true } : undefined);
         if (stream && (stream.embed_url || stream.player_url || stream.m3u8_url)) {
           return {
             ...stream,
+            source_episode_number: epItem.number,
             ...playbackCatalog(detail, "anikoto"),
             server_sources: stream.server_sources?.length
               ? stream.server_sources

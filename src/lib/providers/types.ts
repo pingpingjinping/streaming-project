@@ -62,6 +62,7 @@ export interface AnimeDetail {
 }
 
 export interface ServerSource {
+  key?: string;
   label: string;
   player_url: string;
   id?: "rean" | "anikoto" | "linkkf" | "ohli24";
@@ -69,6 +70,9 @@ export interface ServerSource {
 
 export interface EpisodeStreamInfo {
   success: boolean;
+  video_server?: string;
+  source_anime_id?: string;
+  source_episode_number?: number;
   video_source?: "rean" | "anikoto" | "linkkf" | "ohli24";
   video_episodes?: EpisodeItem[];
   m3u8_url: string;
@@ -117,7 +121,7 @@ export interface AnimeProvider {
     subtitleEpisodeStart?: number | null;
     videoSource?: "rean" | "anikoto" | "linkkf" | "ohli24";
   }): Promise<AnimeDetail | null>;
-  getEpisodeStream(watchUrl: string): Promise<EpisodeStreamInfo | null>;
+  getEpisodeStream(watchUrl: string, options?: { serverKey?: string; allowServerFallback?: boolean }): Promise<EpisodeStreamInfo | null>;
 }
 
 

@@ -18,6 +18,8 @@ export async function GET(request: NextRequest) {
   const animeId = searchParams.get("id")?.trim();
   const epNum = parseInt(searchParams.get("ep") || "1", 10) || 1;
   const isDub = searchParams.get("is_dub") === "1" || searchParams.get("is_dub") === "true";
+  const serverKey = searchParams.get('video_server') || undefined;
+  if (serverKey && serverKey.length > 200) return NextResponse.json({ success: false, message: 'Invalid server' }, { status: 400 });
   const videoSource = searchParams.get("video_source");
   let requestedSource = ["rean", "anikoto", "linkkf", "ohli24"].includes(videoSource || "")
     ? videoSource as "rean" | "anikoto" | "linkkf" | "ohli24" : undefined;
@@ -56,12 +58,12 @@ export async function GET(request: NextRequest) {
 
   let streamInfo = provider.name === "anissia" || alternateSource
     ? await resolveAnissiaStream(provider.name === 'anissia' ? Number(animeId.slice(4)) : null, epNum, anime.title, anime.original_title, requestedSource, animeId, subtitleEpisodeStart,
-        subtitleEpisodeStart && subtitleEpisodeStart > 1 ? anime.total_episodes : undefined, true, anikotoDetails)
-    : await provider.getEpisodeStream(watchUrl);
+        subtitleEpisodeStart && subtitleEpisodeStart > 1 ? anime.total_episodes : undefined, true, anikotoDetails, serverKey)
+    : await provider.getEpisodeStream(watchUrl, serverKey ? { serverKey, allowServerFallback: true } : undefined);
   if (provider.name === 'reanime' && !isDub && !videoSource &&
       (!streamInfo || (!streamInfo.embed_url && !streamInfo.m3u8_url))) {
     const fallback = await resolveAnissiaStream(null, epNum, anime.title, anime.original_title,
-      'anikoto', animeId, subtitleEpisodeStart, undefined, true, anikotoDetails);
+      'anikoto', animeId, subtitleEpisodeStart, undefined, true, anikotoDetails, serverKey);
     if (fallback && (fallback.embed_url || fallback.m3u8_url)) {
       streamInfo = fallback; requestedSource = 'anikoto'; alternateSource = true;
     }
@@ -74,6 +76,10 @@ export async function GET(request: NextRequest) {
   }
   if (!streamInfo || (!streamInfo.m3u8_url && !streamInfo.embed_url && !streamInfo.player_url)) {
     return NextResponse.json({ success: false, message: 'Video stream unavailable' }, { status: 502 });
+  }
+  if (serverKey && streamInfo.video_source !== 'anikoto') {
+    const { selectVideoServer } = await import('@/lib/videoServerSelection');
+    streamInfo = selectVideoServer(streamInfo, serverKey)!;
   }
   const playerRef = streamInfo?.player_url || "";
   const rawM3u8 = streamInfo?.m3u8_url || "";
@@ -125,11 +131,15 @@ export async function GET(request: NextRequest) {
       link_next_ep_num: linkNextEpNum,
       is_dub: isDub,
       server_sources: streamInfo?.server_sources || [],
+      video_server: streamInfo?.video_server,
+      source_anime_id: streamInfo?.source_anime_id,
+      source_episode_number: streamInfo?.source_episode_number ?? epNum,
+      embed_url: streamInfo?.embed_url,
       video_source: streamInfo?.video_source || requestedSource,
     },
     {
       headers: {
-        "Cache-Control": (noCache || provider.name === "anissia" || streamInfo.video_source === 'anikoto' || requestedSource === 'anikoto' || provider.name === 'anikoto')
+        "Cache-Control": (noCache || !!serverKey || provider.name === "anissia" || streamInfo.video_source === 'anikoto' || requestedSource === 'anikoto' || provider.name === 'anikoto')
           ? "no-store"
           : "public, s-maxage=1800, stale-while-revalidate=3600",
       },

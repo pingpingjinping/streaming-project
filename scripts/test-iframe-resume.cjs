@@ -38,13 +38,13 @@ test("old 85 percent completed rows are self-healed for resume", () => {
   assert.match(source, /Math\.max\(localTime, cloudTime\)/);
 });
 
-async function restoreProgress(fetchHistory, localTime = 600, cancelled = false) {
+async function restoreProgress(fetchHistory, localTime = 600, cancelled = false, switchedTime = null) {
   const start = source.indexOf("async function checkSavedHistory()");
   const end = source.indexOf("\n    checkSavedHistory();", start);
   assert.ok(start >= 0 && end > start);
   const pendingResumeRef = {current: null}, timers = [], removed = [];
   const context = {
-    animeId: "ani_1", episodeNumber: 1, isCancelled: cancelled, pendingResumeRef,
+    animeId: "ani_1", episodeNumber: 1, isCancelled: cancelled, switchedTime, pendingResumeRef,
     resumeHistoryReadyRef: {current:false}, AbortSignal,
     localStorage: {getItem: () => String(localTime), removeItem: key => removed.push(key)},
     fetch: fetchHistory, console: {warn() {}, error() {}},
@@ -70,6 +70,14 @@ test("network failure, invalid JSON and HTTP errors retain local iframe resume",
     assert.equal(result.pending.seconds, 600);
     assert.deepEqual(result.timers, [0, 400, 1000, 2000, 3500, 5500]);
     assert.deepEqual(result.removed, []);
+  }
+});
+
+test("server switching resumes the current position without waiting for or overriding it with cloud history", async () => {
+  for (const time of [8, 120]) {
+    const result = await restoreProgress(async () => {throw Error('server switching must not refetch cloud history');}, 600, false, time);
+    assert.equal(result.pending.seconds, time);
+    assert.equal(result.historyReady, true);
   }
 });
 
