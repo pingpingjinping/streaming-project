@@ -35,7 +35,8 @@ const context = vm.createContext({
 });
 vm.runInContext(code, context);
 const { safeSubtitlePath, safeUploadSegments, parseWorkId,
-  allocateCanonicalFolder, extractZipAsFolder, uploadAdminSubtitles, browseLocalEntries } = context.exports;
+  allocateCanonicalFolder, extractZipAsFolder, uploadAdminSubtitles, browseLocalEntries,
+  mergeSubtitleFolders } = context.exports;
 
 test("Admin Pi folder and ZIP paths are supported across all three source directories", () => {
   for (const src of ["anissia", "aniall", "naver"]) {
@@ -95,6 +96,70 @@ test("Canonical DB title is kept, and occupied titles receive a collision suffix
     await fsp.mkdir(canonical.full);
     assert.equal(path.basename((await allocateCanonicalFolder(root,"슬라임 2기")).full),"슬라임 2기 (2)");
     assert.equal((await allocateCanonicalFolder(root,"슬라임 2기",canonical.full)).full,canonical.full);
+  } finally {await fsp.rm(root,{recursive:true,force:true});}
+});
+
+test("Same work merges into its linked folder, skips identical bytes, and preserves collisions", async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "anime-merge-test-"));
+  const original = path.join(root, "기존 작품");
+  const incoming = path.join(root, "추가 업로드");
+  try {
+    await fsp.mkdir(original);
+    await fsp.mkdir(incoming);
+    await fsp.writeFile(path.join(original,"01.srt"), "existing episode 1");
+    await fsp.writeFile(path.join(original,"02.srt"), "existing episode 2");
+    await fsp.writeFile(path.join(incoming,"01.srt"), "another subtitle for episode 1");
+    await fsp.writeFile(path.join(incoming,"same.srt"), "existing episode 2");
+    await fsp.writeFile(path.join(incoming,"03.srt"), "new episode 3");
+    await fsp.mkdir(path.join(incoming,"Extras"));
+    await fsp.writeFile(path.join(incoming,"Extras","04.ass"), "new episode 4");
+    const result = await mergeSubtitleFolders(incoming, original);
+    assert.equal(result.added, 3);
+    assert.equal(result.skipped, 1);
+    assert.equal(result.renamed, 1);
+    assert.equal(await fsp.readFile(path.join(original,"01.srt"),"utf8"),"existing episode 1");
+    assert.equal(await fsp.readFile(path.join(original,"01__2.srt"),"utf8"),"another subtitle for episode 1");
+    assert.equal(fs.existsSync(path.join(original,"same.srt")),false);
+    assert.equal(fs.existsSync(path.join(original,"Extras","04.ass")),true);
+    assert.equal(fs.existsSync(path.join(incoming,"01.srt")),true, "original upload survives until DB commit");
+    await result.rollback();
+    assert.equal(fs.existsSync(path.join(original,"01__2.srt")),false);
+    assert.equal(fs.existsSync(path.join(original,"03.srt")),false);
+    assert.equal(fs.existsSync(path.join(original,"Extras")),false);
+    assert.equal(await fsp.readFile(path.join(original,"01.srt"),"utf8"),"existing episode 1");
+    assert.equal(fs.existsSync(path.join(incoming,"03.srt")),true);
+  } finally {await fsp.rm(root,{recursive:true,force:true});}
+});
+
+test("Repeated identical uploads are idempotent, never overwrite or delete existing subtitles", async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "anime-idempotent-"));
+  const old = path.join(root,"old");
+  const fresh = path.join(root,"fresh");
+  try {
+    await fsp.mkdir(old);
+    await fsp.mkdir(fresh);
+    await fsp.writeFile(path.join(old,"01.srt"),"same contents");
+    await fsp.writeFile(path.join(fresh,"another-name.srt"),"same contents");
+    const result = await mergeSubtitleFolders(fresh,old);
+    assert.equal(result.added,0);
+    assert.equal(result.skipped,1);
+    assert.deepEqual((await fsp.readdir(old)),["01.srt"]);
+    await result.rollback();
+    assert.equal(await fsp.readFile(path.join(old,"01.srt"),"utf8"),"same contents");
+  } finally {await fsp.rm(root,{recursive:true,force:true});}
+});
+
+test("Merge refuses symlinks and leaves both folders untouched", async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(),"anime-merge-link-"));
+  const old = path.join(root,"old"), fresh=path.join(root,"fresh");
+  try {
+    await fsp.mkdir(old);
+    await fsp.mkdir(fresh);
+    await fsp.writeFile(path.join(old,"01.srt"),"safe original");
+    await fsp.symlink(path.join(old,"01.srt"),path.join(fresh,"link.srt"));
+    await assert.rejects(() => mergeSubtitleFolders(fresh,old),/심볼릭 링크/);
+    assert.equal(await fsp.readFile(path.join(old,"01.srt"),"utf8"),"safe original");
+    assert.deepEqual((await fsp.readdir(old)),["01.srt"]);
   } finally {await fsp.rm(root,{recursive:true,force:true});}
 });
 
