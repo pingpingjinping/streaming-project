@@ -13,8 +13,8 @@ const subtitle={name:'Pi track',is_ass:false,content:'WEBVTT\n\n00:01:59.000 -->
 let providerUrl,appUrl,embedLoads=0;
 const provider=http.createServer((req,res)=>{
   embedLoads++;const wide=new URL(req.url,providerUrl).searchParams.get('ratio')==='16:9';
-  res.setHeader('Content-Type','text/html');res.end(`<!doctype html><style>html,body,#media{margin:0;width:100%;height:100%;background:black}video{width:100%;height:100%;object-fit:contain}button{position:absolute;top:4px;right:4px}</style>
-  <div id="media"><video autoplay muted playsinline></video><button id="native" onclick="document.querySelector('#media').requestFullscreen()">Provider fullscreen</button></div>
+  res.setHeader('Content-Type','text/html');res.end(`<!doctype html><style>html,body,#media{margin:0;width:100%;height:100%;background:black}video{width:100%;height:100%;object-fit:contain}button{position:absolute;top:4px;right:4px}#parent{left:4px;right:auto}</style>
+  <div id="media"><video autoplay muted playsinline></video><button id="native" onclick="document.querySelector('#media').requestFullscreen()">Provider native fullscreen</button><button id="parent" onclick="parent.postMessage({zenCommand:'toggleFullscreen'},'*')">Provider parent fullscreen</button></div>
   <script>const c=document.createElement('canvas');c.width=320;c.height=${wide?180:240};const ctx=c.getContext('2d');function draw(){ctx.fillStyle='rgb(24,180,90)';ctx.fillRect(0,0,c.width,c.height);}draw();setInterval(draw,50);document.querySelector('video').srcObject=c.captureStream(10);
   addEventListener('message',e=>{if(['getStatus','getTime','seek'].includes(e.data.command))parent.postMessage({currentTime:120,duration:600,paused:false},'*');});</script>`);
 });
@@ -52,13 +52,14 @@ const app=http.createServer((req,res)=>{
     }
     const green=(data,info,x,y)=>{const i=(Math.floor(y)*info.width+Math.floor(x))*info.channels;return data[i]<70&&data[i+1]>130&&data[i+2]>50&&data[i+2]<130;};
     async function checkPicture(page,ratio){
-      await page.waitForFunction(()=>{const box=document.querySelector('iframe')?.getBoundingClientRect();return box&&Math.abs(box.width-1000)<2&&Math.abs(box.height-625)<2;});
+      await page.waitForFunction(()=>{const box=document.querySelector('iframe')?.getBoundingClientRect();return box&&Math.abs(box.width-1000)<2&&Math.abs(box.height-562.5)<2;});
       await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
       const frame=await page.locator('iframe').boundingBox();
-      assert.ok(Math.abs(frame.width-1000)<2&&Math.abs(frame.height-625)<2,'iframe must use all fullscreen space');
+      assert.ok(Math.abs(frame.width-1000)<2&&Math.abs(frame.height-562.5)<2,'PC/Android must retain their original width-fitted 16:9 frame');
       const image=await sharp(await page.screenshot()).removeAlpha().raw().toBuffer({resolveWithObject:true});
       if(ratio==='4:3'){
-        assert.ok(green(image.data,image.info,500,3),'4:3 must reach the top edge without a nested 16:9 border');
+        assert.equal(green(image.data,image.info,500,3),false,'rollback retains the original outer frame');
+        assert.ok(green(image.data,image.info,500,100),'4:3 stays contained inside the restored frame, below the transient subtitle notice');
         assert.equal(green(image.data,image.info,3,300),false,'4:3 keeps natural side bars instead of stretching');
       }
       else {assert.equal(green(image.data,image.info,500,3),false,'16:9 keeps only its natural letterbox');assert.ok(green(image.data,image.info,500,100));}
@@ -73,18 +74,32 @@ const app=http.createServer((req,res)=>{
       await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
       await checkPicture(page,ratio);assert.equal(embedLoads,before,'fullscreen must not reload playback');
       await page.evaluate(()=>document.exitFullscreen());
+      // FlixCloud's bridge requests the caption container through zenCommand.
+      // Native iframe promotion/denial is tested independently in the existing
+      // fullscreen suite; a fullscreen iframe has its own browser top-layer box.
+      await page.frameLocator('iframe').locator('#parent').click();
+      await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
+      await checkPicture(page,ratio);assert.equal(embedLoads,before,'provider fullscreen uses the same restored frame without reload');
+      await page.evaluate(()=>document.exitFullscreen());
     }
     const android=await browser.newContext({viewport:{width:1000,height:625},userAgent:'Mozilla/5.0 (Linux; Android 16) Chrome/150 Mobile Safari/537.36',hasTouch:true});
     const phone=await android.newPage();phone.on('pageerror',error=>errors.push(error.message));
-    await ready(phone);
-    await phone.evaluate(()=>{const original=HTMLElement.prototype.requestFullscreen;let first=true;HTMLElement.prototype.requestFullscreen=function(options){if(this.querySelector('iframe')&&first){first=false;return Promise.reject(Error('activation consumed'));}return original.call(this,options);};});
+    await ready(phone,'?ratio=16%3A9');
+    await phone.evaluate(()=>{const original=HTMLElement.prototype.requestFullscreen;let first=true;window.parentFullscreenOptions=[];HTMLElement.prototype.requestFullscreen=function(options){if(this.querySelector('iframe')){window.parentFullscreenOptions.push(options);if(first){first=false;return Promise.reject(Error('activation consumed'));}}return original.call(this,options);};});
     const before=embedLoads;
     await phone.frameLocator('iframe').locator('#native').click();
     await phone.getByRole('button',{name:'상태바 숨기기',exact:true}).waitFor();
     assert.equal(await phone.evaluate(()=>!!document.fullscreenElement),false);
     await phone.getByRole('button',{name:'상태바 숨기기',exact:true}).click();
     await phone.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
-    await checkPicture(phone,'4:3');assert.equal(embedLoads,before);
+    await checkPicture(phone,'16:9');assert.equal(embedLoads,before);
+    await phone.evaluate(()=>document.exitFullscreen());
+    await phone.getByRole('button',{name:'전체화면',exact:true}).click();
+    await phone.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
+    await checkPicture(phone,'16:9');assert.equal(embedLoads,before,'Android external button retains the original frame');
+    assert.equal(await phone.getByRole('button',{name:'상태바 숨기기',exact:true}).count(),0,'successful default native fullscreen needs no retry button');
+    const options=await phone.evaluate(()=>window.parentFullscreenOptions);
+    assert.ok(options.length>=3&&options.every(option=>option.navigationUI==='hide'),'Android requests hidden navigation by default, including before fallback');
     await phone.evaluate(()=>document.exitFullscreen());
     const apple=await browser.newContext({viewport:{width:390,height:844},userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1',hasTouch:true});
     const iphone=await apple.newPage();iphone.on('pageerror',error=>errors.push(error.message));
@@ -142,6 +157,6 @@ const app=http.createServer((req,res)=>{
     assert.ok(Math.abs(tabletFrame.height-tabletFrame.width*9/16)<2,'iPad retains its existing portrait framing');
     await tablet.getByRole('button',{name:'전체화면 종료',exact:true}).click();
     assert.deepEqual(errors,[]);
-    console.log('PASS: real iframe 4:3/16:9 pixels, Pi caption painting, Android fallback/native retry without reload, iPhone portrait width/landscape rotation without reload, and unchanged iPad framing');
+    console.log('PASS: restored PC/Android 16:9 framing through both fullscreen buttons, Pi captions, Android native retry, preserved iPhone portrait/rotation and iPad framing without reload');
   }finally{await browser?.close();await Promise.all([new Promise(resolve=>provider.close(resolve)),new Promise(resolve=>app.close(resolve))]);}
 })().catch(error=>{console.error(error);process.exitCode=1;});

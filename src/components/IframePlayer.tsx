@@ -132,7 +132,7 @@ export default function IframePlayer({
   // States
   const { mode: fullscreenMode, isFullscreen, toggleFullscreen, retryNativeFullscreen, appleWebFullscreen } = usePlayerFullscreen(containerRef);
   const iphoneWebFullscreen = appleWebFullscreen && /iPhone/i.test(navigator.userAgent);
-  useContainedPlayerFrame(containerRef, mediaFrameRef, isFullscreen, fullscreenMode === "web", !appleWebFullscreen, iphoneWebFullscreen ? 4 / 3 : 16 / 9);
+  useContainedPlayerFrame(containerRef, mediaFrameRef, isFullscreen, fullscreenMode === "web", false, iphoneWebFullscreen ? 4 / 3 : 16 / 9);
   const showNativeRetry = fullscreenMode === "web" && typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
   const fullscreenRef = useRef(isFullscreen);
   fullscreenRef.current = isFullscreen;
