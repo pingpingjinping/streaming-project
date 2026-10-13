@@ -366,6 +366,27 @@ const app=http.createServer((req,res)=>{
       const normal=await iphone.locator('iframe').boundingBox();
       assert.ok(Math.abs(normal.height-normal.width*9/16)<2,'exit restores the normal page frame');
     }
+    // Apple web fullscreen keeps legacy auto sizing, but an explicit ReAnime
+    // override must also reach the shared media/subtitle frame on iPhone.
+    await ready(iphone,'?source=rean&ratio=4%3A3&work=reanime_iphone');
+    const iphoneRatio=()=>iphone.getByRole('button',{name:'화면 비율 변경'});
+    await iphoneRatio().filter({hasText:'비율 자동'}).waitFor();
+    await iphone.getByRole('button',{name:'전체화면',exact:true}).click();
+    await iphone.getByRole('button',{name:'전체화면 종료',exact:true}).waitFor();
+    await iphone.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-292.5)<2);
+    await iphone.getByRole('button',{name:'전체화면 종료',exact:true}).click();
+    await iphoneRatio().click(); // 4:3
+    await iphoneRatio().click(); // 16:9
+    await iphoneRatio().filter({hasText:'비율 16:9'}).waitFor();
+    const beforeIphoneReanime=embedLoads;
+    await iphone.getByRole('button',{name:'전체화면',exact:true}).click();
+    await iphone.getByRole('button',{name:'전체화면 종료',exact:true}).waitFor();
+    await iphone.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-390*9/16)<2);
+    assert.equal(embedLoads,beforeIphoneReanime,'iPhone manual ReAnime aspect does not reload playback');
+    assert.equal(await iphone.getByRole('button',{name:'화면 비율 변경'}).count(),0,
+      'ReAnime aspect control remains outside iPhone fullscreen');
+    await iphone.getByRole('button',{name:'전체화면 종료',exact:true}).click();
+
     const ipad=await browser.newContext({viewport:{width:768,height:1024},userAgent:'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15',hasTouch:true});
     const tablet=await ipad.newPage();tablet.on('pageerror',error=>errors.push(error.message));
     // Chromium's hasTouch emulates only one touch point; desktop-mode iPad
