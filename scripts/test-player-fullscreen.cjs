@@ -488,11 +488,13 @@ test('Apple touch provider fullscreen still exits the video-only layer for capti
   assert.equal(await api.preservePlayerFullscreen(container,doc,iphone),'web');
   assert.deepEqual(events,['exit']);assert.equal(doc.fullscreenElement,null);
 });
-test('Android provider handoff retains its existing caption-preserving web fallback', async () => {
-  const child={},doc={fullscreenElement:child,exitFullscreen:async()=>{doc.fullscreenElement=null;}};
+test('denied Android provider handoff keeps native iframe fullscreen without exiting to web mode', async () => {
+  let exits=0;
+  const child={},doc={fullscreenElement:child,exitFullscreen:async()=>{exits++;doc.fullscreenElement=null;}};
   const container={contains:el=>el===child,requestFullscreen:async()=>{throw new Error('activation consumed');}};
-  assert.equal(await api.preservePlayerFullscreen(container,doc,android),'web');
-  assert.equal(doc.fullscreenElement,null);
+  assert.equal(await api.preservePlayerFullscreen(container,doc,android),null);
+  assert.equal(doc.fullscreenElement,child);
+  assert.equal(exits,0);
 });
 test('fullscreen preservation never exits unrelated elements or overrides a user exit during transfer', async () => {
   const child={},unrelated={},container={contains:el=>el===child};
