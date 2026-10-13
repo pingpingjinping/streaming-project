@@ -98,6 +98,46 @@ test('portrait fits the complete 16:9 frame by width; landscape fits by height',
   assert.equal(api.containedPlayerSize(Infinity, 800), null);
 });
 
+test('Anikoto display aspect is inferred only from reliable dimensions or explicit DAR', () => {
+  const infer=load('src/lib/iframePlayback.ts').aspectFromPlayerMessage;
+  assert.equal(infer({videoWidth:640,videoHeight:480}),4/3);
+  assert.equal(infer({videoWidth:1920,videoHeight:1080}),16/9);
+  assert.equal(infer({displayAspectRatio:'4:3'}),4/3);
+  assert.equal(infer({dar:'16:9',videoWidth:720,videoHeight:480}),16/9);
+  assert.equal(infer({videoWidth:720,videoHeight:480,sampleAspectRatio:'8:9'}),4/3);
+  assert.equal(infer({videoWidth:720,videoHeight:480}),null);
+  assert.equal(infer({width:720,height:480}),null);
+  assert.equal(infer({displayAspectRatio:'3:2',videoWidth:640,videoHeight:480}),null);
+  assert.equal(infer({videoWidth:0,videoHeight:480}),null);
+  assert.equal(infer({videoWidth:720,videoHeight:480,sampleAspectRatio:'1:1'}),null);
+  assert.equal(infer(null),null);
+});
+
+test('Anikoto 4:3 fullscreen consumes height instead of adding black bars; default 16:9 and rotation remain unchanged', () => {
+  const win=Object.assign(new EventTarget(),{visualViewport:new EventTarget()});
+  const container={clientWidth:2944,clientHeight:1840};
+  const frame={style:{width:'',height:''}};let cleanup;
+  const {useContainedPlayerFrame}=load('src/components/useContainedPlayerFrame.ts',{
+    react:{useLayoutEffect(fn){cleanup=fn();}},'@/lib/playerFullscreen':api,
+  },{window:win,getComputedStyle:()=>({paddingLeft:'0',paddingRight:'0',paddingTop:'0',paddingBottom:'0'})});
+  const c={current:container},f={current:frame};
+  useContainedPlayerFrame(c,f,true,false,false,16/9,16/9);
+  assert.ok(Math.abs(parseFloat(frame.style.height)-1656)<1e-6,'original 16:9 preserves its bars');
+  cleanup();
+  useContainedPlayerFrame(c,f,true,false,false,4/3,4/3);
+  assert.ok(Math.abs(parseFloat(frame.style.height)-1840)<1e-6,'4:3 frame reaches both vertical edges');
+  assert.ok(Math.abs(parseFloat(frame.style.width)-1840*4/3)<1e-6);
+  container.clientWidth=390;container.clientHeight=700;
+  win.dispatchEvent(new Event('resize'));
+  assert.equal(frame.style.width,'390px');
+  assert.equal(frame.style.height,'292.5px');
+  cleanup();assert.deepEqual(frame.style,{width:'',height:''});
+  const jsx=fs.readFileSync(path.join(root,'src/components/IframePlayer.tsx'),'utf8');
+  assert.match(jsx,/const frameAspect = isAnikotoEmbed && !appleWebFullscreen \? resolvedAspect : 16 \/ 9/);
+  assert.match(jsx,/iframeRef.*useRef|const iframeRef/);
+  assert.match(jsx,/title="Anikoto 영상 비율 변경/);
+});
+
 test('contained frame follows rotation, browser-bar resize and safe area, then restores inline dimensions', () => {
   const window = Object.assign(new EventTarget(), {visualViewport: new EventTarget()});
   const container = {clientWidth: 390, clientHeight: 700};

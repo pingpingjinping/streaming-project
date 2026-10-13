@@ -14,6 +14,7 @@ export function useContainedPlayerFrame(
   webFullscreen = false,
   fillViewport = false,
   portraitRatio = 16 / 9,
+  landscapeRatio = 16 / 9,
 ) {
   useLayoutEffect(() => {
     const container = containerRef.current, frame = frameRef.current;
@@ -42,7 +43,7 @@ export function useContainedPlayerFrame(
       const height = container.clientHeight - px(padding.paddingTop) - px(padding.paddingBottom);
       // Recalculate on rotation without touching the iframe. Portrait iPhone
       // embeds need enough height for a 4:3 picture to use the available width.
-      const ratio = container.clientHeight > container.clientWidth ? portraitRatio : 16 / 9;
+      const ratio = container.clientHeight > container.clientWidth ? portraitRatio : landscapeRatio;
       const size = fillViewport
         ? (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0 ? { width, height } : null)
         : containedPlayerSize(width, height, ratio);
@@ -67,5 +68,5 @@ export function useContainedPlayerFrame(
       frame.style.height = previousHeight;
       if (webFullscreen) viewportProperties.forEach((property, index) => { container.style[property] = previousViewport[index]; });
     };
-  }, [containerRef, frameRef, fullscreen, webFullscreen, fillViewport, portraitRatio]);
+  }, [containerRef, frameRef, fullscreen, webFullscreen, fillViewport, portraitRatio, landscapeRatio]);
 }

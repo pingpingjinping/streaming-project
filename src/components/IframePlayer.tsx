@@ -28,7 +28,7 @@ import SubtitleSelectModal, { CreatorInfo, SubtitleOption } from "./SubtitleSele
 import type { ServerSource } from "@/lib/providers/types";
 import { usePlayerFullscreen } from "./usePlayerFullscreen";
 import { useContainedPlayerFrame } from "./useContainedPlayerFrame";
-import { iframeSeekMessage, iframePausedState, syncIframeSubtitleClock, updateSubtitleHud, type IframeSubtitleClock } from "@/lib/iframePlayback";
+import { iframeSeekMessage, iframePausedState, syncIframeSubtitleClock, updateSubtitleHud, aspectFromPlayerMessage, type IframeSubtitleClock } from "@/lib/iframePlayback";
 import SponsorSubtitleSyncModal from "./SponsorSubtitleSyncModal";
 import { effectiveSubtitleOffset, formatSyncTime, type SponsorSubtitleSync } from "@/lib/sponsorSubtitleSync";
 import PlayerSettingsModal, {
@@ -129,10 +129,49 @@ export default function IframePlayer({
   const octopusRef = useRef<any>(null);
   const currentBlobUrlRef = useRef<string | null>(null);
 
+  // Anikoto's own fullscreen expands the iframe; the site's fullscreen used
+  // to force its subtitle+iframe frame to 16:9, leaving top/bottom bars on
+  // narrower displays. Only known 4:3 sources may change that frame.
+  const isAnikotoEmbed = videoSource === "anikoto" || activeServerSources.some(source => source.id === "anikoto");
+  const [aspectChoice, setAspectChoice] = useState<"auto" | "4:3" | "16:9">("auto");
+  const [detectedAspect, setDetectedAspect] = useState<number | null>(null);
+  const aspectStorageKey = `anime_player_aspect:${sourceAnimeId || animeId}:${sourceEpisodeNumber ?? episodeNumber}:${activeServerKey || "default"}`;
+  useEffect(() => {
+    if (!isAnikotoEmbed) { setAspectChoice("auto"); setDetectedAspect(null); return; }
+    let saved: string | null = null;
+    try { saved = localStorage.getItem(aspectStorageKey); } catch {}
+    setAspectChoice(saved === "4:3" || saved === "16:9" ? saved : "auto");
+    setDetectedAspect(null);
+  }, [aspectStorageKey, activeEmbedUrl, isAnikotoEmbed]);
+  const cycleAspectChoice = () => {
+    const next = aspectChoice === "auto" ? "4:3" : aspectChoice === "4:3" ? "16:9" : "auto";
+    setAspectChoice(next);
+    try { localStorage.setItem(aspectStorageKey, next); } catch {}
+  };
+  // Do not mix aspect hints into the existing playback/status message handler:
+  // a separate listener keeps clock and subtitle timing behavior unchanged.
+  useEffect(() => {
+    if (!isAnikotoEmbed) return;
+    const handleAspect = (event: MessageEvent) => {
+      if (event.source !== iframeRef.current?.contentWindow) return;
+      const ratio = aspectFromPlayerMessage(event.data);
+      if (ratio !== null) setDetectedAspect(current => current === ratio ? current : ratio);
+    };
+    window.addEventListener("message", handleAspect);
+    return () => window.removeEventListener("message", handleAspect);
+  }, [isAnikotoEmbed, activeEmbedUrl]);
+
+  const aspectLabel = aspectChoice === "auto"
+    ? `자동${detectedAspect === 4 / 3 ? " (4:3)" : ""}`
+    : aspectChoice;
+  const resolvedAspect = aspectChoice === "4:3" ? 4 / 3 : aspectChoice === "16:9" ? 16 / 9 : detectedAspect ?? 16 / 9;
+
   // States
   const { mode: fullscreenMode, isFullscreen, toggleFullscreen, retryNativeFullscreen, appleWebFullscreen } = usePlayerFullscreen(containerRef);
   const iphoneWebFullscreen = appleWebFullscreen && /iPhone/i.test(navigator.userAgent);
-  useContainedPlayerFrame(containerRef, mediaFrameRef, isFullscreen, fullscreenMode === "web", false, iphoneWebFullscreen ? 4 / 3 : 16 / 9);
+  const frameAspect = isAnikotoEmbed && !appleWebFullscreen ? resolvedAspect : 16 / 9;
+  useContainedPlayerFrame(containerRef, mediaFrameRef, isFullscreen, fullscreenMode === "web", false,
+    iphoneWebFullscreen ? 4 / 3 : frameAspect, frameAspect);
   const showNativeRetry = fullscreenMode === "web" && typeof navigator !== "undefined" && !appleWebFullscreen;
   const nativeRetryLabel = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent)
     ? "상태바 숨기기" : "전체화면 재시도";
@@ -1373,6 +1412,17 @@ export default function IframePlayer({
 
         </div>
 
+        {/* Manual fallback when the provider does not expose a reliable aspect.
+            Outside mediaFrameRef, so resizing cannot reload the provider iframe. */}
+        {isAnikotoEmbed && isFullscreen && (
+          <button type="button" onClick={cycleAspectChoice}
+            title="Anikoto 영상 비율 변경: 자동 → 4:3 → 16:9"
+            aria-label="화면 비율 변경"
+            className="absolute left-3 top-3 z-30 flex h-10 items-center rounded-full bg-slate-950/75 px-3 text-xs font-semibold text-white backdrop-blur-md transition hover:bg-slate-900">
+            비율 {aspectLabel}
+          </button>
+        )}
+
         {/* Toast Notification Banner inside player */}
         {noticeMessage && (
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 rounded-xl border border-purple-500/40 bg-slate-900/90 px-4 py-2 text-xs font-bold text-purple-200 backdrop-blur-md animate-fade-in pointer-events-none">
@@ -1573,6 +1623,15 @@ export default function IframePlayer({
               <Type className="h-3.5 w-3.5 text-purple-400" />
               {subSize === "small" ? "작게" : subSize === "normal" ? "보통" : "크게"}
             </button>
+
+            {isAnikotoEmbed && (
+              <button type="button" onClick={cycleAspectChoice}
+                title="Anikoto 영상 비율 변경: 자동 → 4:3 → 16:9"
+                aria-label="화면 비율 변경"
+                className="flex items-center gap-1 rounded-lg border border-white/10 bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-purple-500 hover:text-white cursor-pointer">
+                비율 {aspectLabel}
+              </button>
+            )}
 
             <button
               onClick={toggleFullscreen}

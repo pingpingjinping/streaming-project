@@ -82,6 +82,28 @@ const app=http.createServer((req,res)=>{
       await checkPicture(page,ratio);assert.equal(embedLoads,before,'provider fullscreen uses the same restored frame without reload');
       await page.evaluate(()=>document.exitFullscreen());
     }
+    // Anikoto's own fullscreen uses the whole iframe, but the site's
+    // subtitle-inclusive button originally constrained all media to 16:9.
+    // Selecting real 4:3 must use the full viewport height without changing
+    // the 16:9 behavior tested above, and must never reload the iframe.
+    await ready(page,'?source=anikoto&ratio=4%3A3');
+    const beforeFourThree=embedLoads;
+    await page.getByRole('button',{name:'화면 비율 변경'}).click();
+    await page.getByRole('button',{name:'전체화면',exact:true}).click();
+    await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
+    await page.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-innerHeight)<2);
+    const fourThreeFrame=await page.locator('iframe').boundingBox();
+    assert.ok(Math.abs(fourThreeFrame.height-625)<2,'4:3 Anikoto reaches top and bottom viewport edges');
+    assert.ok(Math.abs(fourThreeFrame.width-625*4/3)<2,'4:3 Anikoto retains its natural aspect');
+    assert.equal(embedLoads,beforeFourThree,'ratio switch preserves external iframe playback');
+    assert.ok(await page.getByText('Pi caption',{exact:true}).isVisible(),'ratio switch preserves Pi subtitles');
+    const fourThreePixels=await sharp(await page.screenshot()).removeAlpha().raw().toBuffer({resolveWithObject:true});
+    assert.ok(green(fourThreePixels.data,fourThreePixels.info,500,3),'top black bar is gone for real 4:3');
+    await page.evaluate(()=>document.exitFullscreen());
+
+    // The fixture uses the same work/episode/server for all PC runs.
+    // Clear the 4:3 selection before testing the legacy 16:9 native retry.
+    await page.evaluate(()=>localStorage.removeItem('anime_player_aspect:ak_fixture:1:sub:HD-1'));
     // PC: when the provider consumes the first activation, keep Pi captions
     // in the web panel and offer the fullscreen retry on a new click.
     await ready(page,'?source=anikoto&ratio=16%3A9');
@@ -105,6 +127,18 @@ const app=http.createServer((req,res)=>{
 
     const android=await browser.newContext({viewport:{width:1000,height:625},userAgent:'Mozilla/5.0 (Linux; Android 16) Chrome/150 Mobile Safari/537.36',hasTouch:true});
     const phone=await android.newPage();phone.on('pageerror',error=>errors.push(error.message));
+    await ready(phone,'?ratio=4%3A3');
+    const beforeAndroidFourThree=embedLoads;
+    await phone.getByRole('button',{name:'화면 비율 변경'}).click();
+    await phone.getByRole('button',{name:'전체화면',exact:true}).click();
+    await phone.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
+    await phone.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-innerHeight)<2);
+    assert.equal(embedLoads,beforeAndroidFourThree);
+    await phone.evaluate(()=>document.exitFullscreen());
+    // The fixture reuses the same anime/episode/server; restore default auto
+    // instead of carrying the manually saved 4:3 choice into the 16:9 test.
+    await phone.evaluate(()=>localStorage.removeItem('anime_player_aspect:ak_fixture:1:sub:HD-1'));
+
     await ready(phone,'?ratio=16%3A9');
     await phone.evaluate(()=>{const original=HTMLElement.prototype.requestFullscreen;let first=true;window.parentFullscreenOptions=[];HTMLElement.prototype.requestFullscreen=function(options){if(this.querySelector('iframe')){window.parentFullscreenOptions.push(options);if(first){first=false;return Promise.reject(Error('activation consumed'));}}return original.call(this,options);};});
     const before=embedLoads;
@@ -191,6 +225,6 @@ const app=http.createServer((req,res)=>{
     assert.ok(Math.abs(tabletFrame.height-tabletFrame.width*9/16)<2,'iPad retains its existing portrait framing');
     await tablet.getByRole('button',{name:'전체화면 종료',exact:true}).click();
     assert.deepEqual(errors,[]);
-    console.log('PASS: PC/Android rejected iframe handoff shows Pi captions and native retry; 16:9 and Apple framing unchanged without reload');
+    console.log('PASS: PC/Android Anikoto 4:3 height fit, native fallback/retry, unchanged 16:9 and Apple framing without reload');
   }finally{await browser?.close();await Promise.all([new Promise(resolve=>provider.close(resolve)),new Promise(resolve=>app.close(resolve))]);}
 })().catch(error=>{console.error(error);process.exitCode=1;});
