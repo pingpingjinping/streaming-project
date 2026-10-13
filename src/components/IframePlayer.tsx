@@ -134,6 +134,13 @@ export default function IframePlayer({
   const iphoneWebFullscreen = appleWebFullscreen && /iPhone/i.test(navigator.userAgent);
   useContainedPlayerFrame(containerRef, mediaFrameRef, isFullscreen, fullscreenMode === "web", false, iphoneWebFullscreen ? 4 / 3 : 16 / 9);
   const showNativeRetry = fullscreenMode === "web" && typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
+  // Only show our subtitle-preserving entry control for the selected Anikoto embed.
+  // A provider's own fullscreen control can expand just the cross-origin iframe.
+  const selectedServer = activeServerSources.find(source =>
+    (activeServerKey && source.key === activeServerKey) || source.player_url === activeEmbedUrl
+  );
+  const isAnikotoEmbed = selectedServer?.id === "anikoto" ||
+    (!selectedServer?.id && videoSource === "anikoto");
   const fullscreenRef = useRef(isFullscreen);
   fullscreenRef.current = isFullscreen;
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -1370,6 +1377,21 @@ export default function IframePlayer({
           </div>
 
         </div>
+
+        {/* This click runs in our page (not inside the provider iframe), so fullscreen
+            includes both the video and the Pi subtitle overlays on PC and Android. */}
+        {activeEmbedUrl && isAnikotoEmbed && !isFullscreen && (
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            aria-label="자막 포함 전체화면"
+            title="영상과 자막 함께 전체화면"
+            className="player-iframe-fullscreen-enter absolute right-3 top-3 z-30 flex min-h-10 items-center gap-1.5 rounded-full border border-white/20 bg-slate-950/80 px-3 text-xs font-bold text-white shadow-lg backdrop-blur-sm transition hover:bg-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-400"
+          >
+            <Maximize2 className="h-4 w-4 text-purple-300" aria-hidden="true" />
+            자막 전체화면
+          </button>
+        )}
 
         {/* Toast Notification Banner inside player */}
         {noticeMessage && (
