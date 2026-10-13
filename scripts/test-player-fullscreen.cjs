@@ -173,6 +173,56 @@ test('web fullscreen covers the visible Safari viewport, follows offset/rotation
   assert.deepEqual(container.style, initial);
 });
 
+test('iPhone portrait fits a width-filling 4:3 picture, rotates back to legacy landscape and restores the page', () => {
+  const viewport=Object.assign(new EventTarget(),{width:390,height:700,offsetLeft:0,offsetTop:24});
+  const window=Object.assign(new EventTarget(),{visualViewport:viewport,innerWidth:390,innerHeight:844});
+  const initial={width:'',height:'',top:'',left:'',right:'',bottom:''};
+  const container={style:{...initial},
+    get clientWidth(){return parseFloat(this.style.width)||window.innerWidth;},
+    get clientHeight(){return parseFloat(this.style.height)||window.innerHeight;},
+  };
+  const frame={style:{width:'',height:''}};
+  let cleanup,padding={paddingLeft:'0',paddingRight:'0',paddingTop:'0',paddingBottom:'0'};
+  const {useContainedPlayerFrame}=load('src/components/useContainedPlayerFrame.ts',{
+    react:{useLayoutEffect(fn){cleanup=fn();}},'@/lib/playerFullscreen':api,
+  },{window,getComputedStyle:()=>padding});
+  useContainedPlayerFrame({current:container},{current:frame},true,true,false,4/3);
+  assert.equal(frame.style.width,'390px');assert.equal(frame.style.height,'292.5px');
+  const widePicture=api.containedPlayerSize(390,292.5,16/9);
+  assert.equal(widePicture.width,390);assert.equal(widePicture.height,219.375);
+  viewport.height=600;viewport.dispatchEvent(new Event('resize'));
+  assert.equal(frame.style.height,'292.5px');
+  Object.assign(viewport,{width:844,height:390,offsetTop:0});
+  padding={paddingLeft:'47px',paddingRight:'47px',paddingTop:'0',paddingBottom:'21px'};
+  window.dispatchEvent(new Event('orientationchange'));
+  assert.equal(parseFloat(frame.style.height),369);
+  assert.ok(Math.abs(parseFloat(frame.style.width)-369*16/9)<1e-8);
+  Object.assign(viewport,{width:390,height:700,offsetTop:24});
+  padding={paddingLeft:'0',paddingRight:'0',paddingTop:'0',paddingBottom:'0'};
+  viewport.dispatchEvent(new Event('resize'));
+  assert.equal(frame.style.width,'390px');assert.equal(frame.style.height,'292.5px');
+  cleanup();assert.deepEqual(frame.style,{width:'',height:''});assert.deepEqual(container.style,initial);
+});
+
+test('provider viewport framing removes the extra 16:9 letterbox and follows rotation without reloading the frame', () => {
+  const window=Object.assign(new EventTarget(),{visualViewport:new EventTarget()});
+  const container={clientWidth:2944,clientHeight:1840};
+  const frame={style:{width:'',height:''}};
+  let cleanup;
+  const {useContainedPlayerFrame}=load('src/components/useContainedPlayerFrame.ts',{
+    react:{useLayoutEffect(fn){cleanup=fn();}},'@/lib/playerFullscreen':api,
+  },{window,getComputedStyle:()=>({paddingLeft:'0',paddingRight:'0',paddingTop:'0',paddingBottom:'0'})});
+  useContainedPlayerFrame({current:container},{current:frame},true,false,true);
+  assert.equal(frame.style.width,'2944px');assert.equal(frame.style.height,'1840px');
+  for(const ratio of [4/3,16/9]) {
+    const picture=api.containedPlayerSize(parseFloat(frame.style.width),parseFloat(frame.style.height),ratio);
+    assert.ok(Math.abs(picture.height-(ratio===4/3?1840:1656))<1e-6);
+  }
+  container.clientWidth=1920;container.clientHeight=1080;window.dispatchEvent(new Event('orientationchange'));
+  assert.equal(frame.style.width,'1920px');assert.equal(frame.style.height,'1080px');
+  cleanup();assert.deepEqual(frame.style,{width:'',height:''});
+});
+
 test('missing VisualViewport uses window size only in web mode; native fullscreen keeps browser sizing', () => {
   const window = Object.assign(new EventTarget(), {innerWidth: 844, innerHeight: 390});
   const initial = {width: '', height: '', top: '', left: '', right: '', bottom: ''};
@@ -212,7 +262,7 @@ test('missing API or denied iframe user activation falls back to web mode', asyn
 });
 test('prefixed Safari API and native exit are supported without calling video-only APIs', async () => {
   let exited = 0;
-  const container = {webkitRequestFullscreen() {assert.equal(this, container);}};
+  const container = {webkitRequestFullscreen(...args) {assert.equal(this, container);assert.equal(args.length,0);}};
   assert.equal(await api.requestPlayerFullscreen(container, android), 'native');
   const doc = {webkitFullscreenElement: container, webkitExitFullscreen() {assert.equal(this, doc); exited++;}};
   await api.exitPlayerFullscreen(doc);
@@ -271,6 +321,28 @@ test('Android browser back/exit clears native state; resizing cannot keep fullsc
   assert.equal(h.render().mode, 'inline');
   assert.equal(h.document.body.style.overflow, 'scroll');
   h.unmount();
+});
+test('Android can promote fallback web mode on a fresh click while keeping the subtitle container', async () => {
+  const h=harness(),options=[];
+  h.container.requestFullscreen=async opts=>{options.push(opts);throw Error('activation consumed');};
+  await h.render().toggleFullscreen();assert.equal(h.render().mode,'web');
+  assert.equal(h.render().appleWebFullscreen,false);
+  h.container.requestFullscreen=async opts=>{options.push(opts);h.document.fullscreenElement=h.container;h.document.dispatchEvent(new Event('fullscreenchange'));};
+  await h.render().retryNativeFullscreen();assert.equal(h.render().mode,'native');
+  assert.equal(h.document.fullscreenElement,h.container);
+  assert.deepEqual(options.map(o=>o.navigationUI),['hide','hide']);
+  await h.document.exitFullscreen();assert.equal(h.render().mode,'inline');h.unmount();
+});
+test('failed Android retry keeps web mode and its exit available; Apple web framing and fullscreen stay unchanged', async () => {
+  for(const nav of [android,iphone]) {
+    const h=harness(nav);let requests=0;
+    h.container.requestFullscreen=async()=>{requests++;throw Error('denied');};
+    await h.render().toggleFullscreen();assert.equal(h.render().mode,'web');
+    await h.render().retryNativeFullscreen();assert.equal(h.render().mode,'web');
+    assert.equal(h.render().appleWebFullscreen,nav===iphone);
+    assert.equal(requests,nav===iphone?0:2);
+    await h.render().toggleFullscreen();assert.equal(h.render().mode,'inline');h.unmount();
+  }
 });
 test('iPhone web mode keeps an invisible root scroll room for Safari chrome and restores the page', async () => {
   const h = harness(iphone);

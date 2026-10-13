@@ -7,6 +7,7 @@ import {
   getPlayerFullscreenElement,
   preservePlayerFullscreen,
   requestPlayerFullscreen,
+  isAppleTouchDevice,
   type PlayerFullscreenMode,
 } from "@/lib/playerFullscreen";
 
@@ -39,6 +40,20 @@ export function usePlayerFullscreen(containerRef: RefObject<HTMLDivElement | nul
     } finally {
       busyRef.current = false;
     }
+  }, [containerRef, updateMode]);
+
+  // A provider may have consumed the first gesture before asking its parent to
+  // enter fullscreen. This explicit click supplies fresh activation while
+  // retaining the same iframe and subtitle container.
+  const retryNativeFullscreen = useCallback(async () => {
+    const container = containerRef.current;
+    if (!container || busyRef.current || modeRef.current !== "web" || isAppleTouchDevice(navigator)) return;
+    busyRef.current = true;
+    try {
+      const next = await requestPlayerFullscreen(container, navigator);
+      if (mountedRef.current) updateMode(next);
+      return next;
+    } finally { busyRef.current = false; }
   }, [containerRef, updateMode]);
 
   useEffect(() => {
@@ -86,6 +101,7 @@ export function usePlayerFullscreen(containerRef: RefObject<HTMLDivElement | nul
     return enableWebFullscreenScrollRoom(document, window);
   }, [mode]);
 
-  return { mode, isFullscreen: mode !== "inline", toggleFullscreen };
+  const appleWebFullscreen = mode === "web" && typeof navigator !== "undefined" && isAppleTouchDevice(navigator);
+  return { mode, isFullscreen: mode !== "inline", toggleFullscreen, retryNativeFullscreen, appleWebFullscreen };
 }
 
