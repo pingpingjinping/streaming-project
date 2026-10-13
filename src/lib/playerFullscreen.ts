@@ -53,7 +53,7 @@ export function containedPlayerSize(width: number, height: number, ratio = 16 / 
  * An HLS RESOLUTION like 720x480 alone is ambiguous (anamorphic DVD/video).
  * Cross-origin embeds may not send this metadata at all.
  */
-export function aspectFromPlayerMessage(message: unknown): 4 / 3 | 16 / 9 | null {
+export function aspectFromPlayerMessage(message: unknown): number | null {
   if (!message || typeof message !== "object") return null;
   const data = message as Record<string, unknown>;
   const parseRatio = (value: unknown): number | null => {
@@ -67,7 +67,7 @@ export function aspectFromPlayerMessage(message: unknown): 4 / 3 | 16 / 9 | null
     const numeric = Number(value);
     return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
   };
-  const classify = (ratio: number | null): 4 / 3 | 16 / 9 | null => {
+  const classify = (ratio: number | null): number | null => {
     if (ratio === null) return null;
     if (Math.abs(ratio - 4 / 3) < 0.07) return 4 / 3;
     if (Math.abs(ratio - 16 / 9) < 0.07) return 16 / 9;
