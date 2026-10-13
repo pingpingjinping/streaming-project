@@ -1424,17 +1424,6 @@ export default function IframePlayer({
 
         </div>
 
-        {/* Manual fallback when the provider does not expose a reliable aspect.
-            Outside mediaFrameRef, so resizing cannot reload the provider iframe. */}
-        {isAnikotoEmbed && isFullscreen && (
-          <button type="button" onClick={cycleAspectChoice}
-            title="Anikoto 영상 비율 변경: 자동 → 4:3 → 16:9 (이 작품 모든 회차에 저장)"
-            aria-label="화면 비율 변경"
-            className="absolute left-3 top-3 z-30 flex h-10 items-center rounded-full bg-slate-950/75 px-3 text-xs font-semibold text-white backdrop-blur-md transition hover:bg-slate-900">
-            비율 {aspectLabel}
-          </button>
-        )}
-
         {/* Toast Notification Banner inside player */}
         {noticeMessage && (
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 rounded-xl border border-purple-500/40 bg-slate-900/90 px-4 py-2 text-xs font-bold text-purple-200 backdrop-blur-md animate-fade-in pointer-events-none">
