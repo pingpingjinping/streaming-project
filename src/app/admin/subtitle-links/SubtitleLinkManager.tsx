@@ -341,7 +341,7 @@ export default function SubtitleLinkManager() {
         {busy ? <Loader2 className="mr-2 inline h-4 w-4 animate-spin"/> : <Link2 className="mr-2 inline h-4 w-4"/>}
         자막 ↔ 작품 DB 연결 저장
       </button>
-      <p className="text-xs text-slate-500">저장 시 같은 작품 DB 연결의 동일 시즌·종류 폴더가 있으면 그 안에 합쳐. 완전히 같은 파일은 건너뛰고, 이름만 같은 다른 파일은 (추가-2)처럼 보존해. 연결된 폴더가 없으면 DB 작품명으로 새 폴더를 만들어. Pi ZIP 원본은 유지하고, 회차가 확실한 자막만 자동 연결해.</p>
+      <p className="text-xs text-slate-500">저장 시 같은 작품 DB 연결의 동일 시즌·종류 폴더가 있으면 그 안에 합쳐. 완전히 같은 파일은 건너뛰고, 이름만 같은 다른 파일은 __2 같은 번호를 붙여 보존해. 연결된 폴더가 없으면 DB 작품명으로 새 폴더를 만들어. Pi ZIP 원본은 유지하고, 회차가 확실한 자막만 자동 연결해.</p>
     </section>
 
     {(notice || error) && <p role="status" className={`rounded-lg p-3 text-xs ${error?"bg-rose-950/50 text-rose-200":"bg-emerald-950/50 text-emerald-200"}`}>{error || notice}</p>}
