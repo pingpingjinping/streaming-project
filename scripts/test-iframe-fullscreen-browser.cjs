@@ -38,22 +38,21 @@ const parent=http.createServer((req,res)=>{
     const auto=await page.evaluate(()=>({mode:window.lastMode,transfers:window.transfers,fullscreen:document.fullscreenElement?.id||null}));
     assert.equal(auto.transfers,1);
     await page.evaluate(async()=>{if(document.fullscreenElement)await document.exitFullscreen();});
-    // Model a desktop browser that consumes activation in the provider and
-    // rejects promotion. It must keep native iframe fullscreen, not CSS mode.
+    // A provider may consume activation before the parent can promote fullscreen.
+    // In that case the caption container must return to web fullscreen.
     await page.goto(url+'/?auto');await page.waitForFunction(()=>window.ready);
     await page.evaluate(()=>{document.querySelector('#player').requestFullscreen=async()=>{throw new Error('activation consumed');};});
     await page.frameLocator('iframe').locator('#inside').click();
-    await page.waitForFunction(()=>window.lastMode===null&&document.fullscreenElement?.tagName==='IFRAME');
+    await page.waitForFunction(()=>window.lastMode==='web'&&!document.fullscreenElement);
     const denied=await page.evaluate(()=>({web:document.querySelector('#player').classList.contains('web'),element:document.fullscreenElement?.tagName}));
-    assert.equal(denied.web,false,'denied handoff must not leave browser/OS chrome in CSS fullscreen');
-    assert.equal(denied.element,'IFRAME');
-    await page.frames().find(frame=>frame.url().startsWith(providerUrl)).evaluate(async()=>{await document.exitFullscreen();});
-    await page.waitForFunction(()=>!document.fullscreenElement);
+    assert.equal(denied.web,true,'denied handoff must keep Pi captions in web fullscreen');
+    assert.equal(denied.element,undefined);
+    assert.equal(await captionPainted(),true,'caption stays visible when native handoff is rejected');
     await page.goto(url);await page.waitForFunction(()=>window.ready);
     await page.locator('#outside').click();
     await page.waitForFunction(()=>document.fullscreenElement?.id==='player');
     assert.equal(await captionPainted(),true,'site button still includes subtitles');
-    console.log(JSON.stringify({result:'PASS: caption handoff, denied desktop native preservation/exit, and site fullscreen',manualMode,auto,denied}));
+    console.log(JSON.stringify({result:'PASS: caption handoff, denied desktop web fallback, and site fullscreen',manualMode,auto,denied}));
   }finally{await browser?.close();await Promise.all([new Promise(r=>child.close(r)),new Promise(r=>parent.close(r))]);}
 })().catch(error=>{console.error(error);process.exitCode=1;});
 
