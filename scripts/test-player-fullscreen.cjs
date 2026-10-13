@@ -98,18 +98,26 @@ test('portrait fits the complete 16:9 frame by width; landscape fits by height',
   assert.equal(api.containedPlayerSize(Infinity, 800), null);
 });
 
-test('Anikoto display aspect is inferred only from reliable dimensions or explicit DAR', () => {
+test('Anikoto aspect uses explicit DAR/SAR before the narrow-video 4:3 heuristic', () => {
   const infer=load('src/lib/iframePlayback.ts').aspectFromPlayerMessage;
   assert.equal(infer({videoWidth:640,videoHeight:480}),4/3);
   assert.equal(infer({videoWidth:1920,videoHeight:1080}),16/9);
   assert.equal(infer({displayAspectRatio:'4:3'}),4/3);
   assert.equal(infer({dar:'16:9',videoWidth:720,videoHeight:480}),16/9);
   assert.equal(infer({videoWidth:720,videoHeight:480,sampleAspectRatio:'8:9'}),4/3);
-  assert.equal(infer({videoWidth:720,videoHeight:480}),null);
+  assert.equal(infer({videoWidth:720,videoHeight:480}),4/3);
+  assert.equal(infer({videoWidth:960,videoHeight:600}),4/3);
+  assert.equal(infer({videoWidth:961,videoHeight:600}),null);
+  assert.equal(infer({videoWidth:854,videoHeight:480}),16/9);
+  assert.equal(infer({videoWidth:2520,videoHeight:1080}),21/9);
+  assert.equal(infer({dar:'21:9',videoWidth:720,videoHeight:480}),21/9);
+  assert.equal(infer({videoWidth:720,videoHeight:480,sampleAspectRatio:'32:27'}),16/9);
   assert.equal(infer({width:720,height:480}),null);
-  assert.equal(infer({displayAspectRatio:'3:2',videoWidth:640,videoHeight:480}),null);
+  assert.equal(infer({displayAspectRatio:'3:2',videoWidth:640,videoHeight:480}),3/2);
   assert.equal(infer({videoWidth:0,videoHeight:480}),null);
-  assert.equal(infer({videoWidth:720,videoHeight:480,sampleAspectRatio:'1:1'}),null);
+  assert.equal(infer({videoWidth:720,videoHeight:480,sampleAspectRatio:'1:1'}),3/2);
+  assert.equal(infer({videoWidth:Infinity,videoHeight:480}),null);
+  assert.equal(infer({currentTime:20,paused:false}),null);
   assert.equal(infer(null),null);
 });
 
