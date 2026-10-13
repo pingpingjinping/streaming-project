@@ -5,11 +5,14 @@ import { containedPlayerSize } from "@/lib/playerFullscreen";
 
 // The iframe and every subtitle layer share this frame. Resize it, not the
 // iframe DOM node, so rotation/fullscreen never reloads the playing video.
+// Unknown provider video ratios can use the entire viewport; the embed handles
+// its own picture containment instead of being nested in another 16:9 box.
 export function useContainedPlayerFrame(
   containerRef: RefObject<HTMLDivElement | null>,
   frameRef: RefObject<HTMLDivElement | null>,
   fullscreen: boolean,
   webFullscreen = false,
+  fillViewport = false,
 ) {
   useLayoutEffect(() => {
     const container = containerRef.current, frame = frameRef.current;
@@ -34,10 +37,11 @@ export function useContainedPlayerFrame(
       }
       const padding = getComputedStyle(container);
       const px = (value: string) => parseFloat(value) || 0;
-      const size = containedPlayerSize(
-        container.clientWidth - px(padding.paddingLeft) - px(padding.paddingRight),
-        container.clientHeight - px(padding.paddingTop) - px(padding.paddingBottom),
-      );
+      const width = container.clientWidth - px(padding.paddingLeft) - px(padding.paddingRight);
+      const height = container.clientHeight - px(padding.paddingTop) - px(padding.paddingBottom);
+      const size = fillViewport
+        ? (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0 ? { width, height } : null)
+        : containedPlayerSize(width, height);
       if (!size) return;
       frame.style.width = `${size.width}px`;
       frame.style.height = `${size.height}px`;
@@ -59,5 +63,5 @@ export function useContainedPlayerFrame(
       frame.style.height = previousHeight;
       if (webFullscreen) viewportProperties.forEach((property, index) => { container.style[property] = previousViewport[index]; });
     };
-  }, [containerRef, frameRef, fullscreen, webFullscreen]);
+  }, [containerRef, frameRef, fullscreen, webFullscreen, fillViewport]);
 }

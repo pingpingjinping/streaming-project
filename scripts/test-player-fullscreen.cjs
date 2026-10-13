@@ -173,6 +173,25 @@ test('web fullscreen covers the visible Safari viewport, follows offset/rotation
   assert.deepEqual(container.style, initial);
 });
 
+test('provider viewport framing removes the extra 16:9 letterbox and follows rotation without reloading the frame', () => {
+  const window=Object.assign(new EventTarget(),{visualViewport:new EventTarget()});
+  const container={clientWidth:2944,clientHeight:1840};
+  const frame={style:{width:'',height:''}};
+  let cleanup;
+  const {useContainedPlayerFrame}=load('src/components/useContainedPlayerFrame.ts',{
+    react:{useLayoutEffect(fn){cleanup=fn();}},'@/lib/playerFullscreen':api,
+  },{window,getComputedStyle:()=>({paddingLeft:'0',paddingRight:'0',paddingTop:'0',paddingBottom:'0'})});
+  useContainedPlayerFrame({current:container},{current:frame},true,false,true);
+  assert.equal(frame.style.width,'2944px');assert.equal(frame.style.height,'1840px');
+  for(const ratio of [4/3,16/9]) {
+    const picture=api.containedPlayerSize(parseFloat(frame.style.width),parseFloat(frame.style.height),ratio);
+    assert.ok(Math.abs(picture.height-(ratio===4/3?1840:1656))<1e-6);
+  }
+  container.clientWidth=1920;container.clientHeight=1080;window.dispatchEvent(new Event('orientationchange'));
+  assert.equal(frame.style.width,'1920px');assert.equal(frame.style.height,'1080px');
+  cleanup();assert.deepEqual(frame.style,{width:'',height:''});
+});
+
 test('missing VisualViewport uses window size only in web mode; native fullscreen keeps browser sizing', () => {
   const window = Object.assign(new EventTarget(), {innerWidth: 844, innerHeight: 390});
   const initial = {width: '', height: '', top: '', left: '', right: '', bottom: ''};
@@ -271,6 +290,28 @@ test('Android browser back/exit clears native state; resizing cannot keep fullsc
   assert.equal(h.render().mode, 'inline');
   assert.equal(h.document.body.style.overflow, 'scroll');
   h.unmount();
+});
+test('Android can promote fallback web mode on a fresh click while keeping the subtitle container', async () => {
+  const h=harness(),options=[];
+  h.container.requestFullscreen=async opts=>{options.push(opts);throw Error('activation consumed');};
+  await h.render().toggleFullscreen();assert.equal(h.render().mode,'web');
+  assert.equal(h.render().appleWebFullscreen,false);
+  h.container.requestFullscreen=async opts=>{options.push(opts);h.document.fullscreenElement=h.container;h.document.dispatchEvent(new Event('fullscreenchange'));};
+  await h.render().retryNativeFullscreen();assert.equal(h.render().mode,'native');
+  assert.equal(h.document.fullscreenElement,h.container);
+  assert.deepEqual(options.map(o=>o.navigationUI),['hide','hide']);
+  await h.document.exitFullscreen();assert.equal(h.render().mode,'inline');h.unmount();
+});
+test('failed Android retry keeps web mode and its exit available; Apple web framing and fullscreen stay unchanged', async () => {
+  for(const nav of [android,iphone]) {
+    const h=harness(nav);let requests=0;
+    h.container.requestFullscreen=async()=>{requests++;throw Error('denied');};
+    await h.render().toggleFullscreen();assert.equal(h.render().mode,'web');
+    await h.render().retryNativeFullscreen();assert.equal(h.render().mode,'web');
+    assert.equal(h.render().appleWebFullscreen,nav===iphone);
+    assert.equal(requests,nav===iphone?0:2);
+    await h.render().toggleFullscreen();assert.equal(h.render().mode,'inline');h.unmount();
+  }
 });
 test('iPhone web mode keeps an invisible root scroll room for Safari chrome and restores the page', async () => {
   const h = harness(iphone);

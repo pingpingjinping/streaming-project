@@ -77,7 +77,7 @@ export async function requestPlayerFullscreen(
   const request = element.requestFullscreen || element.webkitRequestFullscreen;
   if (!request) return "web";
   try {
-    await request.call(element);
+    await request.call(element, { navigationUI: "hide" });
     return "native";
   } catch {
     // An embedded player's postMessage may no longer have user activation.

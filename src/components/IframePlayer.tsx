@@ -130,8 +130,9 @@ export default function IframePlayer({
   const currentBlobUrlRef = useRef<string | null>(null);
 
   // States
-  const { mode: fullscreenMode, isFullscreen, toggleFullscreen } = usePlayerFullscreen(containerRef);
-  useContainedPlayerFrame(containerRef, mediaFrameRef, isFullscreen, fullscreenMode === "web");
+  const { mode: fullscreenMode, isFullscreen, toggleFullscreen, retryNativeFullscreen, appleWebFullscreen } = usePlayerFullscreen(containerRef);
+  useContainedPlayerFrame(containerRef, mediaFrameRef, isFullscreen, fullscreenMode === "web", !appleWebFullscreen);
+  const showNativeRetry = fullscreenMode === "web" && typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
   const fullscreenRef = useRef(isFullscreen);
   fullscreenRef.current = isFullscreen;
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -1302,7 +1303,7 @@ export default function IframePlayer({
               : "relative aspect-video w-full rounded-2xl border border-purple-500/30"
         }`}
       >
-        {/* Keep video and all subtitle layers inside one contained 16:9 frame. */}
+        {/* Keep video and subtitle layers together; provider embeds fit their own video ratio. */}
         <div ref={mediaFrameRef} className="relative h-full w-full shrink-0 overflow-hidden">
           {/* Layer 1: External player iframe */}
           {activeEmbedUrl && !activeEmbedUrl.includes("reanime.to/watch") ? (
@@ -1383,7 +1384,14 @@ export default function IframePlayer({
             className="absolute top-0 right-0 z-30 pt-[max(0.5rem,env(safe-area-inset-top))] pr-[max(0.5rem,env(safe-area-inset-right))]"
           >
             {/* Top Right: Exit Fullscreen Button */}
-            <div className="flex items-center justify-end pointer-events-auto">
+            <div className="flex items-center justify-end gap-2 pointer-events-auto">
+              {showNativeRetry && <button type="button" onClick={async () => {
+                if (await retryNativeFullscreen() === "web") showNotice("이 브라우저에서는 상태바를 숨기지 못했습니다.");
+              }}
+                title="상태바 숨기기" aria-label="상태바 숨기기"
+                className="flex h-11 items-center gap-1.5 rounded-full bg-slate-900/80 px-3 text-xs font-semibold text-white backdrop-blur-md transition hover:bg-slate-800">
+                <Maximize2 className="h-4 w-4" />상태바 숨기기
+              </button>}
               <button
                 onClick={toggleFullscreen}
                 type="button"
