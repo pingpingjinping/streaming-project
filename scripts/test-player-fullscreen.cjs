@@ -141,9 +141,14 @@ test('Anikoto 4:3 fullscreen consumes height instead of adding black bars; defau
   assert.equal(frame.style.height,'292.5px');
   cleanup();assert.deepEqual(frame.style,{width:'',height:''});
   const jsx=fs.readFileSync(path.join(root,'src/components/IframePlayer.tsx'),'utf8');
-  assert.match(jsx,/const frameAspect = isAnikotoEmbed && !appleWebFullscreen \? resolvedAspect : 16 \/ 9/);
+  assert.match(jsx,/const reanimeManualAspect = isReAnimeEmbed && aspectChoice !== "auto"/);
+  assert.match(jsx,/const frameAspect = reanimeManualAspect \|\| \(isAnikotoEmbed && !appleWebFullscreen\)/);
   assert.match(jsx,/iframeRef.*useRef|const iframeRef/);
-  assert.match(jsx,/title="Anikoto 영상 비율 변경/);
+  assert.match(jsx,/title="영상 비율 변경/);
+  assert.match(jsx,/\{hasAspectControl && \(/);
+  assert.match(jsx,/const hasAspectControl = isAnikotoEmbed \|\| isReAnimeEmbed/);
+  assert.match(jsx,/activeServerSources\.find\(source => source\.key === activeServerKey\)\?\.id/);
+  assert.match(jsx,/if \(!isAnikotoEmbed\) return;/, 'automatic iframe ratio hints stay Anikoto-only');
   assert.equal((jsx.match(/aria-label="화면 비율 변경"/g)||[]).length,1,
     'aspect setting must exist only in the toolbar below the video, not as a fullscreen overlay');
   assert.doesNotMatch(jsx,/\{isAnikotoEmbed && isFullscreen && \(/,
