@@ -33,7 +33,7 @@ const app=http.createServer((req,res)=>{
   for(const name of ['./SubtitleSelectModal','./SponsorSubtitleSyncModal'])cache[name]={exports:{__esModule:true,default:empty}};
   cache['./PlayerSettingsModal']={exports:{__esModule:true,default:empty,DEFAULT_PLAYER_SETTINGS:${JSON.stringify(settings.DEFAULT_PLAYER_SETTINGS)},loadPlayerSettings:()=>(${JSON.stringify(settings.DEFAULT_PLAYER_SETTINGS)}),fetchUserSettingsFromDb:async()=>({authenticated:false}),applyPlayerSettingsStyles(){},getSubtitleOffsetY:()=>0}};
   const fixtureRoot=require('react-dom/client').createRoot(document.getElementById('root'));window.renderFixture=(query=location.search)=>{const p=new URLSearchParams(query),source=p.get('source')||'anikoto',embed=${JSON.stringify(providerUrl)}+'/?ratio='+encodeURIComponent(p.get('ratio')||'4:3')+'&hint='+encodeURIComponent(p.get('hint')||'');
-  fixtureRoot.render(React.createElement(require('./IframePlayer').default,{animeId:p.get('work')||'ak_fixture',animeTitle:'Fixture',episodeNumber:Number(p.get('ep')||1),sourceAnimeId:p.get('sourceWork')||undefined,sourceEpisodeNumber:Number(p.get('sourceEp')||p.get('ep')||1),embedUrl:embed,serverSources:[{id:source,label:p.get('server')||'HD-1',key:'sub:'+(p.get('server')||'HD-1'),player_url:embed}],initialSubtitle:${JSON.stringify(subtitle)}}));};window.renderFixture();`;
+  fixtureRoot.render(React.createElement(require('./IframePlayer').default,{animeId:p.get('work')||'ak_fixture',animeTitle:'Fixture',episodeNumber:Number(p.get('ep')||1),sourceAnimeId:p.get('sourceWork')||undefined,sourceEpisodeNumber:Number(p.get('sourceEp')||p.get('ep')||1),embedUrl:embed,serverSources:[{id:source,label:p.get('server')||'HD-1',key:'sub:'+(p.get('server')||'HD-1'),player_url:embed},...(p.get('extraSource')?[{id:p.get('extraSource'),label:'Backup',key:'backup',player_url:embed+'&backup=1'}]:[])],initialSubtitle:${JSON.stringify(subtitle)}}));};window.renderFixture();`;
   new vm.Script(script);
   res.setHeader('Content-Type','text/html');res.end(`<!doctype html><meta charset="utf-8">${styles.map(name=>`<link rel="stylesheet" href="/styles/${name}">`).join('')}<style>body{margin:0;padding:20px;background:black}canvas{display:none!important}</style><div id="root"></div><script>${script}</script>`);
 });
@@ -172,6 +172,63 @@ const app=http.createServer((req,res)=>{
     await page.getByRole('button',{name:'전체화면',exact:true}).click();
     await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
     await checkPicture(page,'4:3');
+    await page.evaluate(()=>document.exitFullscreen());
+
+    // ReAnime gets the same work-scoped MANUAL button, but SD messages must
+    // never automatically shrink its previously stable 16:9 fullscreen.
+    await ready(page,'?source=rean&ratio=4%3A3&hint=sd&work=reanime_work&extraSource=anikoto');
+    const reanimeButton=()=>page.getByRole('button',{name:'화면 비율 변경'});
+    await reanimeButton().filter({hasText:'비율 자동'}).waitFor();
+    assert.equal(await reanimeButton().count(),1,'ReAnime uses the toolbar only');
+    const beforeReanime=embedLoads;
+    await page.getByRole('button',{name:'전체화면',exact:true}).click();
+    await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
+    await page.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-562.5)<2);
+    assert.equal(await page.locator(':fullscreen').getByRole('button',{name:'화면 비율 변경'}).count(),0);
+    assert.equal(embedLoads,beforeReanime);
+    await page.evaluate(()=>document.exitFullscreen());
+
+    // ReAnime 4:3 now fits the complete height, without touching/reloading the
+    // embedded player, including when Anikoto is an INACTIVE server option.
+    await reanimeButton().click();
+    await reanimeButton().filter({hasText:'비율 4:3'}).waitFor();
+    assert.equal(await page.evaluate(()=>localStorage.getItem('anime_player_aspect:work:reanime_work')),'4:3');
+    await page.getByRole('button',{name:'전체화면',exact:true}).click();
+    await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
+    await page.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-625)<2);
+    const reanimeFrame=await page.locator('iframe').boundingBox();
+    assert.ok(Math.abs(reanimeFrame.width-625*4/3)<2, 'ReAnime manual 4:3 fills the height');
+    assert.equal(await page.locator(':fullscreen').getByRole('button',{name:'화면 비율 변경'}).count(),0,
+      'manual ReAnime ratio must not display the redundant fullscreen badge');
+    assert.ok(await page.getByText('Pi caption',{exact:true}).isVisible());
+    assert.equal(embedLoads,beforeReanime, 'ReAnime ratio change keeps iframe playback alive');
+    await page.evaluate(()=>document.exitFullscreen());
+
+    // The preference is shared across the work's ReAnime episodes and
+    // Anikoto playback; unrelated works do not inherit it.
+    await ready(page,'?source=rean&ratio=4%3A3&work=reanime_work&ep=2&server=HD-2');
+    await reanimeButton().filter({hasText:'비율 4:3'}).waitFor();
+    await page.getByRole('button',{name:'전체화면',exact:true}).click();
+    await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
+    await page.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-625)<2);
+    await page.evaluate(()=>document.exitFullscreen());
+    await ready(page,'?source=anikoto&ratio=4%3A3&work=reanime_work&ep=3');
+    await reanimeButton().filter({hasText:'비율 4:3'}).waitFor();
+    await ready(page,'?source=rean&ratio=4%3A3&work=reanime_other&hint=sd');
+    await reanimeButton().filter({hasText:'비율 자동'}).waitFor();
+    await ready(page,'?source=rean&ratio=4%3A3&work=reanime_work&ep=4&hint=sd');
+    await reanimeButton().filter({hasText:'비율 4:3'}).waitFor();
+    await reanimeButton().click();
+    await reanimeButton().filter({hasText:'비율 16:9'}).waitFor();
+    await page.getByRole('button',{name:'전체화면',exact:true}).click();
+    await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
+    await page.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-562.5)<2);
+    await page.evaluate(()=>document.exitFullscreen());
+    await reanimeButton().click();
+    await reanimeButton().filter({hasText:'비율 자동'}).waitFor();
+    await page.getByRole('button',{name:'전체화면',exact:true}).click();
+    await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
+    await page.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-562.5)<2);
     await page.evaluate(()=>document.exitFullscreen());
 
     // Anikoto's own fullscreen uses the whole iframe, but the site's
@@ -321,6 +378,6 @@ const app=http.createServer((req,res)=>{
     assert.ok(Math.abs(tabletFrame.height-tabletFrame.width*9/16)<2,'iPad retains its existing portrait framing');
     await tablet.getByRole('button',{name:'전체화면 종료',exact:true}).click();
     assert.deepEqual(errors,[]);
-    console.log('PASS: PC/Android SD auto 4:3, work-wide manual override and legacy migration, Anikoto height fit, native fallback/retry, unchanged ReAnime/16:9/Apple without reload');
+    console.log('PASS: ReAnime default unchanged, ReAnime manual 4:3/16:9 work persistence with mixed server options, Anikoto SD auto and existing fullscreen/browser paths without reload');
   }finally{await browser?.close();await Promise.all([new Promise(resolve=>provider.close(resolve)),new Promise(resolve=>app.close(resolve))]);}
 })().catch(error=>{console.error(error);process.exitCode=1;});
