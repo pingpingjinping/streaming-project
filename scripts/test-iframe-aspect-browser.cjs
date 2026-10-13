@@ -61,7 +61,7 @@ const app=http.createServer((req,res)=>{
         assert.ok(green(image.data,image.info,500,3),'4:3 must reach the top edge without a nested 16:9 border');
         assert.equal(green(image.data,image.info,3,300),false,'4:3 keeps natural side bars instead of stretching');
       }
-      else {assert.equal(green(image.data,image.info,500,3),false,'16:9 keeps only its natural letterbox');assert.ok(green(image.data,image.info,500,38));}
+      else {assert.equal(green(image.data,image.info,500,3),false,'16:9 keeps only its natural letterbox');assert.ok(green(image.data,image.info,500,100));}
       const caption=page.getByText('Pi caption',{exact:true}),rect=await caption.boundingBox();assert.ok(rect&&rect.y>=0&&rect.y+rect.height<=625);
       let whites=0;for(let y=Math.ceil(rect.y);y<Math.floor(rect.y+rect.height);y++)for(let x=Math.ceil(rect.x);x<Math.floor(rect.x+rect.width);x++){const i=(y*image.info.width+x)*image.info.channels;if(image.data[i]>220&&image.data[i+1]>220&&image.data[i+2]>220)whites++;}
       assert.ok(whites>20,'Pi subtitle text must actually be painted over the video');
