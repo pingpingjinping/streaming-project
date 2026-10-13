@@ -231,7 +231,7 @@ test('missing API or denied iframe user activation falls back to web mode', asyn
 });
 test('prefixed Safari API and native exit are supported without calling video-only APIs', async () => {
   let exited = 0;
-  const container = {webkitRequestFullscreen() {assert.equal(this, container);}};
+  const container = {webkitRequestFullscreen(...args) {assert.equal(this, container);assert.equal(args.length,0);}};
   assert.equal(await api.requestPlayerFullscreen(container, android), 'native');
   const doc = {webkitFullscreenElement: container, webkitExitFullscreen() {assert.equal(this, doc); exited++;}};
   await api.exitPlayerFullscreen(doc);
