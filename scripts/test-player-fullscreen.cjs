@@ -144,6 +144,10 @@ test('Anikoto 4:3 fullscreen consumes height instead of adding black bars; defau
   assert.match(jsx,/const frameAspect = isAnikotoEmbed && !appleWebFullscreen \? resolvedAspect : 16 \/ 9/);
   assert.match(jsx,/iframeRef.*useRef|const iframeRef/);
   assert.match(jsx,/title="Anikoto 영상 비율 변경/);
+  assert.equal((jsx.match(/aria-label="화면 비율 변경"/g)||[]).length,1,
+    'aspect setting must exist only in the toolbar below the video, not as a fullscreen overlay');
+  assert.doesNotMatch(jsx,/\{isAnikotoEmbed && isFullscreen && \(/,
+    'fullscreen must not reintroduce its own persistent aspect indicator');
 });
 
 test('contained frame follows rotation, browser-bar resize and safe area, then restores inline dimensions', () => {
