@@ -88,6 +88,20 @@ const app=http.createServer((req,res)=>{
     await phone.evaluate(()=>{const original=HTMLElement.prototype.requestFullscreen;let first=true;window.parentFullscreenOptions=[];HTMLElement.prototype.requestFullscreen=function(options){if(this.querySelector('iframe')){window.parentFullscreenOptions.push(options);if(first){first=false;return Promise.reject(Error('activation consumed'));}}return original.call(this,options);};});
     const before=embedLoads;
     await phone.frameLocator('iframe').locator('#native').click();
+    await phone.waitForFunction(()=>document.fullscreenElement?.tagName==='IFRAME'&&window.parentFullscreenOptions.length===1);
+    // Wait for the rejected handoff to settle: native iframe fullscreen must
+    // remain active instead of being replaced with the caption web panel.
+    await phone.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    assert.equal(await phone.evaluate(()=>document.fullscreenElement?.tagName),'IFRAME');
+    assert.equal(await phone.getByRole('button',{name:'상태바 숨기기',exact:true}).count(),0);
+    assert.equal(await phone.getByRole('button',{name:'전체화면 종료',exact:true}).count(),0);
+    assert.equal(embedLoads,before,'denied Android provider handoff preserves playback');
+    await phone.frames().find(frame=>frame.url().startsWith(providerUrl)).evaluate(()=>document.exitFullscreen());
+    await phone.waitForFunction(()=>!document.fullscreenElement);
+    // The site button still includes captions and retains its retry path if
+    // its own native request is denied. This is independent of provider mode.
+    await phone.evaluate(()=>{const original=HTMLElement.prototype.requestFullscreen;let first=true;HTMLElement.prototype.requestFullscreen=function(options){if(this.querySelector('iframe')&&first){first=false;window.parentFullscreenOptions.push(options);return Promise.reject(Error('site request denied'));}return original.call(this,options);};});
+    await phone.getByRole('button',{name:'전체화면',exact:true}).click();
     await phone.getByRole('button',{name:'상태바 숨기기',exact:true}).waitFor();
     assert.equal(await phone.evaluate(()=>!!document.fullscreenElement),false);
     await phone.getByRole('button',{name:'상태바 숨기기',exact:true}).click();
@@ -99,7 +113,7 @@ const app=http.createServer((req,res)=>{
     await checkPicture(phone,'16:9');assert.equal(embedLoads,before,'Android external button retains the original frame');
     assert.equal(await phone.getByRole('button',{name:'상태바 숨기기',exact:true}).count(),0,'successful default native fullscreen needs no retry button');
     const options=await phone.evaluate(()=>window.parentFullscreenOptions);
-    assert.ok(options.length>=3&&options.every(option=>option.navigationUI==='hide'),'Android requests hidden navigation by default, including before fallback');
+    assert.ok(options.length>=4&&options.every(option=>option.navigationUI==='hide'),'Android requests hidden navigation by default, including before fallback');
     await phone.evaluate(()=>document.exitFullscreen());
     const apple=await browser.newContext({viewport:{width:390,height:844},userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1',hasTouch:true});
     const iphone=await apple.newPage();iphone.on('pageerror',error=>errors.push(error.message));
@@ -157,6 +171,6 @@ const app=http.createServer((req,res)=>{
     assert.ok(Math.abs(tabletFrame.height-tabletFrame.width*9/16)<2,'iPad retains its existing portrait framing');
     await tablet.getByRole('button',{name:'전체화면 종료',exact:true}).click();
     assert.deepEqual(errors,[]);
-    console.log('PASS: restored PC/Android 16:9 framing through both fullscreen buttons, Pi captions, Android native retry, preserved iPhone portrait/rotation and iPad framing without reload');
+    console.log('PASS: denied Android internal handoff keeps native iframe fullscreen, site button retains Pi captions/retry, PC/Android 16:9 and Apple framing unchanged without reload');
   }finally{await browser?.close();await Promise.all([new Promise(resolve=>provider.close(resolve)),new Promise(resolve=>app.close(resolve))]);}
 })().catch(error=>{console.error(error);process.exitCode=1;});
