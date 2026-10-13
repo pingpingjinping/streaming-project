@@ -30,7 +30,6 @@ test('Anissia auto-matched Anikoto iframe has the same sandbox policy as direct 
     '@/lib/sponsorSubtitleSync': {effectiveSubtitleOffset:(v)=>v, formatSyncTime:()=>''},
     './usePlayerFullscreen': {usePlayerFullscreen: () => ({mode: 'inline', isFullscreen: false, toggleFullscreen() {}})},
     './useContainedPlayerFrame': {useContainedPlayerFrame() {}},
-    '@/lib/playerFullscreen': api,
     '@/lib/iframePlayback': load('src/lib/iframePlayback.ts'),
     '@/lib/subtitlePresentation': load('src/lib/subtitlePresentation.ts'),
   });
@@ -100,7 +99,7 @@ test('portrait fits the complete 16:9 frame by width; landscape fits by height',
 });
 
 test('Anikoto display aspect is inferred only from reliable dimensions or explicit DAR', () => {
-  const infer=api.aspectFromPlayerMessage;
+  const infer=load('src/lib/iframePlayback.ts').aspectFromPlayerMessage;
   assert.equal(infer({videoWidth:640,videoHeight:480}),4/3);
   assert.equal(infer({videoWidth:1920,videoHeight:1080}),16/9);
   assert.equal(infer({displayAspectRatio:'4:3'}),4/3);
