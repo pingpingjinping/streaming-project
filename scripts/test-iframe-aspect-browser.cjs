@@ -131,7 +131,11 @@ const app=http.createServer((req,res)=>{
       assert.ok(Math.abs(normal.height-normal.width*9/16)<2,'exit restores the normal page frame');
     }
     const ipad=await browser.newContext({viewport:{width:768,height:1024},userAgent:'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15',hasTouch:true});
-    const tablet=await ipad.newPage();tablet.on('pageerror',error=>errors.push(error.message));await ready(tablet);
+    const tablet=await ipad.newPage();tablet.on('pageerror',error=>errors.push(error.message));
+    // Chromium's hasTouch emulates only one touch point; desktop-mode iPad
+    // identification intentionally requires multi-touch, as on a real iPad.
+    await tablet.addInitScript(()=>Object.defineProperty(navigator,'maxTouchPoints',{get:()=>5}));
+    await ready(tablet);
     await tablet.getByRole('button',{name:'전체화면',exact:true}).click();
     await tablet.getByRole('button',{name:'전체화면 종료',exact:true}).waitFor();
     const tabletFrame=await tablet.locator('iframe').boundingBox();
