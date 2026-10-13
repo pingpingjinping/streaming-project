@@ -101,6 +101,9 @@ const app=http.createServer((req,res)=>{
     assert.ok(green(fourThreePixels.data,fourThreePixels.info,500,3),'top black bar is gone for real 4:3');
     await page.evaluate(()=>document.exitFullscreen());
 
+    // The fixture uses the same work/episode/server for all PC runs.
+    // Clear the 4:3 selection before testing the legacy 16:9 native retry.
+    await page.evaluate(()=>localStorage.removeItem('anime_player_aspect:ak_fixture:1:sub:HD-1'));
     // PC: when the provider consumes the first activation, keep Pi captions
     // in the web panel and offer the fullscreen retry on a new click.
     await ready(page,'?source=anikoto&ratio=16%3A9');
