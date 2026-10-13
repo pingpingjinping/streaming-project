@@ -96,3 +96,37 @@ export function updateSubtitleHud(
   const display = text ? "block" : "none";
   if (element.style.display !== display) element.style.display = display;
 }
+
+/** Infer the *display* picture ratio only from explicit player metadata.
+ * An HLS RESOLUTION like 720x480 alone is ambiguous (anamorphic DVD/video).
+ * Cross-origin embeds may not send this metadata at all.
+ */
+export function aspectFromPlayerMessage(message: unknown): number | null {
+  if (!message || typeof message !== "object") return null;
+  const data = message as Record<string, unknown>;
+  const parseRatio = (value: unknown): number | null => {
+    if (typeof value === "number") return Number.isFinite(value) && value > 0 ? value : null;
+    if (typeof value !== "string") return null;
+    const pair = value.match(/^\s*(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)\s*$/);
+    if (pair) {
+      const denominator = Number(pair[2]);
+      return denominator > 0 ? Number(pair[1]) / denominator : null;
+    }
+    const numeric = Number(value);
+    return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+  };
+  const classify = (ratio: number | null): number | null => {
+    if (ratio === null) return null;
+    if (Math.abs(ratio - 4 / 3) < 0.07) return 4 / 3;
+    if (Math.abs(ratio - 16 / 9) < 0.07) return 16 / 9;
+    return null;
+  };
+  const explicit = parseRatio(data.displayAspectRatio ?? data.display_aspect_ratio ?? data.dar);
+  if (explicit !== null) return classify(explicit);
+  const width = Number(data.videoWidth), height = Number(data.videoHeight);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+  const sar = parseRatio(data.sampleAspectRatio ?? data.sample_aspect_ratio);
+  // Anamorphic sources are only safe when pixel aspect ratio is known.
+  return classify((width / height) * (sar ?? 1));
+}
+
