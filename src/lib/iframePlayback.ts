@@ -97,9 +97,10 @@ export function updateSubtitleHud(
   if (element.style.display !== display) element.style.display = display;
 }
 
-/** Infer the *display* picture ratio only from explicit player metadata.
- * An HLS RESOLUTION like 720x480 alone is ambiguous (anamorphic DVD/video).
- * Cross-origin embeds may not send this metadata at all.
+/** Prefer explicit display/pixel aspect metadata. For Anikoto's auto mode,
+ * missing pixel aspect metadata permits a heuristic: video width/height <= 1.6
+ * is treated as 4:3. This can misclassify anamorphic SD widescreen sources;
+ * a manual choice or explicit DAR/SAR takes precedence. Embeds may send no sizes.
  */
 export function aspectFromPlayerMessage(message: unknown): number | null {
   if (!message || typeof message !== "object") return null;
@@ -110,7 +111,8 @@ export function aspectFromPlayerMessage(message: unknown): number | null {
     const pair = value.match(/^\s*(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)\s*$/);
     if (pair) {
       const denominator = Number(pair[2]);
-      return denominator > 0 ? Number(pair[1]) / denominator : null;
+      const ratio = Number(pair[1]) / denominator;
+      return Number.isFinite(ratio) && ratio > 0 ? ratio : null;
     }
     const numeric = Number(value);
     return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
@@ -122,11 +124,15 @@ export function aspectFromPlayerMessage(message: unknown): number | null {
     return null;
   };
   const explicit = parseRatio(data.displayAspectRatio ?? data.display_aspect_ratio ?? data.dar);
-  if (explicit !== null) return classify(explicit);
+  if (explicit !== null) return classify(explicit) ?? explicit;
   const width = Number(data.videoWidth), height = Number(data.videoHeight);
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
   const sar = parseRatio(data.sampleAspectRatio ?? data.sample_aspect_ratio);
-  // Anamorphic sources are only safe when pixel aspect ratio is known.
-  return classify((width / height) * (sar ?? 1));
+  const ratio = (width / height) * (sar ?? 1);
+  if (!Number.isFinite(ratio) || ratio <= 0) return null;
+  if (sar !== null) return classify(ratio) ?? ratio;
+  if (ratio <= 1.6) return 4 / 3;
+  // Keep widescreen metadata, including 21:9, out of the 4:3 heuristic.
+  return classify(ratio) ?? (ratio > 16 / 9 ? ratio : null);
 }
 

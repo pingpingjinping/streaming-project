@@ -12,11 +12,13 @@ for(const file of ['playerFullscreen','iframePlayback','subtitlePresentation','s
 const subtitle={name:'Pi track',is_ass:false,content:'WEBVTT\n\n00:01:59.000 --> 00:02:05.000\nPi caption\n'};
 let providerUrl,appUrl,embedLoads=0;
 const provider=http.createServer((req,res)=>{
-  embedLoads++;const wide=new URL(req.url,providerUrl).searchParams.get('ratio')==='16:9';
+  embedLoads++;const params=new URL(req.url,providerUrl).searchParams;
+  const wide=params.get('ratio')==='16:9';
+  const aspectHint=params.get('hint')==='sd' ? {videoWidth:720,videoHeight:480} : {};
   res.setHeader('Content-Type','text/html');res.end(`<!doctype html><style>html,body,#media{margin:0;width:100%;height:100%;background:black}video{width:100%;height:100%;object-fit:contain}button{position:absolute;top:4px;right:4px}#parent{left:4px;right:auto}</style>
   <div id="media"><video autoplay muted playsinline></video><button id="native" onclick="document.querySelector('#media').requestFullscreen()">Provider native fullscreen</button><button id="parent" onclick="parent.postMessage({zenCommand:'toggleFullscreen'},'*')">Provider parent fullscreen</button></div>
   <script>const c=document.createElement('canvas');c.width=320;c.height=${wide?180:240};const ctx=c.getContext('2d');function draw(){ctx.fillStyle='rgb(24,180,90)';ctx.fillRect(0,0,c.width,c.height);}draw();setInterval(draw,50);document.querySelector('video').srcObject=c.captureStream(10);
-  addEventListener('message',e=>{if(['getStatus','getTime','seek'].includes(e.data.command))parent.postMessage({currentTime:120,duration:600,paused:false},'*');});</script>`);
+  addEventListener('message',e=>{if(['getStatus','getTime','seek'].includes(e.data.command))parent.postMessage({currentTime:120,duration:600,paused:false,...${JSON.stringify(aspectHint)}},'*');});</script>`);
 });
 const cssDir=path.join(root,'.next/static/css'),styles=fs.readdirSync(cssDir).filter(name=>name.endsWith('.css'));
 const app=http.createServer((req,res)=>{
@@ -30,7 +32,7 @@ const app=http.createServer((req,res)=>{
   cache['lucide-react']={exports:new Proxy({},{get:()=>empty})};cache['next/link']={exports:({children,prefetch,...props})=>React.createElement('a',props,children)};
   for(const name of ['./SubtitleSelectModal','./SponsorSubtitleSyncModal'])cache[name]={exports:{__esModule:true,default:empty}};
   cache['./PlayerSettingsModal']={exports:{__esModule:true,default:empty,DEFAULT_PLAYER_SETTINGS:${JSON.stringify(settings.DEFAULT_PLAYER_SETTINGS)},loadPlayerSettings:()=>(${JSON.stringify(settings.DEFAULT_PLAYER_SETTINGS)}),fetchUserSettingsFromDb:async()=>({authenticated:false}),applyPlayerSettingsStyles(){},getSubtitleOffsetY:()=>0}};
-  const p=new URLSearchParams(location.search),source=p.get('source')||'anikoto',embed=${JSON.stringify(providerUrl)}+'/?ratio='+encodeURIComponent(p.get('ratio')||'4:3');
+  const p=new URLSearchParams(location.search),source=p.get('source')||'anikoto',embed=${JSON.stringify(providerUrl)}+'/?ratio='+encodeURIComponent(p.get('ratio')||'4:3')+'&hint='+encodeURIComponent(p.get('hint')||'');
   require('react-dom/client').createRoot(document.getElementById('root')).render(React.createElement(require('./IframePlayer').default,{animeId:'ak_fixture',animeTitle:'Fixture',episodeNumber:1,embedUrl:embed,serverSources:[{id:source,label:'HD-1',key:'sub:HD-1',player_url:embed}],initialSubtitle:${JSON.stringify(subtitle)}}));`;
   new vm.Script(script);
   res.setHeader('Content-Type','text/html');res.end(`<!doctype html><meta charset="utf-8">${styles.map(name=>`<link rel="stylesheet" href="/styles/${name}">`).join('')}<style>body{margin:0;padding:20px;background:black}canvas{display:none!important}</style><div id="root"></div><script>${script}</script>`);
@@ -82,6 +84,44 @@ const app=http.createServer((req,res)=>{
       await checkPicture(page,ratio);assert.equal(embedLoads,before,'provider fullscreen uses the same restored frame without reload');
       await page.evaluate(()=>document.exitFullscreen());
     }
+    // Auto mode receives coded SD dimensions from the provider, without DAR/SAR.
+    // Verify both device paths infer 4:3 without a manual choice or iframe reload.
+    for(const device of [
+      {userAgent:'Mozilla/5.0 Chrome/150 Whale/5.39',hasTouch:false},
+      {userAgent:'Mozilla/5.0 (Linux; Android 16) Chrome/150 Mobile Safari/537.36',hasTouch:true},
+    ]) {
+      const autoContext=await browser.newContext({viewport:{width:1000,height:625},...device});
+      const autoPage=await autoContext.newPage();autoPage.on('pageerror',error=>errors.push(error.message));
+      await ready(autoPage,'?source=anikoto&ratio=4%3A3&hint=sd');
+      await autoPage.getByRole('button',{name:'화면 비율 변경'}).filter({hasText:'자동 (4:3)'}).waitFor();
+      const beforeAuto=embedLoads;
+      await autoPage.getByRole('button',{name:'전체화면',exact:true}).click();
+      await autoPage.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
+      await autoPage.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-innerHeight)<2);
+      assert.equal(embedLoads,beforeAuto,'SD heuristic must not reload the iframe');
+      const pixels=await sharp(await autoPage.screenshot()).removeAlpha().raw().toBuffer({resolveWithObject:true});
+      assert.ok(green(pixels.data,pixels.info,500,3),'inferred SD 4:3 picture fills viewport height');
+      await autoPage.getByText('Pi caption',{exact:true}).waitFor();
+      // Manual 16:9 wins over continuing SD metadata and survives refresh.
+      await autoPage.getByRole('button',{name:'화면 비율 변경'}).filter({hasText:'자동 (4:3)'}).first().click();
+      await autoPage.getByRole('button',{name:'화면 비율 변경'}).filter({hasText:'비율 4:3'}).first().click();
+      await checkPicture(autoPage,'4:3');
+      assert.equal(embedLoads,beforeAuto);
+      await autoPage.evaluate(()=>document.exitFullscreen());
+      await ready(autoPage,'?source=anikoto&ratio=4%3A3&hint=sd');
+      await autoPage.getByRole('button',{name:'화면 비율 변경'}).filter({hasText:'비율 16:9'}).waitFor();
+      await autoPage.getByRole('button',{name:'전체화면',exact:true}).click();
+      await autoPage.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
+      await checkPicture(autoPage,'4:3');
+      await autoContext.close();
+    }
+    // Receiving the same size hint from ReAnime leaves its original frame alone.
+    await ready(page,'?source=rean&ratio=4%3A3&hint=sd');
+    await page.getByRole('button',{name:'전체화면',exact:true}).click();
+    await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
+    await checkPicture(page,'4:3');
+    await page.evaluate(()=>document.exitFullscreen());
+
     // Anikoto's own fullscreen uses the whole iframe, but the site's
     // subtitle-inclusive button originally constrained all media to 16:9.
     // Selecting real 4:3 must use the full viewport height without changing
@@ -225,6 +265,6 @@ const app=http.createServer((req,res)=>{
     assert.ok(Math.abs(tabletFrame.height-tabletFrame.width*9/16)<2,'iPad retains its existing portrait framing');
     await tablet.getByRole('button',{name:'전체화면 종료',exact:true}).click();
     assert.deepEqual(errors,[]);
-    console.log('PASS: PC/Android Anikoto 4:3 height fit, native fallback/retry, unchanged 16:9 and Apple framing without reload');
+    console.log('PASS: PC/Android SD auto 4:3, persistent manual override, Anikoto height fit, native fallback/retry, unchanged ReAnime/16:9/Apple without reload');
   }finally{await browser?.close();await Promise.all([new Promise(resolve=>provider.close(resolve)),new Promise(resolve=>app.close(resolve))]);}
 })().catch(error=>{console.error(error);process.exitCode=1;});
