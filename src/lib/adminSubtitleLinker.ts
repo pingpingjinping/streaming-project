@@ -533,7 +533,7 @@ export async function mergeSubtitleFolders(source: string, destination: string) 
       if (!target.startsWith(destination + path.sep)) throw new Error("병합 경로가 올바르지 않습니다.");
       let suffix = 2;
       while (await exists(target)) {
-        target = path.join(destination, parsed.dir, parsed.name + " (추가-" + suffix++ + ")" + parsed.ext);
+        target = path.join(destination, parsed.dir, parsed.name + "__" + suffix++ + parsed.ext);
         if (suffix > 1000) throw new Error("같은 이름의 자막이 너무 많습니다.");
       }
       if (suffix > 2) renamed++;
