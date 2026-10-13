@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readdir, readFile, realpath, stat, writeFile, rename, rm } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rmdir, stat, writeFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { getDb, initDb } from "@/lib/db";
 import { getLocalSubtitleNameEntries, refreshLocalSubtitleNameIndex } from "@/lib/localSubtitleNameIndex";
@@ -316,7 +316,23 @@ export async function saveAdminSubtitleLink(values: {
 
   const sourceRoot = values.relativePath.split("/")[0];
   const destinationRoot = path.join(storageRoot(), sourceRoot);
-  const target = await allocateCanonicalFolder(destinationRoot, title,
+  // Reuse only a VERIFIED, explicitly linked folder for the same reviewed work,
+  // subtitle type, season and provider. A matching title alone is not proof.
+  const existingRows = await sql`SELECT relative_path, anime_id FROM anime_admin_subtitle_links
+    WHERE entry_type='folder' AND anime_id=ANY(${memberIds}::text[])
+      AND subtitle_kind=${values.kind} AND season=${values.season}
+      AND relative_path LIKE ${sourceRoot + "/%"}
+    ORDER BY updated_at ASC LIMIT 100`;
+  let existingTarget: { full: string; name: string } | null = null;
+  for (const row of existingRows) {
+    const folderPath = String(row.relative_path);
+    const verified = await verifiedLocalEntry(folderPath, "folder");
+    if (verified) {
+      existingTarget = { full: verified.full, name: path.basename(verified.full) };
+      break;
+    }
+  }
+  const target = existingTarget || await allocateCanonicalFolder(destinationRoot, title,
     values.type === "folder" ? current.full : undefined);
 
   // Preflight: never rename a folder holding somebody else's stored links or
@@ -332,10 +348,21 @@ export async function saveAdminSubtitleLink(values: {
   }
 
   let moved = false, extracted = false;
+  let scratch: string | null = null;
+  let merge: Awaited<ReturnType<typeof mergeSubtitleFolders>> | null = null;
   try {
-    if (values.type === "zip") {
-      // Existing Pi ZIP: extract a fresh copy into the canonical work folder,
-      // retaining the original archive unchanged for recovery.
+    if (existingTarget && target.full !== current.full) {
+      if (values.type === "zip") {
+        // A Pi ZIP is never modified; expand it in a private temporary folder.
+        scratch = await mkdtemp(path.join(destinationRoot, ".admin-merge-"));
+        const expanded = path.join(scratch, "unpacked");
+        await extractZipAsFolder(await readFile(current.full), expanded);
+        merge = await mergeSubtitleFolders(expanded, target.full);
+      } else {
+        merge = await mergeSubtitleFolders(current.full, target.full);
+      }
+    } else if (values.type === "zip") {
+      // No linked folder yet: create a canonical work folder and retain the ZIP.
       await extractZipAsFolder(await readFile(current.full), target.full);
       extracted = true;
     } else if (target.full !== current.full) {
@@ -348,8 +375,11 @@ export async function saveAdminSubtitleLink(values: {
     const owners = await sql`SELECT relative_path,anime_id FROM anime_admin_subtitle_links
       WHERE relative_path IN (${relativePath},${former}) FOR UPDATE`;
     const newOwner = owners.find(row => row.relative_path === relativePath);
-    if (newOwner && newOwner.anime_id !== values.animeId && former !== relativePath)
+    if (newOwner && !memberIds.includes(String(newOwner.anime_id)) && former !== relativePath)
       throw new Error("같은 폴더에 다른 작품 연결이 있습니다.");
+    const formerOwner = owners.find(row => row.relative_path === former);
+    if (merge && formerOwner && !memberIds.includes(String(formerOwner.anime_id)))
+      throw new Error("다른 작품으로 연결된 원본 폴더는 병합할 수 없습니다.");
 
     await sql.begin(async tx => {
       await tx`DELETE FROM anime_admin_subtitle_links WHERE relative_path=${former}`;
@@ -364,10 +394,20 @@ export async function saveAdminSubtitleLink(values: {
       for(const memberId of memberIds)await tx`INSERT INTO anime_admin_subtitle_link_members(relative_path,anime_id)
         VALUES(${relativePath},${memberId}) ON CONFLICT DO NOTHING`;
     });
+    // Commit succeeded: only now can the temporary upload folder be removed.
+    // A failed cleanup leaves a harmless extra copy rather than losing data.
+    if (merge && values.type === "folder") {
+      try { await rm(current.full, { recursive: true, force: true }); }
+      catch (error) { console.warn("[Admin subtitle merged source cleanup deferred]", error); }
+    }
     try { await refreshLocalSubtitleNameIndex(storageRoot()); }
     catch (error) { console.warn("[Admin subtitle index refresh deferred]", error); }
-    return { relativePath, type: "folder" as const, animeId: values.animeId, title };
+    return { relativePath, type: "folder" as const, animeId: values.animeId, title,
+      merged: merge ? { added: merge.added, skipped: merge.skipped, renamed: merge.renamed } : null };
   } catch (error) {
+    if (merge) await merge.rollback().catch(rollback => {
+      console.error("[Admin subtitle merge rollback failed]", rollback);
+    });
     // Never delete an existing Pi archive on failure.
     if (moved) {
       try { await rename(target.full, current.full); } catch (rollback) {
@@ -376,6 +416,8 @@ export async function saveAdminSubtitleLink(values: {
     }
     if (extracted) await rm(target.full, { recursive: true, force: true }).catch(() => {});
     throw error;
+  } finally {
+    if (scratch) await rm(scratch, { recursive: true, force: true }).catch(() => {});
   }
 }
 
@@ -437,6 +479,80 @@ export async function extractZipAsFolder(bytes: Buffer, destination: string) {
     throw error;
   }
   return entries.length;
+}
+
+/** Merge into an already linked work folder without replacing any Pi file.
+ * Identical contents are skipped, and different files with the same path gain
+ * a suffix. The source remains intact until the DB transaction commits.
+ */
+export async function mergeSubtitleFolders(source: string, destination: string) {
+  if (source === destination) return { added: 0, skipped: 0, renamed: 0, rollback: async () => {} };
+  const listFiles = async (root: string) => {
+    const files: string[] = [];
+    const visit = async (dir: string, depth: number): Promise<void> => {
+      if (depth > 8) throw new Error("자막 폴더 중첩 깊이가 너무 깊습니다.");
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        if (entry.isSymbolicLink()) throw new Error("심볼릭 링크가 있는 폴더는 병합할 수 없습니다.");
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) await visit(full, depth + 1);
+        else if (entry.isFile()) {
+          files.push(full);
+          if (files.length > 1200) throw new Error("자막 파일이 너무 많아 병합할 수 없습니다.");
+        } else throw new Error("지원하지 않는 파일 유형이 있어 병합할 수 없습니다.");
+      }
+    };
+    await visit(root, 0);
+    return files;
+  };
+  const [oldFiles, newFiles] = await Promise.all([listFiles(destination), listFiles(source)]);
+  if (!newFiles.length) throw new Error("병합할 자막 파일이 없습니다.");
+  const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+  const readSafe = async (file: string) => {
+    if ((await stat(file)).size > 32 * 1024 * 1024)
+      throw new Error("32MB가 넘는 파일은 병합할 수 없습니다.");
+    return readFile(file);
+  };
+  const contents = new Set<string>();
+  for (const file of oldFiles) contents.add(digest(await readSafe(file)));
+
+  const addedFiles: string[] = [];
+  const newDirs: string[] = [];
+  const rollback = async () => {
+    for (const file of addedFiles.reverse()) await rm(file, { force: true });
+    for (const dir of newDirs.reverse()) await rmdir(dir).catch(() => {});
+  };
+  let skipped = 0, renamed = 0;
+  try {
+    for (const file of newFiles) {
+      const bytes = await readSafe(file);
+      const hash = digest(bytes);
+      if (contents.has(hash)) { skipped++; continue; }
+      const relative = path.relative(source, file);
+      const parsed = path.parse(relative);
+      let target = path.join(destination, relative);
+      if (!target.startsWith(destination + path.sep)) throw new Error("병합 경로가 올바르지 않습니다.");
+      let suffix = 2;
+      while (await exists(target)) {
+        target = path.join(destination, parsed.dir, parsed.name + " (추가-" + suffix++ + ")" + parsed.ext);
+        if (suffix > 1000) throw new Error("같은 이름의 자막이 너무 많습니다.");
+      }
+      if (suffix > 2) renamed++;
+      const missing: string[] = [];
+      for (let dir = path.dirname(target); dir !== destination; dir = path.dirname(dir)) {
+        if (!dir.startsWith(destination + path.sep)) throw new Error("병합 폴더 경로가 올바르지 않습니다.");
+        if (await exists(dir)) break;
+        missing.unshift(dir);
+      }
+      for (const dir of missing) { await mkdir(dir); newDirs.push(dir); }
+      await writeFile(target, bytes, { flag: "wx" });
+      addedFiles.push(target);
+      contents.add(hash);
+    }
+  } catch (error) {
+    await rollback();
+    throw error;
+  }
+  return { added: addedFiles.length, skipped, renamed, rollback };
 }
 
 /** ZIP uploads are extracted upon receipt; uploaded folders keep relative paths.
