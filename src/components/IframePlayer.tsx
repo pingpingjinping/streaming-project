@@ -133,11 +133,11 @@ export default function IframePlayer({
   // work can offer both ReAnime and Anikoto streams. Never infer the currently
   // playing provider from other (inactive) server options.
   const activeProvider = activeServerSources.find(source => source.key === activeServerKey)?.id
-    ?? activeServerSources.find(source => source.player_url === activeEmbedUrl)?.id;
-  const isAnikotoEmbed = activeProvider === "anikoto"
-    || (!activeProvider && (videoSource === "anikoto" || activeServerSources.some(source => source.id === "anikoto")));
-  const isReAnimeEmbed = activeProvider === "rean"
-    || (!activeProvider && (videoSource === "rean" || videoSource === "reanime"));
+    ?? activeServerSources.find(source => source.player_url === activeEmbedUrl)?.id
+    ?? (videoSource === "anikoto" ? "anikoto" : videoSource === "rean" || videoSource === "reanime" ? "rean" : undefined)
+    ?? (activeServerSources.some(source => source.id === "anikoto") ? "anikoto" : undefined);
+  const isAnikotoEmbed = activeProvider === "anikoto";
+  const isReAnimeEmbed = activeProvider === "rean";
   const hasAspectControl = isAnikotoEmbed || isReAnimeEmbed;
   const [aspectChoice, setAspectChoice] = useState<"auto" | "4:3" | "16:9">("auto");
   const [detectedAspect, setDetectedAspect] = useState<number | null>(null);
