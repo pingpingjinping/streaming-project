@@ -101,6 +101,27 @@ const app=http.createServer((req,res)=>{
     assert.ok(green(fourThreePixels.data,fourThreePixels.info,500,3),'top black bar is gone for real 4:3');
     await page.evaluate(()=>document.exitFullscreen());
 
+    // PC: when the provider consumes the first activation, keep Pi captions
+    // in the web panel and offer the fullscreen retry on a new click.
+    await ready(page,'?source=anikoto&ratio=16%3A9');
+    const beforePcRetry=embedLoads;
+    await page.evaluate(()=>{
+      const original=HTMLElement.prototype.requestFullscreen;let first=true;
+      HTMLElement.prototype.requestFullscreen=function(options){
+        if(this.querySelector('iframe')&&first){first=false;return Promise.reject(Error('activation consumed'));}
+        return original.call(this,options);
+      };
+    });
+    await page.frameLocator('iframe').locator('#native').click();
+    await page.getByRole('button',{name:'전체화면 재시도',exact:true}).waitFor();
+    assert.equal(await page.evaluate(()=>!!document.fullscreenElement),false);
+    await checkPicture(page,'16:9');
+    assert.equal(embedLoads,beforePcRetry,'PC fallback does not reload provider video');
+    await page.getByRole('button',{name:'전체화면 재시도',exact:true}).click();
+    await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
+    await checkPicture(page,'16:9');
+    await page.evaluate(()=>document.exitFullscreen());
+
     const android=await browser.newContext({viewport:{width:1000,height:625},userAgent:'Mozilla/5.0 (Linux; Android 16) Chrome/150 Mobile Safari/537.36',hasTouch:true});
     const phone=await android.newPage();phone.on('pageerror',error=>errors.push(error.message));
     await ready(phone,'?ratio=4%3A3');
@@ -119,18 +140,17 @@ const app=http.createServer((req,res)=>{
     await phone.evaluate(()=>{const original=HTMLElement.prototype.requestFullscreen;let first=true;window.parentFullscreenOptions=[];HTMLElement.prototype.requestFullscreen=function(options){if(this.querySelector('iframe')){window.parentFullscreenOptions.push(options);if(first){first=false;return Promise.reject(Error('activation consumed'));}}return original.call(this,options);};});
     const before=embedLoads;
     await phone.frameLocator('iframe').locator('#native').click();
-    await phone.waitForFunction(()=>document.fullscreenElement?.tagName==='IFRAME'&&window.parentFullscreenOptions.length===1);
-    // Wait for the rejected handoff to settle: native iframe fullscreen must
-    // remain active instead of being replaced with the caption web panel.
-    await phone.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
-    assert.equal(await phone.evaluate(()=>document.fullscreenElement?.tagName),'IFRAME');
-    assert.equal(await phone.getByRole('button',{name:'상태바 숨기기',exact:true}).count(),0);
-    assert.equal(await phone.getByRole('button',{name:'전체화면 종료',exact:true}).count(),0);
-    assert.equal(embedLoads,before,'denied Android provider handoff preserves playback');
-    await phone.frames().find(frame=>frame.url().startsWith(providerUrl)).evaluate(()=>document.exitFullscreen());
-    await phone.waitForFunction(()=>!document.fullscreenElement);
-    // The site button still includes captions and retains its retry path if
-    // its own native request is denied. This is independent of provider mode.
+    await phone.getByRole('button',{name:'상태바 숨기기',exact:true}).waitFor();
+    assert.equal(await phone.evaluate(()=>!!document.fullscreenElement),false,'provider denial falls back to caption web fullscreen');
+    assert.equal(await phone.getByRole('button',{name:'전체화면 종료',exact:true}).count(),1);
+    await checkPicture(phone,'16:9');
+    assert.equal(embedLoads,before,'denied Android handoff keeps video and Pi subtitles loaded');
+    await phone.getByRole('button',{name:'상태바 숨기기',exact:true}).click();
+    await phone.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
+    await checkPicture(phone,'16:9');
+    await phone.evaluate(()=>document.exitFullscreen());
+    // The site's lower button still includes captions and retains its retry
+    // path if its own native request is denied.
     await phone.evaluate(()=>{const original=HTMLElement.prototype.requestFullscreen;let first=true;HTMLElement.prototype.requestFullscreen=function(options){if(this.querySelector('iframe')&&first){first=false;window.parentFullscreenOptions.push(options);return Promise.reject(Error('site request denied'));}return original.call(this,options);};});
     await phone.getByRole('button',{name:'전체화면',exact:true}).click();
     await phone.getByRole('button',{name:'상태바 숨기기',exact:true}).waitFor();
@@ -202,6 +222,6 @@ const app=http.createServer((req,res)=>{
     assert.ok(Math.abs(tabletFrame.height-tabletFrame.width*9/16)<2,'iPad retains its existing portrait framing');
     await tablet.getByRole('button',{name:'전체화면 종료',exact:true}).click();
     assert.deepEqual(errors,[]);
-    console.log('PASS: Anikoto manual 4:3 fills PC/Android height without reload, 16:9 and Apple framing unchanged, Android native handoff');
+    console.log('PASS: PC/Android Anikoto 4:3 height fit, native fallback/retry, unchanged 16:9 and Apple framing without reload');
   }finally{await browser?.close();await Promise.all([new Promise(resolve=>provider.close(resolve)),new Promise(resolve=>app.close(resolve))]);}
 })().catch(error=>{console.error(error);process.exitCode=1;});

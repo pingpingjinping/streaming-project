@@ -172,7 +172,9 @@ export default function IframePlayer({
   const frameAspect = isAnikotoEmbed && !appleWebFullscreen ? resolvedAspect : 16 / 9;
   useContainedPlayerFrame(containerRef, mediaFrameRef, isFullscreen, fullscreenMode === "web", false,
     iphoneWebFullscreen ? 4 / 3 : frameAspect, frameAspect);
-  const showNativeRetry = fullscreenMode === "web" && typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
+  const showNativeRetry = fullscreenMode === "web" && typeof navigator !== "undefined" && !appleWebFullscreen;
+  const nativeRetryLabel = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent)
+    ? "상태바 숨기기" : "전체화면 재시도";
   const fullscreenRef = useRef(isFullscreen);
   fullscreenRef.current = isFullscreen;
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -1437,11 +1439,11 @@ export default function IframePlayer({
             {/* Top Right: Exit Fullscreen Button */}
             <div className="flex items-center justify-end gap-2 pointer-events-auto">
               {showNativeRetry && <button type="button" onClick={async () => {
-                if (await retryNativeFullscreen() === "web") showNotice("이 브라우저에서는 상태바를 숨기지 못했습니다.");
+                if (await retryNativeFullscreen() === "web") showNotice("네이티브 전체화면으로 전환하지 못했습니다.");
               }}
-                title="상태바 숨기기" aria-label="상태바 숨기기"
+                title={nativeRetryLabel} aria-label={nativeRetryLabel}
                 className="flex h-11 items-center gap-1.5 rounded-full bg-slate-900/80 px-3 text-xs font-semibold text-white backdrop-blur-md transition hover:bg-slate-800">
-                <Maximize2 className="h-4 w-4" />상태바 숨기기
+                <Maximize2 className="h-4 w-4" />{nativeRetryLabel}
               </button>}
               <button
                 onClick={toggleFullscreen}
