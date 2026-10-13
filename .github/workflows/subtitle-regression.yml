@@ -77,3 +77,5 @@ jobs:
         run: node scripts/test-iframe-fullscreen-browser.cjs
       - name: Verify video server selection in the iframe player
         run: node scripts/test-video-server-browser.cjs
+      - name: Verify navigation indicators remain until real route completion
+        run: node scripts/test-navigation-loading-browser.cjs
