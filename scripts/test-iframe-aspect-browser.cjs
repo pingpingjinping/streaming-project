@@ -383,7 +383,7 @@ const app=http.createServer((req,res)=>{
     await iphone.getByRole('button',{name:'전체화면 종료',exact:true}).waitFor();
     await iphone.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-390*9/16)<2);
     assert.equal(embedLoads,beforeIphoneReanime,'iPhone manual ReAnime aspect does not reload playback');
-    assert.equal(await iphone.getByRole('button',{name:'화면 비율 변경'}).count(),0,
+    assert.equal(await iphone.locator('.player-fullscreen-viewport').getByRole('button',{name:'화면 비율 변경'}).count(),0,
       'ReAnime aspect control remains outside iPhone fullscreen');
     await iphone.getByRole('button',{name:'전체화면 종료',exact:true}).click();
 
