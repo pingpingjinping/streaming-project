@@ -10,13 +10,17 @@ async function main() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'anime-navigation-'));
   const write = (name, text) => {fs.mkdirSync(path.dirname(path.join(dir, name)), {recursive:true}); fs.writeFileSync(path.join(dir, name), text);};
   fs.symlinkSync(path.join(root, 'node_modules'), path.join(dir, 'node_modules'), 'dir');
+  fs.symlinkSync(path.join(root, 'src'), path.join(dir, 'src'), 'dir');
   write('package.json', JSON.stringify({private:true, dependencies:{next:require('next/package.json').version,react:require('react/package.json').version,'react-dom':require('react-dom/package.json').version}}));
-  write('tsconfig.json', JSON.stringify({compilerOptions:{target:'ES2022',module:'esnext',moduleResolution:'bundler',jsx:'preserve',esModuleInterop:true,paths:{'@/*':[path.join(root, 'src/*')]}},include:['**/*.tsx']}));
+  write('tsconfig.json', JSON.stringify({compilerOptions:{target:'ES2022',module:'esnext',moduleResolution:'bundler',jsx:'preserve',esModuleInterop:true,baseUrl:'.',paths:{'@/*':['src/*']}},include:['app/**/*.tsx']}));
   write('next.config.js', 'module.exports={experimental:{externalDir:true},devIndicators:false};');
+  const cssDir=path.join(root,'.next/static/css');
+  const styles=fs.existsSync(cssDir)?fs.readdirSync(cssDir).filter(name=>name.endsWith('.css')):[];
+  for(const name of styles)write('public/styles/'+name,fs.readFileSync(path.join(cssDir,name)));
   write('app/layout.tsx', `import {Suspense} from 'react';
 import Navbar from '@/components/Navbar';
 import GlobalNavigationIndicator from '@/components/GlobalNavigationIndicator';
-export default function Layout({children}) {return <html><body><Suspense fallback={null}><GlobalNavigationIndicator /></Suspense><Navbar />{children}</body></html>;}`);
+export default function Layout({children}) {return <html><head>${styles.map(name=>`<link rel="stylesheet" href="/styles/${name}" />`).join('')}</head><body><Suspense fallback={null}><GlobalNavigationIndicator /></Suspense><Navbar />{children}</body></html>;}`);
   write('app/Screen.tsx', `import Link from 'next/link';
 import AnimeCard from '@/components/AnimeCard';
 import EpisodeListSection from '@/components/EpisodeListSection';
@@ -43,7 +47,10 @@ export async function screen(name, searchParams) {
     const deadline=Date.now()+120000;
     while(true) {
       if(next.exitCode!==null)throw Error('Next test server exited: '+logs);
-      try {const response=await fetch(base+'/?warm=1',{signal:AbortSignal.timeout(20000)});if(response.ok)break;}catch{}
+      let response;
+      try {response=await fetch(base+'/?warm=1',{signal:AbortSignal.timeout(20000)});}catch{}
+      if(response?.ok)break;
+      if(response?.status>=500)throw Error('Next fixture failed to render: '+(await response.text()).slice(0,6000)+'\n'+logs);
       if(Date.now()>deadline)throw Error('Next test server did not start: '+logs);
       await pause(250);
     }
@@ -61,6 +68,7 @@ export async function screen(name, searchParams) {
       await pause(8500);
       assert.equal(page.url(),previous,'the delayed server page has not committed yet');
       assert.ok(await page.locator('[data-nav-active] .animate-spin').count(),'spinner must survive the old 8-second cutoff');
+      if(styles.length)assert.notEqual(await page.locator('[data-nav-active] .animate-spin').first().evaluate(el=>getComputedStyle(el).animationName),'none');
       await page.waitForURL(base+target,{timeout:30000});
       await page.waitForFunction(()=>!document.querySelector('[data-nav-active]'));
     }
