@@ -111,6 +111,9 @@ const app=http.createServer((req,res)=>{
     await phone.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-innerHeight)<2);
     assert.equal(embedLoads,beforeAndroidFourThree);
     await phone.evaluate(()=>document.exitFullscreen());
+    // The fixture reuses the same anime/episode/server; restore default auto
+    // instead of carrying the manually saved 4:3 choice into the 16:9 test.
+    await phone.evaluate(()=>localStorage.removeItem('anime_player_aspect:ak_fixture:1:sub:HD-1'));
 
     await ready(phone,'?ratio=16%3A9');
     await phone.evaluate(()=>{const original=HTMLElement.prototype.requestFullscreen;let first=true;window.parentFullscreenOptions=[];HTMLElement.prototype.requestFullscreen=function(options){if(this.querySelector('iframe')){window.parentFullscreenOptions.push(options);if(first){first=false;return Promise.reject(Error('activation consumed'));}}return original.call(this,options);};});
