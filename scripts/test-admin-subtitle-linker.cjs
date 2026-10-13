@@ -118,12 +118,12 @@ test("Same work merges into its linked folder, skips identical bytes, and preser
     assert.equal(result.skipped, 1);
     assert.equal(result.renamed, 1);
     assert.equal(await fsp.readFile(path.join(original,"01.srt"),"utf8"),"existing episode 1");
-    assert.equal(await fsp.readFile(path.join(original,"01 (추가-2).srt"),"utf8"),"another subtitle for episode 1");
+    assert.equal(await fsp.readFile(path.join(original,"01__2.srt"),"utf8"),"another subtitle for episode 1");
     assert.equal(fs.existsSync(path.join(original,"same.srt")),false);
     assert.equal(fs.existsSync(path.join(original,"Extras","04.ass")),true);
     assert.equal(fs.existsSync(path.join(incoming,"01.srt")),true, "original upload survives until DB commit");
     await result.rollback();
-    assert.equal(fs.existsSync(path.join(original,"01 (추가-2).srt")),false);
+    assert.equal(fs.existsSync(path.join(original,"01__2.srt")),false);
     assert.equal(fs.existsSync(path.join(original,"03.srt")),false);
     assert.equal(fs.existsSync(path.join(original,"Extras")),false);
     assert.equal(await fsp.readFile(path.join(original,"01.srt"),"utf8"),"existing episode 1");
