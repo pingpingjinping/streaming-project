@@ -13,8 +13,8 @@ const subtitle={name:'Pi track',is_ass:false,content:'WEBVTT\n\n00:01:59.000 -->
 let providerUrl,appUrl,embedLoads=0;
 const provider=http.createServer((req,res)=>{
   embedLoads++;const wide=new URL(req.url,providerUrl).searchParams.get('ratio')==='16:9';
-  res.setHeader('Content-Type','text/html');res.end(`<!doctype html><style>html,body,#media{margin:0;width:100%;height:100%;background:black}video{width:100%;height:100%;object-fit:contain}button{position:absolute;top:4px;right:4px}</style>
-  <div id="media"><video autoplay muted playsinline></video><button id="native" onclick="document.querySelector('#media').requestFullscreen()">Provider fullscreen</button></div>
+  res.setHeader('Content-Type','text/html');res.end(`<!doctype html><style>html,body,#media{margin:0;width:100%;height:100%;background:black}video{width:100%;height:100%;object-fit:contain}button{position:absolute;top:4px;right:4px}#parent{left:4px;right:auto}</style>
+  <div id="media"><video autoplay muted playsinline></video><button id="native" onclick="document.querySelector('#media').requestFullscreen()">Provider native fullscreen</button><button id="parent" onclick="parent.postMessage({zenCommand:'toggleFullscreen'},'*')">Provider parent fullscreen</button></div>
   <script>const c=document.createElement('canvas');c.width=320;c.height=${wide?180:240};const ctx=c.getContext('2d');function draw(){ctx.fillStyle='rgb(24,180,90)';ctx.fillRect(0,0,c.width,c.height);}draw();setInterval(draw,50);document.querySelector('video').srcObject=c.captureStream(10);
   addEventListener('message',e=>{if(['getStatus','getTime','seek'].includes(e.data.command))parent.postMessage({currentTime:120,duration:600,paused:false},'*');});</script>`);
 });
@@ -74,7 +74,10 @@ const app=http.createServer((req,res)=>{
       await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
       await checkPicture(page,ratio);assert.equal(embedLoads,before,'fullscreen must not reload playback');
       await page.evaluate(()=>document.exitFullscreen());
-      await page.frameLocator('iframe').locator('#native').click();
+      // FlixCloud's bridge requests the caption container through zenCommand.
+      // Native iframe promotion/denial is tested independently in the existing
+      // fullscreen suite; a fullscreen iframe has its own browser top-layer box.
+      await page.frameLocator('iframe').locator('#parent').click();
       await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
       await checkPicture(page,ratio);assert.equal(embedLoads,before,'provider fullscreen uses the same restored frame without reload');
       await page.evaluate(()=>document.exitFullscreen());
