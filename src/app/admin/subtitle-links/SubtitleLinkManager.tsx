@@ -179,7 +179,11 @@ export default function SubtitleLinkManager() {
       });
       setSelected({ relativePath: result.item.relativePath, type: "folder",
         name: result.item.relativePath.split("/").pop(), source: selected.source });
-      setNotice("DB 연결 완료! 자막을 " + result.item.title + " 폴더로 정리했어. " +
+      const merged = result.item.merged;
+      setNotice((merged
+        ? "DB 연결 완료! 기존 " + result.item.title + " 폴더에 합쳤어. 추가 " +
+          merged.added + "개 · 중복 건너뛰기 " + merged.skipped + "개 · 이름 충돌 보존 " + merged.renamed + "개. "
+        : "DB 연결 완료! 자막을 " + result.item.title + " 폴더로 정리했어. ") +
         (selected.type === "zip" ? "원본 Pi ZIP은 별도로 유지돼." : ""));
       await Promise.all([loadLinks(), loadFiles(keyword)]);
     } catch (e) { setError(e instanceof Error ? e.message : "연결에 실패했습니다."); }
@@ -232,7 +236,7 @@ export default function SubtitleLinkManager() {
           {!fileSearching && fileTotal !== null && fileTotal === 0 ?
             <span className="text-amber-300"> · 상위 폴더 경로 또는 ZIP 이름으로 검색해 봐.</span> : null}
         </div>
-        <p className="text-xs text-slate-400">애니시아·AniAll·Naver의 기존 폴더/ZIP 지원. 연결 시 폴더 이름은 DB 작품명으로 변경하고, ZIP은 별도 폴더에 풀어. 다른 사용자의 저장된 자막 지정과 충돌하는 폴더는 이동하지 않아.</p>
+        <p className="text-xs text-slate-400">애니시아·AniAll·Naver의 기존 폴더/ZIP 지원. 연결 시 같은 DB 작품·시즌·종류의 기존 연결 폴더가 있으면 새 자막만 병합해. 기존 연결이 없으면 DB 작품명 폴더를 만들고, ZIP은 압축을 풀어. 다른 사용자의 저장된 자막 지정과 충돌하는 폴더는 이동하지 않아.</p>
         <div className="max-h-72 space-y-1 overflow-y-auto rounded-lg border border-white/10 bg-slate-950/70 p-2">
           {files.length ? files.map(item => <button key={item.relativePath} type="button"
             onClick={()=>setSelected(item)}
@@ -337,7 +341,7 @@ export default function SubtitleLinkManager() {
         {busy ? <Loader2 className="mr-2 inline h-4 w-4 animate-spin"/> : <Link2 className="mr-2 inline h-4 w-4"/>}
         자막 ↔ 작품 DB 연결 저장
       </button>
-      <p className="text-xs text-slate-500">저장 시 폴더명을 DB 작품명으로 변경해. 기존 Pi ZIP을 선택하면 새 작품명 폴더에 압축을 풀고 원본 ZIP은 보존해. 같은 이름의 폴더가 있으면 (2), (3)으로 구별하며, 확실한 회차만 자동 연결해.</p>
+      <p className="text-xs text-slate-500">저장 시 같은 작품 DB 연결의 동일 시즌·종류 폴더가 있으면 그 안에 합쳐. 완전히 같은 파일은 건너뛰고, 이름만 같은 다른 파일은 (추가-2)처럼 보존해. 연결된 폴더가 없으면 DB 작품명으로 새 폴더를 만들어. Pi ZIP 원본은 유지하고, 회차가 확실한 자막만 자동 연결해.</p>
     </section>
 
     {(notice || error) && <p role="status" className={`rounded-lg p-3 text-xs ${error?"bg-rose-950/50 text-rose-200":"bg-emerald-950/50 text-emerald-200"}`}>{error || notice}</p>}
