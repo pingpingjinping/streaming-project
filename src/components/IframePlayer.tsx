@@ -129,10 +129,16 @@ export default function IframePlayer({
   const octopusRef = useRef<any>(null);
   const currentBlobUrlRef = useRef<string | null>(null);
 
-  // Anikoto's own fullscreen expands the iframe; the site's fullscreen used
-  // to force its subtitle+iframe frame to 16:9, leaving top/bottom bars on
-  // narrower displays. Only known 4:3 sources may change that frame.
-  const isAnikotoEmbed = videoSource === "anikoto" || activeServerSources.some(source => source.id === "anikoto");
+  // The active server takes priority over the original work's provider: a
+  // work can offer both ReAnime and Anikoto streams. Never infer the currently
+  // playing provider from other (inactive) server options.
+  const activeProvider = activeServerSources.find(source => source.key === activeServerKey)?.id
+    ?? activeServerSources.find(source => source.player_url === activeEmbedUrl)?.id;
+  const isAnikotoEmbed = activeProvider === "anikoto"
+    || (!activeProvider && (videoSource === "anikoto" || activeServerSources.some(source => source.id === "anikoto")));
+  const isReAnimeEmbed = activeProvider === "rean"
+    || (!activeProvider && (videoSource === "rean" || videoSource === "reanime"));
+  const hasAspectControl = isAnikotoEmbed || isReAnimeEmbed;
   const [aspectChoice, setAspectChoice] = useState<"auto" | "4:3" | "16:9">("auto");
   const [detectedAspect, setDetectedAspect] = useState<number | null>(null);
   // Use the catalog work ID so episodes and provider/server changes share one
@@ -140,7 +146,7 @@ export default function IframePlayer({
   const aspectStorageKey = `anime_player_aspect:work:${animeId}`;
   const legacyAspectStorageKey = `anime_player_aspect:${sourceAnimeId || animeId}:${sourceEpisodeNumber ?? episodeNumber}:${activeServerKey || "default"}`;
   useEffect(() => {
-    if (!isAnikotoEmbed) { setAspectChoice("auto"); setDetectedAspect(null); return; }
+    if (!hasAspectControl) { setAspectChoice("auto"); setDetectedAspect(null); return; }
     let saved: string | null = null;
     try {
       saved = localStorage.getItem(aspectStorageKey);
@@ -154,7 +160,7 @@ export default function IframePlayer({
     } catch {}
     setAspectChoice(saved === "4:3" || saved === "16:9" ? saved : "auto");
     setDetectedAspect(null);
-  }, [aspectStorageKey, legacyAspectStorageKey, activeEmbedUrl, isAnikotoEmbed]);
+  }, [aspectStorageKey, legacyAspectStorageKey, activeEmbedUrl, hasAspectControl]);
   const cycleAspectChoice = () => {
     const next = aspectChoice === "auto" ? "4:3" : aspectChoice === "4:3" ? "16:9" : "auto";
     setAspectChoice(next);
@@ -181,9 +187,15 @@ export default function IframePlayer({
   // States
   const { mode: fullscreenMode, isFullscreen, toggleFullscreen, retryNativeFullscreen, appleWebFullscreen } = usePlayerFullscreen(containerRef);
   const iphoneWebFullscreen = appleWebFullscreen && /iPhone/i.test(navigator.userAgent);
-  const frameAspect = isAnikotoEmbed && !appleWebFullscreen ? resolvedAspect : 16 / 9;
+  // ReAnime's AUTO deliberately retains its legacy 16:9 frame. Unlike
+  // Anikoto, it does not use iframe video-size hints to guess a new ratio.
+  // A manual ReAnime choice resizes only our frame (including on Apple), not
+  // the provider's video node or its own internal black padding.
+  const reanimeManualAspect = isReAnimeEmbed && aspectChoice !== "auto";
+  const frameAspect = reanimeManualAspect || (isAnikotoEmbed && !appleWebFullscreen)
+    ? resolvedAspect : 16 / 9;
   useContainedPlayerFrame(containerRef, mediaFrameRef, isFullscreen, fullscreenMode === "web", false,
-    iphoneWebFullscreen ? 4 / 3 : frameAspect, frameAspect);
+    iphoneWebFullscreen && !reanimeManualAspect ? 4 / 3 : frameAspect, frameAspect);
   const showNativeRetry = fullscreenMode === "web" && typeof navigator !== "undefined" && !appleWebFullscreen;
   const nativeRetryLabel = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent)
     ? "상태바 숨기기" : "전체화면 재시도";
@@ -1625,9 +1637,9 @@ export default function IframePlayer({
               {subSize === "small" ? "작게" : subSize === "normal" ? "보통" : "크게"}
             </button>
 
-            {isAnikotoEmbed && (
+            {hasAspectControl && (
               <button type="button" onClick={cycleAspectChoice}
-                title="Anikoto 영상 비율 변경: 자동 → 4:3 → 16:9 (이 작품 모든 회차에 저장)"
+                title="영상 비율 변경: 자동 → 4:3 → 16:9 (이 작품 모든 회차에 저장)"
                 aria-label="화면 비율 변경"
                 className="flex items-center gap-1 rounded-lg border border-white/10 bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-purple-500 hover:text-white cursor-pointer">
                 비율 {aspectLabel}
