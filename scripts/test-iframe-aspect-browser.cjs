@@ -87,15 +87,57 @@ const app=http.createServer((req,res)=>{
     await checkPicture(phone,'4:3');assert.equal(embedLoads,before);
     await phone.evaluate(()=>document.exitFullscreen());
     const apple=await browser.newContext({viewport:{width:390,height:844},userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1',hasTouch:true});
-    const iphone=await apple.newPage();iphone.on('pageerror',error=>errors.push(error.message));await ready(iphone);
-    await iphone.evaluate(()=>{window.nativeCalls=0;HTMLElement.prototype.requestFullscreen=()=>{window.nativeCalls++;return Promise.reject(Error('iPhone must retain web mode'));};});
-    await iphone.getByRole('button',{name:'전체화면',exact:true}).click();
-    await iphone.getByRole('button',{name:'전체화면 종료',exact:true}).waitFor();
-    const box=await iphone.locator('iframe').boundingBox();assert.ok(Math.abs(box.height-390*9/16)<2,'existing iPhone portrait framing remains unchanged');
-    assert.equal(await iphone.getByRole('button',{name:'상태바 숨기기',exact:true}).count(),0);
-    assert.equal(await iphone.evaluate(()=>window.nativeCalls),0);
-    await iphone.getByRole('button',{name:'전체화면 종료',exact:true}).click();
+    const iphone=await apple.newPage();iphone.on('pageerror',error=>errors.push(error.message));
+    for(const ratio of ['4:3','16:9']) {
+      await iphone.setViewportSize({width:390,height:844});
+      await ready(iphone,`?ratio=${encodeURIComponent(ratio)}`);
+      await iphone.evaluate(()=>{window.nativeCalls=0;HTMLElement.prototype.requestFullscreen=()=>{window.nativeCalls++;return Promise.reject(Error('iPhone must retain web mode'));};});
+      const before=embedLoads;
+      await iphone.getByRole('button',{name:'전체화면',exact:true}).click();
+      await iphone.getByRole('button',{name:'전체화면 종료',exact:true}).waitFor();
+      async function checkAppleFrame(width,height,expectedWidth,expectedHeight){
+        await iphone.waitForFunction(({w,h})=>{const b=document.querySelector('iframe')?.getBoundingClientRect();return b&&Math.abs(b.width-w)<2&&Math.abs(b.height-h)<2;},{w:expectedWidth,h:expectedHeight});
+        await iphone.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+        const box=await iphone.locator('iframe').boundingBox();
+        assert.ok(box.x>=-1&&box.y>=-1&&box.x+box.width<=width+1&&box.y+box.height<=height+1);
+        const rect=await iphone.getByText('Pi caption',{exact:true}).boundingBox();
+        assert.ok(rect&&rect.y>=box.y&&rect.y+rect.height<=box.y+box.height,'caption stays inside the resized media frame');
+        const image=await sharp(await iphone.screenshot()).removeAlpha().raw().toBuffer({resolveWithObject:true});
+        let whites=0;for(let y=Math.ceil(rect.y);y<Math.floor(rect.y+rect.height);y++)for(let x=Math.ceil(rect.x);x<Math.floor(rect.x+rect.width);x++){const i=(y*image.info.width+x)*image.info.channels;if(image.data[i]>220&&image.data[i+1]>220&&image.data[i+2]>220)whites++;}
+        assert.ok(whites>20,'iPhone Pi caption is painted after rotation');
+        if(height>width){
+          assert.ok(green(image.data,image.info,box.x+3,box.y+box.height/2),'portrait picture reaches the left edge');
+          assert.ok(green(image.data,image.info,box.x+box.width-4,box.y+box.height/2),'portrait picture reaches the right edge');
+          assert.equal(green(image.data,image.info,box.x+box.width/2,box.y+3),ratio==='4:3','16:9 retains its natural portrait letterbox');
+          if(ratio==='16:9'){
+            // Its actual picture remains 390x219; only the surrounding frame grows.
+            assert.equal(green(image.data,image.info,195,box.y+(292.5-219.375)/2-3),false);
+            assert.ok(green(image.data,image.info,195,box.y+(292.5-219.375)/2+3));
+          }
+        } else {
+          assert.equal(green(image.data,image.info,box.x+3,box.y+box.height/2),ratio==='16:9','landscape retains its legacy 16:9 frame');
+        }
+      }
+      await checkAppleFrame(390,844,390,292.5);
+      assert.equal(await iphone.getByRole('button',{name:'상태바 숨기기',exact:true}).count(),0);
+      await iphone.setViewportSize({width:844,height:390});
+      await checkAppleFrame(844,390,390*16/9,390);
+      await iphone.setViewportSize({width:390,height:844});
+      await checkAppleFrame(390,844,390,292.5);
+      assert.equal(embedLoads,before,'iPhone fullscreen and rotation never reload the embed');
+      assert.equal(await iphone.evaluate(()=>window.nativeCalls),0);
+      await iphone.getByRole('button',{name:'전체화면 종료',exact:true}).click();
+      const normal=await iphone.locator('iframe').boundingBox();
+      assert.ok(Math.abs(normal.height-normal.width*9/16)<2,'exit restores the normal page frame');
+    }
+    const ipad=await browser.newContext({viewport:{width:768,height:1024},userAgent:'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15',hasTouch:true});
+    const tablet=await ipad.newPage();tablet.on('pageerror',error=>errors.push(error.message));await ready(tablet);
+    await tablet.getByRole('button',{name:'전체화면',exact:true}).click();
+    await tablet.getByRole('button',{name:'전체화면 종료',exact:true}).waitFor();
+    const tabletFrame=await tablet.locator('iframe').boundingBox();
+    assert.ok(Math.abs(tabletFrame.height-tabletFrame.width*9/16)<2,'iPad retains its existing portrait framing');
+    await tablet.getByRole('button',{name:'전체화면 종료',exact:true}).click();
     assert.deepEqual(errors,[]);
-    console.log('PASS: real iframe 4:3/16:9 pixels, Pi caption painting, Android fallback/native retry without reload, and unchanged iPhone web framing');
+    console.log('PASS: real iframe 4:3/16:9 pixels, Pi caption painting, Android fallback/native retry without reload, iPhone portrait width/landscape rotation without reload, and unchanged iPad framing');
   }finally{await browser?.close();await Promise.all([new Promise(resolve=>provider.close(resolve)),new Promise(resolve=>app.close(resolve))]);}
 })().catch(error=>{console.error(error);process.exitCode=1;});

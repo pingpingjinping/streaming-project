@@ -173,6 +173,37 @@ test('web fullscreen covers the visible Safari viewport, follows offset/rotation
   assert.deepEqual(container.style, initial);
 });
 
+test('iPhone portrait fits a width-filling 4:3 picture, rotates back to legacy landscape and restores the page', () => {
+  const viewport=Object.assign(new EventTarget(),{width:390,height:700,offsetLeft:0,offsetTop:24});
+  const window=Object.assign(new EventTarget(),{visualViewport:viewport,innerWidth:390,innerHeight:844});
+  const initial={width:'',height:'',top:'',left:'',right:'',bottom:''};
+  const container={style:{...initial},
+    get clientWidth(){return parseFloat(this.style.width)||window.innerWidth;},
+    get clientHeight(){return parseFloat(this.style.height)||window.innerHeight;},
+  };
+  const frame={style:{width:'',height:''}};
+  let cleanup,padding={paddingLeft:'0',paddingRight:'0',paddingTop:'0',paddingBottom:'0'};
+  const {useContainedPlayerFrame}=load('src/components/useContainedPlayerFrame.ts',{
+    react:{useLayoutEffect(fn){cleanup=fn();}},'@/lib/playerFullscreen':api,
+  },{window,getComputedStyle:()=>padding});
+  useContainedPlayerFrame({current:container},{current:frame},true,true,false,4/3);
+  assert.equal(frame.style.width,'390px');assert.equal(frame.style.height,'292.5px');
+  const widePicture=api.containedPlayerSize(390,292.5,16/9);
+  assert.equal(widePicture.width,390);assert.equal(widePicture.height,219.375);
+  viewport.height=600;viewport.dispatchEvent(new Event('resize'));
+  assert.equal(frame.style.height,'292.5px');
+  Object.assign(viewport,{width:844,height:390,offsetTop:0});
+  padding={paddingLeft:'47px',paddingRight:'47px',paddingTop:'0',paddingBottom:'21px'};
+  window.dispatchEvent(new Event('orientationchange'));
+  assert.equal(parseFloat(frame.style.height),369);
+  assert.ok(Math.abs(parseFloat(frame.style.width)-369*16/9)<1e-8);
+  Object.assign(viewport,{width:390,height:700,offsetTop:24});
+  padding={paddingLeft:'0',paddingRight:'0',paddingTop:'0',paddingBottom:'0'};
+  viewport.dispatchEvent(new Event('resize'));
+  assert.equal(frame.style.width,'390px');assert.equal(frame.style.height,'292.5px');
+  cleanup();assert.deepEqual(frame.style,{width:'',height:''});assert.deepEqual(container.style,initial);
+});
+
 test('provider viewport framing removes the extra 16:9 letterbox and follows rotation without reloading the frame', () => {
   const window=Object.assign(new EventTarget(),{visualViewport:new EventTarget()});
   const container={clientWidth:2944,clientHeight:1840};
