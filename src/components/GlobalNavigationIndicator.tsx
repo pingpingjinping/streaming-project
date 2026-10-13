@@ -12,19 +12,15 @@ export default function GlobalNavigationIndicator() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const activeElRef = useRef<HTMLElement | null>(null);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // 페이지 이동 완료(URL 또는 쿼리 변경) 시 로딩 상태 해제
+  const routeKey = `${pathname}?${searchParams.toString()}`;
+
+  // A committed route, not elapsed time or a new searchParams object, ends loading.
   useEffect(() => {
     resetLoading();
-  }, [pathname, searchParams]);
+  }, [routeKey]);
 
   const resetLoading = () => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-
     // data-nav-active가 붙어 있는 모든 요소 복구
     const elements = document.querySelectorAll<HTMLElement>("[data-nav-active]");
     elements.forEach((el) => {
@@ -59,12 +55,15 @@ export default function GlobalNavigationIndicator() {
         return;
       }
 
-      const target = e.target as HTMLElement | null;
-      if (!target) return;
+      const target = e.target;
+      if (!(target instanceof Element)) return;
 
       // 가장 가까운 링크(a) 또는 명시적 네비게이션 버튼 탐색
       const link = target.closest<HTMLAnchorElement>("a[href]");
       if (!link) return;
+      // Controls inside cards may prevent navigation (e.g. delete a history row).
+      const control = target.closest('button, input, select, textarea, [role="button"]');
+      if (control && control !== link) return;
 
       const href = link.getAttribute("href");
       if (!href) return;
@@ -82,29 +81,15 @@ export default function GlobalNavigationIndicator() {
         return;
       }
 
-      // 외부 도메인 링크 제외
-      if (href.startsWith("http://") || href.startsWith("https://")) {
-        try {
-          const url = new URL(href);
-          if (url.origin !== window.location.origin) {
-            return;
-          }
-        } catch {
-          return;
-        }
-      }
-
-      // 현재 페이지와 완전히 동일한 URL인 경우 제외
+      // Ignore external URLs and same-route/hash-only links: neither commits a new route.
       try {
-        const targetUrl = new URL(href, window.location.origin);
-        if (
-          targetUrl.pathname === window.location.pathname &&
-          targetUrl.search === window.location.search &&
-          targetUrl.hash === window.location.hash
-        ) {
-          return;
-        }
-      } catch {}
+        const targetUrl = new URL(href, window.location.href);
+        if (targetUrl.origin !== window.location.origin ||
+          (targetUrl.pathname === window.location.pathname && targetUrl.search === window.location.search)) return;
+      } catch { return; }
+
+      // An error/replacement may remove the old link without changing the URL.
+      if (activeElRef.current && !activeElRef.current.isConnected) resetLoading();
 
       // 이미 다른 네비게이션 진행 중이면 중복 클릭 방지
       if (activeElRef.current) {
@@ -121,8 +106,6 @@ export default function GlobalNavigationIndicator() {
 
       // 컴포넌트 자체에서 이미 animate-spin 스피너를 표시 중이라면 중복 주입 방지
       if (link.querySelector(".animate-spin")) {
-        // 8초 후 자동 해제 안전장치
-        timeoutRef.current = setTimeout(resetLoading, 8000);
         return;
       }
 
@@ -166,22 +149,14 @@ export default function GlobalNavigationIndicator() {
           link.insertBefore(spinner, link.firstChild);
         }
       }
-
-      // 8초 후 자동 해제 안전장치 (네트워크 중단 등 대비)
-      timeoutRef.current = setTimeout(resetLoading, 8000);
     };
 
     window.addEventListener("click", handleClick, { capture: true });
     window.addEventListener("pageshow", resetLoading);
-    window.addEventListener("popstate", resetLoading);
 
     return () => {
       window.removeEventListener("click", handleClick, { capture: true });
       window.removeEventListener("pageshow", resetLoading);
-      window.removeEventListener("popstate", resetLoading);
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
     };
   }, []);
 

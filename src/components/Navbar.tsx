@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Film, Search, Loader2, LogIn, LogOut, User, Globe, Settings, Users, ChevronDown, RefreshCw, Link2, FolderOpen } from "lucide-react";
 import BaseUrlSettingsModal from "./BaseUrlSettingsModal";
@@ -27,11 +27,10 @@ export default function Navbar() {
   const [domainStatus, setDomainStatus] = useState<"healthy" | "unhealthy" | "loading">("loading");
   const [activeSource, setActiveSource] = useState<StreamingSource>("anissia");
   const [isNavHidden, setIsNavHidden] = useState(false);
-  const [isSearching, setIsSearching] = useState(false);
+  const [isSearching, startSearchTransition] = useTransition();
 
   const menuRef = useRef<HTMLDivElement>(null);
   const lastScrollYRef = useRef(0);
-  const searchSafetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const router = useRouter();
 
   // 쿠키에서 현재 active source 확인
@@ -114,28 +113,6 @@ export default function Navbar() {
   }, [isMenuOpen, isSettingsOpen, isSourceModalOpen]);
 
   useEffect(() => {
-    const handleNavigationComplete = () => {
-      if (searchSafetyTimerRef.current) {
-        clearTimeout(searchSafetyTimerRef.current);
-        searchSafetyTimerRef.current = null;
-      }
-      setIsSearching(false);
-    };
-
-    window.addEventListener("anime-navigation-complete", handleNavigationComplete);
-    window.addEventListener("pageshow", handleNavigationComplete);
-
-    return () => {
-      window.removeEventListener("anime-navigation-complete", handleNavigationComplete);
-      window.removeEventListener("pageshow", handleNavigationComplete);
-      if (searchSafetyTimerRef.current) {
-        clearTimeout(searchSafetyTimerRef.current);
-        searchSafetyTimerRef.current = null;
-      }
-    };
-  }, []);
-
-  useEffect(() => {
     fetch("/api/auth/me")
       .then((res) => res.json())
       .then((data) => {
@@ -194,14 +171,12 @@ export default function Navbar() {
       ? `&search_mode=${mode}` : "";
     const target = `/?tab=search&q=${encodeURIComponent(query)}${scopeParam}${linkedParam}${modeParam}`;
 
-    setIsSearching(true);
-    if (searchSafetyTimerRef.current) clearTimeout(searchSafetyTimerRef.current);
-    searchSafetyTimerRef.current = setTimeout(() => {
-      searchSafetyTimerRef.current = null;
-      setIsSearching(false);
-    }, 8000);
-
-    router.push(target);
+    // Next keeps the transition pending until the result commits, including
+    // slow searches and refreshes of the same search URL.
+    startSearchTransition(() => {
+      if (target === window.location.pathname + window.location.search) router.refresh();
+      else router.push(target);
+    });
   };
 
   const handleLogout = async () => {
