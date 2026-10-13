@@ -474,13 +474,13 @@ test('provider iframe fullscreen promotes the caption container when native tran
   assert.equal(doc.fullscreenElement,container);
   assert.deepEqual(requests,[container]);
 });
-test('denied desktop provider promotion retains native fullscreen and never traps Escape in CSS mode', async () => {
+test('denied desktop provider promotion switches to subtitle web fullscreen for native retry', async () => {
   const child={},events=[],doc={fullscreenElement:child,exitFullscreen:async()=>{events.push('exit');doc.fullscreenElement=null;}};
   const container={contains:el=>el===child,requestFullscreen:async()=>{events.push('request');throw new Error('activation consumed');}};
   const desktop={userAgent:'Mozilla/5.0 Chrome/150 Whale/5.39',maxTouchPoints:0};
-  assert.equal(await api.preservePlayerFullscreen(container,doc,desktop),null);
-  assert.deepEqual(events,['request']);
-  assert.equal(doc.fullscreenElement,child);
+  assert.equal(await api.preservePlayerFullscreen(container,doc,desktop),'web');
+  assert.deepEqual(events,['request','exit']);
+  assert.equal(doc.fullscreenElement,null);
 });
 test('Apple touch provider fullscreen still exits the video-only layer for caption-preserving web mode', async () => {
   const child={},events=[],doc={fullscreenElement:child,exitFullscreen:async()=>{events.push('exit');doc.fullscreenElement=null;}};
@@ -488,13 +488,13 @@ test('Apple touch provider fullscreen still exits the video-only layer for capti
   assert.equal(await api.preservePlayerFullscreen(container,doc,iphone),'web');
   assert.deepEqual(events,['exit']);assert.equal(doc.fullscreenElement,null);
 });
-test('denied Android provider handoff keeps native iframe fullscreen without exiting to web mode', async () => {
+test('denied Android provider handoff exits iframe fullscreen to show subtitles and retry', async () => {
   let exits=0;
   const child={},doc={fullscreenElement:child,exitFullscreen:async()=>{exits++;doc.fullscreenElement=null;}};
   const container={contains:el=>el===child,requestFullscreen:async()=>{throw new Error('activation consumed');}};
-  assert.equal(await api.preservePlayerFullscreen(container,doc,android),null);
-  assert.equal(doc.fullscreenElement,child);
-  assert.equal(exits,0);
+  assert.equal(await api.preservePlayerFullscreen(container,doc,android),'web');
+  assert.equal(doc.fullscreenElement,null);
+  assert.equal(exits,1);
 });
 test('fullscreen preservation never exits unrelated elements or overrides a user exit during transfer', async () => {
   const child={},unrelated={},container={contains:el=>el===child};
@@ -507,6 +507,14 @@ test('fullscreen preservation never exits unrelated elements or overrides a user
   assert.equal(await api.preservePlayerFullscreen(container,doc,android),null);
   assert.equal(exits,0);
 });
+test('PC and Android web fallback exposes a native retry button without changing 16:9 framing', () => {
+  const source=fs.readFileSync(path.join(root,'src/components/IframePlayer.tsx'),'utf8');
+  assert.match(source,/const showNativeRetry = fullscreenMode === "web" && typeof navigator !== "undefined" && !appleWebFullscreen/);
+  assert.match(source,/\? "상태바 숨기기" : "전체화면 재시도"/);
+  assert.match(source,/<Maximize2 className="h-4 w-4" \/>{nativeRetryLabel}/);
+  assert.match(source,/useContainedPlayerFrame\(containerRef, mediaFrameRef, isFullscreen, fullscreenMode === "web", false,/);
+});
+
 test('native provider fullscreen handoff coalesces duplicate events and ignores updates after unmount', async () => {
   const child={},doc=Object.assign(new EventTarget(),{fullscreenElement:child});
   const win=new EventTarget();let pending,transfers=0,mode='inline',cleanup;
