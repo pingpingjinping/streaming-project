@@ -135,14 +135,26 @@ export default function IframePlayer({
   const isAnikotoEmbed = videoSource === "anikoto" || activeServerSources.some(source => source.id === "anikoto");
   const [aspectChoice, setAspectChoice] = useState<"auto" | "4:3" | "16:9">("auto");
   const [detectedAspect, setDetectedAspect] = useState<number | null>(null);
-  const aspectStorageKey = `anime_player_aspect:${sourceAnimeId || animeId}:${sourceEpisodeNumber ?? episodeNumber}:${activeServerKey || "default"}`;
+  // Use the catalog work ID so episodes and provider/server changes share one
+  // preference, without sharing it with separately listed seasons or specials.
+  const aspectStorageKey = `anime_player_aspect:work:${animeId}`;
+  const legacyAspectStorageKey = `anime_player_aspect:${sourceAnimeId || animeId}:${sourceEpisodeNumber ?? episodeNumber}:${activeServerKey || "default"}`;
   useEffect(() => {
     if (!isAnikotoEmbed) { setAspectChoice("auto"); setDetectedAspect(null); return; }
     let saved: string | null = null;
-    try { saved = localStorage.getItem(aspectStorageKey); } catch {}
+    try {
+      saved = localStorage.getItem(aspectStorageKey);
+      if (saved === null) {
+        const legacy = localStorage.getItem(legacyAspectStorageKey);
+        if (legacy === "4:3" || legacy === "16:9") {
+          saved = legacy;
+          localStorage.setItem(aspectStorageKey, legacy);
+        }
+      }
+    } catch {}
     setAspectChoice(saved === "4:3" || saved === "16:9" ? saved : "auto");
     setDetectedAspect(null);
-  }, [aspectStorageKey, activeEmbedUrl, isAnikotoEmbed]);
+  }, [aspectStorageKey, legacyAspectStorageKey, activeEmbedUrl, isAnikotoEmbed]);
   const cycleAspectChoice = () => {
     const next = aspectChoice === "auto" ? "4:3" : aspectChoice === "4:3" ? "16:9" : "auto";
     setAspectChoice(next);
@@ -1416,7 +1428,7 @@ export default function IframePlayer({
             Outside mediaFrameRef, so resizing cannot reload the provider iframe. */}
         {isAnikotoEmbed && isFullscreen && (
           <button type="button" onClick={cycleAspectChoice}
-            title="Anikoto 영상 비율 변경: 자동 → 4:3 → 16:9"
+            title="Anikoto 영상 비율 변경: 자동 → 4:3 → 16:9 (이 작품 모든 회차에 저장)"
             aria-label="화면 비율 변경"
             className="absolute left-3 top-3 z-30 flex h-10 items-center rounded-full bg-slate-950/75 px-3 text-xs font-semibold text-white backdrop-blur-md transition hover:bg-slate-900">
             비율 {aspectLabel}
@@ -1626,7 +1638,7 @@ export default function IframePlayer({
 
             {isAnikotoEmbed && (
               <button type="button" onClick={cycleAspectChoice}
-                title="Anikoto 영상 비율 변경: 자동 → 4:3 → 16:9"
+                title="Anikoto 영상 비율 변경: 자동 → 4:3 → 16:9 (이 작품 모든 회차에 저장)"
                 aria-label="화면 비율 변경"
                 className="flex items-center gap-1 rounded-lg border border-white/10 bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-purple-500 hover:text-white cursor-pointer">
                 비율 {aspectLabel}
