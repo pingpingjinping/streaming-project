@@ -77,7 +77,7 @@ export async function requestPlayerFullscreen(
   const request = element.requestFullscreen || element.webkitRequestFullscreen;
   if (!request) return "web";
   try {
-    if (element.requestFullscreen) await request.call(element, { navigationUI: "hide" });
+    if (typeof element.requestFullscreen === "function") await request.call(element, { navigationUI: "hide" });
     else await request.call(element); // The legacy WebKit method has no options dictionary.
     return "native";
   } catch {
