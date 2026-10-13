@@ -56,6 +56,58 @@ test('Anissia auto-matched Anikoto iframe has the same sandbox policy as direct 
     assert.equal(render(animeId, sourceId).sandbox, 'allow-scripts allow-same-origin allow-forms allow-presentation');
   }
 });
+test('Anikoto overlay enters subtitle-inclusive fullscreen without covering other providers', () => {
+  let clicks = 0;
+  const react = {
+    useRef: value => ({current: value}),
+    useState: value => [typeof value === 'function' ? value() : value, () => {}],
+    useCallback: fn => fn,
+    useEffect: () => {},
+  };
+  const {default: Player} = load('src/components/IframePlayer.tsx', {
+    react, 'next/link': {}, 'lucide-react': {}, './SubtitleSelectModal': {},
+    './PlayerSettingsModal': {DEFAULT_PLAYER_SETTINGS: {}, getSubtitleOffsetY:()=>0},
+    './SponsorSubtitleSyncModal': {default:()=>null},
+    '@/lib/sponsorSubtitleSync': {effectiveSubtitleOffset:v=>v,formatSyncTime:()=>''},
+    './usePlayerFullscreen': {usePlayerFullscreen: () => ({
+      mode:'inline', isFullscreen:false, toggleFullscreen:()=>{clicks++;},
+    })},
+    './useContainedPlayerFrame': {useContainedPlayerFrame() {}},
+    '@/lib/iframePlayback': load('src/lib/iframePlayback.ts'),
+    '@/lib/subtitlePresentation': load('src/lib/subtitlePresentation.ts'),
+  });
+  const url='https://video.example/embed/1';
+  function findButton(node) {
+    if (!node || typeof node !== 'object') return null;
+    if (node.type === 'button' && node.props?.className?.includes('player-iframe-fullscreen-enter')) return node;
+    for (const child of [node.props?.children].flat(Infinity)) {
+      const result = findButton(child);
+      if (result) return result;
+    }
+    return null;
+  }
+  function render(sources, videoServer, videoSource) {
+    return findButton(Player({
+      animeId:'ani_123', animeTitle:'Test', episodeNumber:1, embedUrl:url,
+      serverSources:sources, videoServer, videoSource,
+    }));
+  }
+  const ak={id:'anikoto',key:'ak',label:'Anikoto',player_url:url};
+  const rean={id:'rean',key:'re',label:'ReAnime',player_url:'https://other.example/embed'};
+  const ownButton=render([ak], 'ak', 'anikoto');
+  assert.ok(ownButton);
+  assert.equal(ownButton.props['aria-label'], '자막 포함 전체화면');
+  ownButton.props.onClick();
+  assert.equal(clicks, 1, 'the page button invokes the existing container-fullscreen hook');
+  assert.equal(render([rean], 're', 'rean'), null);
+  assert.equal(render([rean, ak], 're', 'rean'), null, 'Anikoto elsewhere in the server list must not add a duplicate button');
+  assert.ok(render([ak, rean], 'ak', 'anikoto'));
+  assert.ok(render([], undefined, 'anikoto'), 'Anikoto can be selected without a server list');
+  const componentSource=fs.readFileSync(path.join(root,'src/components/IframePlayer.tsx'),'utf8');
+  assert.match(componentSource,/useContainedPlayerFrame\(containerRef, mediaFrameRef, isFullscreen, fullscreenMode === "web", false,/,
+    'keep the existing 16:9 containment rather than expanding every iframe');
+});
+
 test('web exit opacity persists all four levels including zero without disabling its hit target', () => {
   const saved=new Map(),style={innerHTML:''};
   const api=load('src/components/PlayerSettingsModal.tsx', {
