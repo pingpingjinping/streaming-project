@@ -102,9 +102,14 @@ const app=http.createServer((req,res)=>{
       const pixels=await sharp(await autoPage.screenshot()).removeAlpha().raw().toBuffer({resolveWithObject:true});
       assert.ok(green(pixels.data,pixels.info,500,3),'inferred SD 4:3 picture fills viewport height');
       await autoPage.getByText('Pi caption',{exact:true}).waitFor();
-      // Manual 16:9 wins over continuing SD metadata and survives refresh.
-      await autoPage.getByRole('button',{name:'화면 비율 변경'}).filter({hasText:'자동 (4:3)'}).first().click();
-      await autoPage.getByRole('button',{name:'화면 비율 변경'}).filter({hasText:'비율 4:3'}).first().click();
+      assert.equal(await autoPage.locator(':fullscreen').getByRole('button',{name:'화면 비율 변경'}).count(),0,
+        'fullscreen should not show a persistent 4:3 aspect badge');
+      // Manual 16:9 is still chosen from the toolbar OUTSIDE the player.
+      await autoPage.evaluate(()=>document.exitFullscreen());
+      await autoPage.getByRole('button',{name:'화면 비율 변경'}).filter({hasText:'자동 (4:3)'}).click();
+      await autoPage.getByRole('button',{name:'화면 비율 변경'}).filter({hasText:'비율 4:3'}).click();
+      await autoPage.getByRole('button',{name:'전체화면',exact:true}).click();
+      await autoPage.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
       await checkPicture(autoPage,'4:3');
       assert.equal(embedLoads,beforeAuto);
       await autoPage.evaluate(()=>document.exitFullscreen());
@@ -183,10 +188,14 @@ const app=http.createServer((req,res)=>{
     assert.ok(Math.abs(fourThreeFrame.height-625)<2,'4:3 Anikoto reaches top and bottom viewport edges');
     assert.ok(Math.abs(fourThreeFrame.width-625*4/3)<2,'4:3 Anikoto retains its natural aspect');
     assert.equal(embedLoads,beforeFourThree,'ratio switch preserves external iframe playback');
+    assert.equal(await page.locator(':fullscreen').getByRole('button',{name:'화면 비율 변경'}).count(),0,
+      'manual 4:3 fullscreen must keep the aspect button outside the video');
     assert.ok(await page.getByText('Pi caption',{exact:true}).isVisible(),'ratio switch preserves Pi subtitles');
     const fourThreePixels=await sharp(await page.screenshot()).removeAlpha().raw().toBuffer({resolveWithObject:true});
     assert.ok(green(fourThreePixels.data,fourThreePixels.info,500,3),'top black bar is gone for real 4:3');
     await page.evaluate(()=>document.exitFullscreen());
+    assert.equal(await page.getByRole('button',{name:'화면 비율 변경'}).count(),1,
+      'external aspect setting remains available after fullscreen');
 
     // The fixture uses the same work for all PC runs.
     // Clear the 4:3 selection before testing the legacy 16:9 native retry.
