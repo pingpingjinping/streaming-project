@@ -81,20 +81,20 @@ export async function screen(name, searchParams) {
     await clickAndWait(page.getByRole('link').filter({hasText:'Fixture Work'}).first(),'/anime/re_fixture');
     await clickAndWait(page.locator('#ep-card-1'),'/watch/re_fixture/1');
     await clickAndWait(page.locator('header a[href="/"]').first(),'/');
-    const form=page.locator('form'),input=form.locator('input');
+    const form=page.locator('header form'),input=form.locator('input');
     await input.fill('slow');await input.press('Enter');
-    await page.waitForFunction(()=>document.querySelector('form')?.getAttribute('aria-busy')==='true');
+    await page.waitForFunction(()=>document.querySelector('header form')?.getAttribute('aria-busy')==='true');
     await pause(8500);
     assert.equal(await form.getAttribute('aria-busy'),'true','search stays pending beyond eight seconds');
     assert.equal(await input.isDisabled(),true);
     await page.waitForURL(base+'/?tab=search&q=slow',{timeout:30000});
-    await page.waitForFunction(()=>document.querySelector('form')?.getAttribute('aria-busy')==='false');
+    await page.waitForFunction(()=>document.querySelector('header form')?.getAttribute('aria-busy')==='false');
     // Repeating the current search uses refresh and must also finish without a timer.
     const stamp=await page.getByTestId('stamp').innerText();
     await input.press('Enter');
-    await page.waitForFunction(()=>document.querySelector('form')?.getAttribute('aria-busy')==='true');
+    await page.waitForFunction(()=>document.querySelector('header form')?.getAttribute('aria-busy')==='true');
     await pause(8500);assert.equal(await form.getAttribute('aria-busy'),'true');
-    await page.waitForFunction(()=>document.querySelector('form')?.getAttribute('aria-busy')==='false');
+    await page.waitForFunction(()=>document.querySelector('header form')?.getAttribute('aria-busy')==='false');
     assert.notEqual(await page.getByTestId('stamp').innerText(),stamp);
     await page.getByTestId('same').click();assert.equal(await page.locator('[data-nav-active]').count(),0);
     assert.deepEqual(errors,[]);
