@@ -59,7 +59,7 @@ const app=http.createServer((req,res)=>{
       const image=await sharp(await page.screenshot()).removeAlpha().raw().toBuffer({resolveWithObject:true});
       if(ratio==='4:3'){
         assert.equal(green(image.data,image.info,500,3),false,'rollback retains the original outer frame');
-        assert.ok(green(image.data,image.info,500,frame.y+3),'4:3 stays contained inside the restored frame');
+        assert.ok(green(image.data,image.info,500,100),'4:3 stays contained inside the restored frame, below the transient subtitle notice');
         assert.equal(green(image.data,image.info,3,300),false,'4:3 keeps natural side bars instead of stretching');
       }
       else {assert.equal(green(image.data,image.info,500,3),false,'16:9 keeps only its natural letterbox');assert.ok(green(image.data,image.info,500,100));}
