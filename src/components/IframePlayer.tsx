@@ -28,8 +28,7 @@ import SubtitleSelectModal, { CreatorInfo, SubtitleOption } from "./SubtitleSele
 import type { ServerSource } from "@/lib/providers/types";
 import { usePlayerFullscreen } from "./usePlayerFullscreen";
 import { useContainedPlayerFrame } from "./useContainedPlayerFrame";
-import { aspectFromPlayerMessage } from "@/lib/playerFullscreen";
-import { iframeSeekMessage, iframePausedState, syncIframeSubtitleClock, updateSubtitleHud, type IframeSubtitleClock } from "@/lib/iframePlayback";
+import { iframeSeekMessage, iframePausedState, syncIframeSubtitleClock, updateSubtitleHud, aspectFromPlayerMessage, type IframeSubtitleClock } from "@/lib/iframePlayback";
 import SponsorSubtitleSyncModal from "./SponsorSubtitleSyncModal";
 import { effectiveSubtitleOffset, formatSyncTime, type SponsorSubtitleSync } from "@/lib/sponsorSubtitleSync";
 import PlayerSettingsModal, {
@@ -149,6 +148,19 @@ export default function IframePlayer({
     setAspectChoice(next);
     try { localStorage.setItem(aspectStorageKey, next); } catch {}
   };
+  // Do not mix aspect hints into the existing playback/status message handler:
+  // a separate listener keeps clock and subtitle timing behavior unchanged.
+  useEffect(() => {
+    if (!isAnikotoEmbed) return;
+    const handleAspect = (event: MessageEvent) => {
+      if (event.source !== iframeRef.current?.contentWindow) return;
+      const ratio = aspectFromPlayerMessage(event.data);
+      if (ratio !== null) setDetectedAspect(current => current === ratio ? current : ratio);
+    };
+    window.addEventListener("message", handleAspect);
+    return () => window.removeEventListener("message", handleAspect);
+  }, [isAnikotoEmbed, activeEmbedUrl]);
+
   const aspectLabel = aspectChoice === "auto"
     ? `자동${detectedAspect === 4 / 3 ? " (4:3)" : ""}`
     : aspectChoice;
@@ -870,13 +882,6 @@ export default function IframePlayer({
       const isPlayerMessage = event.source === iframeRef.current?.contentWindow;
       if (!isPlayerMessage || typeof event.data !== "object") return;
 
-      // Anikoto may report a display aspect or video dimensions via postMessage.
-      // Without a trustworthy hint (e.g. ambiguous 720x480), keep 16:9.
-      if (isAnikotoEmbed) {
-        const ratio = aspectFromPlayerMessage(event.data);
-        if (ratio !== null) setDetectedAspect(current => current === ratio ? current : ratio);
-      }
-
       const paused = iframePausedState(event.data);
       if (paused !== null) {
         playbackPausedRef.current = paused;
@@ -1068,7 +1073,6 @@ export default function IframePlayer({
     episodeNumber,
     isPlaybackCompleted,
     tryResumeIframe,
-    isAnikotoEmbed,
   ]);
 
   // 9. 이전 시청 기록 조회 및 이어보기 안내 / 복원 시도
