@@ -22,6 +22,7 @@ import Navbar from '@/components/Navbar';
 import GlobalNavigationIndicator from '@/components/GlobalNavigationIndicator';
 export default function Layout({children}) {return <html><head>${styles.map(name=>`<link rel="stylesheet" href="/styles/${name}" />`).join('')}</head><body><Suspense fallback={null}><GlobalNavigationIndicator /></Suspense><Navbar />{children}</body></html>;}`);
   write('app/Screen.tsx', `import Link from 'next/link';
+import LocalAction from './LocalAction';
 import AnimeCard from '@/components/AnimeCard';
 import EpisodeListSection from '@/components/EpisodeListSection';
 export async function screen(name, searchParams) {
@@ -31,9 +32,10 @@ export async function screen(name, searchParams) {
     <Link data-testid="tab" href="/?tab=latest" prefetch={false}>최근 탭</Link>
     <div style={{position:'relative',width:220}}><AnimeCard anime={{id:'re_fixture',title:'Fixture Work',poster:'',detail_url:'/anime/re_fixture',remarks:''}} /></div>
     <EpisodeListSection animeId="re_fixture" subEpisodes={[{number:1,title:'1화',watch_url:'/watch/re_fixture/1'}]} dubEpisodes={[]} initialHistoryMap={{}} />
-    <a data-testid="same" href="#here">현재 화면</a><a data-testid="external" href="//example.com/work" target="_blank">외부</a>
+    <LocalAction /><a data-testid="same" href="#here">현재 화면</a><a data-testid="external" href="//example.com/work" target="_blank">외부</a>
   </main>;
 }`);
+  write('app/LocalAction.tsx', `'use client';import {useState} from 'react';export default function LocalAction(){const[count,setCount]=useState(0);return <a href="/watch/re_fixture/2"><button data-testid="local-action" onClick={event=>{event.preventDefault();event.stopPropagation();setCount(count+1);}}>카드 내부 작업 {count}</button></a>;}`);
   write('app/page.tsx', `import {screen} from './Screen';export const dynamic='force-dynamic';export default async function Page({searchParams}){return screen('/',searchParams);}`);
   write('app/[...parts]/page.tsx', `import {screen} from '../Screen';export const dynamic='force-dynamic';export default async function Page({params,searchParams}){return screen('/'+(await params).parts.join('/'),searchParams);}`);
   const portServer = net.createServer();
@@ -62,6 +64,9 @@ export async function screen(name, searchParams) {
     page.on('pageerror',error=>{errors.push(error.message);console.error(error.message);});
     await page.goto(base+'/?warm=1');
     await page.waitForFunction(()=>document.querySelector('button[title^="스트리밍 소스"]')?.innerText.includes('Anikoto'));
+    await page.getByTestId('local-action').click();
+    await page.getByTestId('local-action').filter({hasText:'작업 1'}).waitFor();
+    assert.equal(await page.locator('[data-nav-active]').count(),0,'nested card controls do not start navigation');
     async function clickAndWait(link, target) {
       const previous=page.url();await link.click();
       await page.waitForFunction(()=>!!document.querySelector('[data-nav-active] .animate-spin'));

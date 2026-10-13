@@ -55,12 +55,15 @@ export default function GlobalNavigationIndicator() {
         return;
       }
 
-      const target = e.target as HTMLElement | null;
-      if (!target) return;
+      const target = e.target;
+      if (!(target instanceof Element)) return;
 
       // 가장 가까운 링크(a) 또는 명시적 네비게이션 버튼 탐색
       const link = target.closest<HTMLAnchorElement>("a[href]");
       if (!link) return;
+      // Controls inside cards may prevent navigation (e.g. delete a history row).
+      const control = target.closest('button, input, select, textarea, [role="button"]');
+      if (control && control !== link) return;
 
       const href = link.getAttribute("href");
       if (!href) return;
