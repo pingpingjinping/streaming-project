@@ -30,6 +30,7 @@ test('Anissia auto-matched Anikoto iframe has the same sandbox policy as direct 
     '@/lib/sponsorSubtitleSync': {effectiveSubtitleOffset:(v)=>v, formatSyncTime:()=>''},
     './usePlayerFullscreen': {usePlayerFullscreen: () => ({mode: 'inline', isFullscreen: false, toggleFullscreen() {}})},
     './useContainedPlayerFrame': {useContainedPlayerFrame() {}},
+    '@/lib/playerFullscreen': api,
     '@/lib/iframePlayback': load('src/lib/iframePlayback.ts'),
     '@/lib/subtitlePresentation': load('src/lib/subtitlePresentation.ts'),
   });
