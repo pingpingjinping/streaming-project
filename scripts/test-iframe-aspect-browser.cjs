@@ -32,8 +32,8 @@ const app=http.createServer((req,res)=>{
   cache['lucide-react']={exports:new Proxy({},{get:()=>empty})};cache['next/link']={exports:({children,prefetch,...props})=>React.createElement('a',props,children)};
   for(const name of ['./SubtitleSelectModal','./SponsorSubtitleSyncModal'])cache[name]={exports:{__esModule:true,default:empty}};
   cache['./PlayerSettingsModal']={exports:{__esModule:true,default:empty,DEFAULT_PLAYER_SETTINGS:${JSON.stringify(settings.DEFAULT_PLAYER_SETTINGS)},loadPlayerSettings:()=>(${JSON.stringify(settings.DEFAULT_PLAYER_SETTINGS)}),fetchUserSettingsFromDb:async()=>({authenticated:false}),applyPlayerSettingsStyles(){},getSubtitleOffsetY:()=>0}};
-  const p=new URLSearchParams(location.search),source=p.get('source')||'anikoto',embed=${JSON.stringify(providerUrl)}+'/?ratio='+encodeURIComponent(p.get('ratio')||'4:3')+'&hint='+encodeURIComponent(p.get('hint')||'');
-  require('react-dom/client').createRoot(document.getElementById('root')).render(React.createElement(require('./IframePlayer').default,{animeId:'ak_fixture',animeTitle:'Fixture',episodeNumber:1,embedUrl:embed,serverSources:[{id:source,label:'HD-1',key:'sub:HD-1',player_url:embed}],initialSubtitle:${JSON.stringify(subtitle)}}));`;
+  const fixtureRoot=require('react-dom/client').createRoot(document.getElementById('root'));window.renderFixture=(query=location.search)=>{const p=new URLSearchParams(query),source=p.get('source')||'anikoto',embed=${JSON.stringify(providerUrl)}+'/?ratio='+encodeURIComponent(p.get('ratio')||'4:3')+'&hint='+encodeURIComponent(p.get('hint')||'');
+  fixtureRoot.render(React.createElement(require('./IframePlayer').default,{animeId:p.get('work')||'ak_fixture',animeTitle:'Fixture',episodeNumber:Number(p.get('ep')||1),sourceAnimeId:p.get('sourceWork')||undefined,sourceEpisodeNumber:Number(p.get('sourceEp')||p.get('ep')||1),embedUrl:embed,serverSources:[{id:source,label:p.get('server')||'HD-1',key:'sub:'+(p.get('server')||'HD-1'),player_url:embed}],initialSubtitle:${JSON.stringify(subtitle)}}));};window.renderFixture();`;
   new vm.Script(script);
   res.setHeader('Content-Type','text/html');res.end(`<!doctype html><meta charset="utf-8">${styles.map(name=>`<link rel="stylesheet" href="/styles/${name}">`).join('')}<style>body{margin:0;padding:20px;background:black}canvas{display:none!important}</style><div id="root"></div><script>${script}</script>`);
 });
@@ -115,6 +115,53 @@ const app=http.createServer((req,res)=>{
       await checkPicture(autoPage,'4:3');
       await autoContext.close();
     }
+    // A manual preference belongs to the catalog work, across episode/server
+    // changes and source-work mappings, while other catalog works stay separate.
+    for(const device of [
+      {userAgent:'Mozilla/5.0 Chrome/150 Whale/5.39',hasTouch:false},
+      {userAgent:'Mozilla/5.0 (Linux; Android 16) Chrome/150 Mobile Safari/537.36',hasTouch:true},
+    ]) {
+      const workContext=await browser.newContext({viewport:{width:1000,height:625},...device});
+      const workPage=await workContext.newPage();workPage.on('pageerror',error=>errors.push(error.message));
+      const ratioButton=()=>workPage.getByRole('button',{name:'화면 비율 변경'}).first();
+      await ready(workPage,'?work=catalog_work&sourceWork=provider_a&sourceEp=13');
+      await ratioButton().click();
+      assert.equal(await workPage.evaluate(()=>localStorage.getItem('anime_player_aspect:work:catalog_work')),'4:3');
+      await ready(workPage,'?work=catalog_work&ep=2&server=HD-2&sourceWork=provider_b&hint=sd');
+      await ratioButton().filter({hasText:'비율 4:3'}).waitFor();
+      // Next can retain the player component while changing route props.
+      await workPage.evaluate(()=>window.renderFixture('?work=other_season&ep=2&server=HD-2&sourceWork=provider_b&hint=sd'));
+      await ratioButton().filter({hasText:'비율 자동'}).waitFor();
+      await workPage.evaluate(()=>window.renderFixture('?work=catalog_work&ep=3&server=HD-3&sourceWork=provider_c&hint=sd'));
+      await ratioButton().filter({hasText:'비율 4:3'}).waitFor();
+      const beforeWorkFullscreen=embedLoads;
+      await workPage.getByRole('button',{name:'전체화면',exact:true}).click();
+      await workPage.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
+      await workPage.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-innerHeight)<2);
+      assert.equal(embedLoads,beforeWorkFullscreen,'inherited work preference keeps playback loaded');
+      await workPage.getByText('Pi caption',{exact:true}).waitFor();
+      await workPage.evaluate(()=>document.exitFullscreen());
+      // Even a shared provider ID does not leak the choice to another season.
+      await ready(workPage,'?work=other_season&sourceWork=provider_b');
+      await ratioButton().filter({hasText:'비율 자동'}).waitFor();
+      await ready(workPage,'?work=catalog_work&ep=3&server=HD-3');
+      await ratioButton().filter({hasText:'비율 4:3'}).waitFor();
+      await ratioButton().click(); // 16:9 overrides continuing automatic SD hints.
+      await ready(workPage,'?work=catalog_work&ep=4&hint=sd');
+      await ratioButton().filter({hasText:'비율 16:9'}).waitFor();
+      await workPage.evaluate(()=>localStorage.setItem('anime_player_aspect:catalog_work:5:sub:HD-1','4:3'));
+      await ratioButton().click(); // Explicit auto must not resurrect old per-episode choices.
+      await ready(workPage,'?work=catalog_work&ep=5&hint=sd');
+      await ratioButton().filter({hasText:'비율 자동 (4:3)'}).waitFor();
+      assert.equal(await workPage.evaluate(()=>localStorage.getItem('anime_player_aspect:work:catalog_work')),'auto');
+      // Preserve the currently visited legacy episode's manual choice once.
+      await workPage.evaluate(()=>localStorage.setItem('anime_player_aspect:legacy_provider:13:sub:HD-2','16:9'));
+      await ready(workPage,'?work=legacy_work&sourceWork=legacy_provider&sourceEp=13&server=HD-2&hint=sd');
+      await ratioButton().filter({hasText:'비율 16:9'}).waitFor();
+      await ready(workPage,'?work=legacy_work&ep=2');
+      await ratioButton().filter({hasText:'비율 16:9'}).waitFor();
+      await workContext.close();
+    }
     // Receiving the same size hint from ReAnime leaves its original frame alone.
     await ready(page,'?source=rean&ratio=4%3A3&hint=sd');
     await page.getByRole('button',{name:'전체화면',exact:true}).click();
@@ -141,9 +188,9 @@ const app=http.createServer((req,res)=>{
     assert.ok(green(fourThreePixels.data,fourThreePixels.info,500,3),'top black bar is gone for real 4:3');
     await page.evaluate(()=>document.exitFullscreen());
 
-    // The fixture uses the same work/episode/server for all PC runs.
+    // The fixture uses the same work for all PC runs.
     // Clear the 4:3 selection before testing the legacy 16:9 native retry.
-    await page.evaluate(()=>localStorage.removeItem('anime_player_aspect:ak_fixture:1:sub:HD-1'));
+    await page.evaluate(()=>localStorage.removeItem('anime_player_aspect:work:ak_fixture'));
     // PC: when the provider consumes the first activation, keep Pi captions
     // in the web panel and offer the fullscreen retry on a new click.
     await ready(page,'?source=anikoto&ratio=16%3A9');
@@ -175,9 +222,9 @@ const app=http.createServer((req,res)=>{
     await phone.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-innerHeight)<2);
     assert.equal(embedLoads,beforeAndroidFourThree);
     await phone.evaluate(()=>document.exitFullscreen());
-    // The fixture reuses the same anime/episode/server; restore default auto
+    // The fixture reuses the same work; restore default auto
     // instead of carrying the manually saved 4:3 choice into the 16:9 test.
-    await phone.evaluate(()=>localStorage.removeItem('anime_player_aspect:ak_fixture:1:sub:HD-1'));
+    await phone.evaluate(()=>localStorage.removeItem('anime_player_aspect:work:ak_fixture'));
 
     await ready(phone,'?ratio=16%3A9');
     await phone.evaluate(()=>{const original=HTMLElement.prototype.requestFullscreen;let first=true;window.parentFullscreenOptions=[];HTMLElement.prototype.requestFullscreen=function(options){if(this.querySelector('iframe')){window.parentFullscreenOptions.push(options);if(first){first=false;return Promise.reject(Error('activation consumed'));}}return original.call(this,options);};});
@@ -265,6 +312,6 @@ const app=http.createServer((req,res)=>{
     assert.ok(Math.abs(tabletFrame.height-tabletFrame.width*9/16)<2,'iPad retains its existing portrait framing');
     await tablet.getByRole('button',{name:'전체화면 종료',exact:true}).click();
     assert.deepEqual(errors,[]);
-    console.log('PASS: PC/Android SD auto 4:3, persistent manual override, Anikoto height fit, native fallback/retry, unchanged ReAnime/16:9/Apple without reload');
+    console.log('PASS: PC/Android SD auto 4:3, work-wide manual override and legacy migration, Anikoto height fit, native fallback/retry, unchanged ReAnime/16:9/Apple without reload');
   }finally{await browser?.close();await Promise.all([new Promise(resolve=>provider.close(resolve)),new Promise(resolve=>app.close(resolve))]);}
 })().catch(error=>{console.error(error);process.exitCode=1;});
