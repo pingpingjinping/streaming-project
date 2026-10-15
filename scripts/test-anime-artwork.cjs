@@ -27,15 +27,15 @@ function load(file,deps={},globals={}) {
   const code=ts.transpileModule(fs.readFileSync(path.join(root,file),'utf8'),{
     compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText;
   vm.runInNewContext(code,{exports,require:id=>id in deps?deps[id]:require(id.startsWith('@/')?path.join(root,'src',id.slice(2)):id),
-    console,URL,URLSearchParams,AbortSignal,Date,process,Buffer,...globals});return exports;
+    console,URL,URLSearchParams,AbortSignal,Date,process,Buffer,setTimeout,clearTimeout,...globals});return exports;
 }
 const response=data=>({ok:true,json:async()=>data});
-function anissia(fetch,links=new Map(),artwork=async()=>null,clock=Date) {
+function anissia(fetch,links=new Map(),artwork=async()=>null,clock=Date,globals={}) {
   return load('src/lib/providers/anissia.ts',{
     '../episodeMapping':load('src/lib/episodeMapping.ts'),
     './ids':requireIds(),'../resolvers/videoResolver':{resolveAnissiaStream:async()=>null,parseSeason:()=>null},
     '../reanimeMatches':{getConfirmedReanimeIdsForAnissia:async()=>links,getPlaybackReanimeIdForAnissia:async n=>links.get(n)||null},'./reanime':{getReanimeArtwork:artwork,getAnimeDetail:async()=>null},
-  },{fetch,Date:clock});
+  },{fetch,Date:clock,...globals});
 }
 function requireIds(){return load('src/lib/providers/ids.ts');}
 const meta={poster:'https://cdn.example/reanime-season2.jpg',banner:'',anilistId:2,romajiTitle:'Season 2',nativeTitle:'',
@@ -83,6 +83,48 @@ test('same source titles with different confirmed IDs do not share another seaso
   const result=await api.anissiaProvider.searchAnime('동명');
   assert.equal(result.items[0].poster,'https://cdn.example/season-one.jpg');assert.equal(result.items[1].poster,'https://cdn.example/season-two.jpg');
 });
+test('recent-caption pages return all entries with fallback posters when artwork exceeds budget',async()=>{
+  let finishArtwork;
+  const stalled=new Promise(resolve=>{finishArtwork=resolve;});
+  const requests=[];
+  const links=new Map(Array.from({length:6},(_,i)=>[i+1,`work-${i+1}`]));
+  const api=anissia(async url=>{
+    if(url.includes('/anime/caption/recent/1'))return response({data:{
+      content:Array.from({length:6},(_,i)=>({animeNo:i+1,subject:`작품 ${i+1}`,episode:'1',name:'테스터'})),
+      last:false,totalPages:3
+    }});
+    if(url.includes('/anime/schedule/'))return response({data:[]});
+    throw Error('unexpected request: '+url);
+  },links,async id=>{requests.push(id);return stalled;},Date,{
+    // Replace only the module's deadline timer so this regression runs quickly.
+    setTimeout:(callback,ms)=>setTimeout(callback,Math.min(15,ms))
+  });
+  const result=await api.anissiaProvider.getAnimeList({category:'recent_caption',page:2});
+  assert.equal(result.page,2);
+  assert.equal(result.total_pages,3);
+  assert.equal(result.has_next,true);
+  assert.equal(result.items.length,6);
+  assert.ok(result.items.every(item=>item.poster.includes('images.unsplash.com')));
+  assert.equal(requests.length,5,'the deadline stops subsequent artwork batches');
+  finishArtwork(meta);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(requests.length,5,'pending artwork must not start further batches after the deadline');
+});
+
+test('recent-caption pages preserve ready posters without invoking the timeout',async()=>{
+  const links=new Map([[12,'fast-work']]);
+  const api=anissia(async url=>{
+    if(url.includes('/anime/caption/recent/0'))return response({data:{
+      content:[{animeNo:12,subject:'빠른 작품',episode:'1'}],last:true,totalPages:1
+    }});
+    if(url.includes('/anime/schedule/'))return response({data:[]});
+    throw Error('unexpected request: '+url);
+  },links,async()=>meta);
+  const result=await api.anissiaProvider.getAnimeList({category:'recent_caption',page:1});
+  assert.equal(result.items[0].poster,meta.poster);
+  assert.equal(result.total_pages,1);
+});
+
 function reanime(fetch,clock=Date) {
   return load('src/lib/providers/reanime.ts',{'./ids':requireIds(),
     '../episodeMapping':load('src/lib/episodeMapping.ts'),
