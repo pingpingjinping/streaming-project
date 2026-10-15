@@ -218,6 +218,7 @@ export async function fetchAniListMeta(searchTitle: string): Promise<AniListMeta
 const metaKey=(animeNo:unknown,title:string)=>`${animeNo || ''}:${title}`;
 type RecentCaptionTimingDetails = Record<string, number | string | boolean>;
 type RecentCaptionTiming = (stage: string, details?: RecentCaptionTimingDetails) => void;
+const RECENT_CAPTION_ARTWORK_BUDGET_MS = 4000;
 let recentCaptionTraceSequence = 0;
 
 async function fetchAnissiaMeta(
@@ -241,15 +242,19 @@ async function fetchAnissiaMeta(
 /** ReAnime first, AniList only when no confirmed ReAnime poster is available. */
 async function enrichWithArtwork(
   items:Array<{titleToSearch:string;animeNo:unknown;[k:string]:any}>,
-  report?:RecentCaptionTiming
+  report?:RecentCaptionTiming,
+  options?:{metaMap?:Map<string,AniListMeta>;isExpired?:()=>boolean}
 ):Promise<Map<string,AniListMeta>> {
-  const metaMap=new Map<string,AniListMeta>();
+  const metaMap=options?.metaMap ?? new Map<string,AniListMeta>();
   const targets=[...new Map(items.map(item=>[metaKey(item.animeNo,item.titleToSearch),item])).values()];
   const matchStartedAt=Date.now();
   report?.("matches_start",{targets:targets.length});
   const links=await getConfirmedReanimeIdsForAnissia(targets.map(item=>Number(item.animeNo)));
   report?.("matches_done",{durationMs:Date.now()-matchStartedAt,linked:links.size});
   for(let i=0;i<targets.length;i+=5) {
+    // A timed-out recent-caption page may finish its current batch in the background
+    // (warming provider caches), but must not start more external artwork requests.
+    if(options?.isExpired?.())break;
     const batch=Math.floor(i/5)+1;
     const batchStartedAt=Date.now();
     report?.("artwork_batch_start",{batch,count:Math.min(5,targets.length-i)});
@@ -421,7 +426,28 @@ class AnissiaProvider implements AnimeProvider {
       });
       const artworkStartedAt=Date.now();
       report("artwork_start",{count:enrichTargets.length});
-      const metaMap = await enrichWithArtwork(enrichTargets,report);
+      // Only the recent-caption listing has an artwork deadline. Episode/video
+      // resolution, search and detail-page artwork use their original behavior.
+      const metaMap=new Map<string,AniListMeta>();
+      let artworkExpired=false;
+      let artworkTimer:ReturnType<typeof setTimeout>|undefined;
+      const deadline=new Promise<void>(resolve=>{
+        artworkTimer=setTimeout(()=>{
+          artworkExpired=true;
+          report("artwork_timeout",{limitMs:RECENT_CAPTION_ARTWORK_BUDGET_MS,matched:metaMap.size});
+          resolve();
+        },RECENT_CAPTION_ARTWORK_BUDGET_MS);
+      });
+      const artworkWork=enrichWithArtwork(enrichTargets,report,{
+        metaMap,isExpired:()=>artworkExpired
+      }).catch(err=>{
+        report("artwork_failed",{error:err instanceof Error?err.name:"unknown"});
+      });
+      try {
+        await Promise.race([artworkWork,deadline]);
+      } finally {
+        if(artworkTimer)clearTimeout(artworkTimer);
+      }
       report("artwork_done",{durationMs:Date.now()-artworkStartedAt,matched:metaMap.size});
 
       const items: AnimeListItem[] = uniqueItems.map((item) => {
