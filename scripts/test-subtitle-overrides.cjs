@@ -97,6 +97,13 @@ for(const provider of ['anissia','aniall']) for(const layout of ['folder','zip']
   if(layout==='zip')zipFile(`${provider}_subtitles/${title}/all.zip`,files);
   else for(const[name,bytes]of Object.entries(files))put(`${provider}_subtitles/${title}/${name}`,bytes);
 }
+// Real-world Psycho-Pass loose subtitles: one stable release across 22 episodes.
+for (let ep = 1; ep <= 22; ep++) {
+  const suffix = String(ep).padStart(2,'0') + (ep === 22 ? ' END' : '');
+  const filename = `[Moozzi2] Psycho-Pass S1 - ${suffix} (BD 1920x1080 x.264-10Bit DTS-HDMA).smi`;
+  const bytes = Buffer.from(`<SAMI><BODY><SYNC Start=1000><P Class=KRCC>psycho pass episode ${ep}<SYNC Start=3000><P Class=KRCC>&nbsp;</BODY></SAMI>`);
+  put(`anissia_subtitles/PSYCHO-PASS/${filename}`,bytes);
+}
 const db=require('../src/lib/db.ts'),auth=require('../src/lib/auth.ts'),storage=require('../src/lib/subtitleStorage.ts');
 const reviewed=require('../src/lib/reviewedSubtitleStorage.ts'),titles=require('../src/lib/subtitles.ts'),matches=require('../src/lib/reanimeMatches.ts');
 const identity=require('../src/lib/subtitleLocalIdentity.ts');
@@ -174,6 +181,37 @@ function renderSubtitleModal(candidate,{animeId,episode=1,tab='creators',searchE
   return{button:text=>nodes.find(node=>node.type==='button'&&label(node).includes(text)),calls,selected,events,order,stateWrites,get closes(){return closes;}};
 }
 
+test('Psycho-Pass S1 loose files share a track and the first choice resumes all 22 episodes',async()=>{
+  const title='PSYCHO-PASS',id='re_psycho_pass',key=identity.bundleScopeKey({
+    type:'folder',provider:'anissia',work:title,kind:'main',season:1,
+  });
+  let initial;
+  for(let ep=1;ep<=22;ep++){
+    const filename=`[Moozzi2] Psycho-Pass S1 - ${String(ep).padStart(2,'0')}${ep===22?' END':''} (BD 1920x1080 x.264-10Bit DTS-HDMA).smi`;
+    const evidence=episodeEvidence.readEpisodeEvidence(filename,true);
+    assert.deepEqual(evidence.episodes,[ep]);
+    const options=await storage.getAnissiaArchiveSubtitles([title],ep,null,1,{bundleKey:key});
+    assert.equal(options.length,1,`episode ${ep} should have an exact local candidate`);
+    const subtitle=options[0];
+    assert.equal(subtitle.episodeConfirmed,true,`episode ${ep} must be confirmed`);
+    // decodeSubtitleFile shortens display names over 60 characters; identity
+    // must still come from the actual loose-file path, not the display label.
+    assert.ok(subtitle.localFileId && subtitle.sourceBundleKey);
+    if(!initial) initial=subtitle;
+    else assert.equal(subtitle.sourceBundleKey,initial.sourceBundleKey,`episode ${ep} changed release track`);
+  }
+  const saved=await bundleRoute.PUT(request('subtitle-bundle','PUT',{
+    animeId:id,provider:'anissia',bundleKey:key,fileId:initial.localFileId,
+  }));
+  assert.equal(saved.status,200);
+  for(const ep of [1,2,3,11,21,22]){
+    const result=await play(id,title,ep);
+    assert.equal(result.count,1,`episode ${ep} not automatically selected`);
+    assert.equal(result.needs_manual_subtitle_choice,false);
+    assert.ok(result.subtitles[0].content.includes(`psycho pass episode ${ep}`));
+    assert.equal(result.subtitles[0].sourceBundleKey,initial.sourceBundleKey);
+  }
+});
 test('same creator and generic ZIP names are scoped by work; assigned ns track follows episode two',async()=>{
   const a=await storage.getAnissiaArchiveSubtitles(['작품 A'],1,101),b=await storage.getAnissiaArchiveSubtitles(['작품 B'],1,102);
   assert.notEqual(a[0].sourceBundleKey,b[0].sourceBundleKey);

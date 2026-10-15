@@ -299,8 +299,11 @@ export async function searchLocalSubtitleFolders(query:string) {
 
 function anissiaTrackIdentity(creator: string, archiveFilename: string, entryFilename: string, episode: number) {
   const rangePattern = /(?:^|[^\d])\d{1,3}\s*[-~]\s*\d{1,3}(?!\d)/;
-  const archiveBase = path.basename(archiveFilename).replace(/\.(zip)$/i, "").replace(rangePattern, "{range}");
-  const normalizedArchive = normalizeSubtitleTrackFilename(archiveBase, episode);
+  // Only ZIP archives can describe a multi-episode range. In a loose
+  // subtitle "S1 - 01.smi", the same digits are season + episode, not a range.
+  const archiveBase = path.basename(archiveFilename).replace(/\.(zip)$/i, "");
+  const archiveTrackBase = /\.zip$/i.test(archiveFilename) ? archiveBase.replace(rangePattern, "{range}") : archiveBase;
+  const normalizedArchive = normalizeSubtitleTrackFilename(archiveTrackBase, episode);
   const entryEvidence=readEpisodeEvidence(entryFilename,true);
   const entryEpisode=entryEvidence.episodes.length===1 ? entryEvidence.episodes[0] : episodeFromSubtitleFilename(entryFilename);
   const normalizedEntry = entryEpisode === episode ? normalizeSubtitleTrackFilename(entryFilename, episode) : "";
