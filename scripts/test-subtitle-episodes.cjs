@@ -76,6 +76,31 @@ for (const [episode, source] of [[1, 13], [3, 15], [12, 24]]) {
 test('configured source 13 cannot fall back to an unseasoned 01', () => {
   assert.equal(extractSubtitleFromBuffer(zip({ '01.srt': 'wrong' }), 13, 'all.zip', true, 2, { localEpisode: 1 }), null);
 });
+test('Moozzi2 Psycho-Pass S1 - 01 through 22 are individual season-1 episodes', () => {
+  for (let ep = 1; ep <= 22; ep++) {
+    const index = String(ep).padStart(2, '0');
+    const filename = `[Moozzi2] Psycho-Pass S1 - ${index}${ep === 22 ? ' END' : ''} (BD 1920x1080 x.264-10Bit DTS-HDMA).smi`;
+    const evidence = readEpisodeEvidence(filename, true);
+    assert.deepEqual(evidence.episodes, [ep], filename);
+    assert.equal(evidence.season, 1, filename);
+    assert.equal(evidence.multipleSeasons, false, filename);
+    assert.equal(evidence.range, false, filename);
+    assert.equal(evidence.conflict, false, filename);
+    assert.equal(evidence.seasonEpisodePair, true, filename);
+    assert.ok(extractSubtitleFromBuffer(srt(`Psycho Pass episode ${ep}`), ep, filename, true, 1), filename);
+    if (ep !== 1) assert.equal(extractSubtitleFromBuffer(srt('wrong episode'), 1, filename, true, 1), null);
+  }
+});
+test('real season-range bundles stay distinct from dashed S1 episode files', () => {
+  const bundle = readEpisodeEvidence('Show Season1-4.zip', true);
+  assert.equal(bundle.multipleSeasons, true);
+  assert.deepEqual(bundle.episodes, []);
+  const explicit = readEpisodeEvidence('Show S1-S2.zip', true);
+  assert.equal(explicit.multipleSeasons, true);
+  const loose = readEpisodeEvidence('Show S1 - 04.smi', true);
+  assert.deepEqual(loose.episodes, [4]);
+  assert.equal(loose.multipleSeasons, false);
+});
 test('S02E01 is explicitly season-relative even when source numbering is 13', () => {
   const result = extractSubtitleFromBuffer(zip({ 'S01E01.srt': 'wrong', 'S02E01.srt': 'right' }), 13, 'all.zip', true, 2, { localEpisode: 1 });
   assert.ok(result?.content.includes('right'));
