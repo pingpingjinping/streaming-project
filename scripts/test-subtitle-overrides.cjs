@@ -100,6 +100,7 @@ for(const provider of ['anissia','aniall']) for(const layout of ['folder','zip']
 const db=require('../src/lib/db.ts'),auth=require('../src/lib/auth.ts'),storage=require('../src/lib/subtitleStorage.ts');
 const reviewed=require('../src/lib/reviewedSubtitleStorage.ts'),titles=require('../src/lib/subtitles.ts'),matches=require('../src/lib/reanimeMatches.ts');
 const identity=require('../src/lib/subtitleLocalIdentity.ts');
+const episodeEvidence=require('../src/lib/subtitleEpisodes.ts');
 const {NextRequest}=require('next/server'),bundleRoute=require('../src/app/api/anime/subtitle-bundle/route.ts');
 const exceptionRoute=require('../src/app/api/anime/subtitle-exceptions/route.ts'),automatic=require('../src/app/api/anime/subtitles/route.ts');
 const native=require('../src/app/api/anime/subtitles/vtt/route.ts');
@@ -142,7 +143,8 @@ function renderSubtitleModal(candidate,{animeId,episode=1,tab='creators',searchE
   candidate={name:candidate.orig_filename,localArchive:true,sourceProvider:'anissia',...candidate};
   const vm=require('node:vm'),module={exports:{}},stateWrites=[],calls=[],selected=[],events=[],order=[];
   let hook=0,closes=0;
-  const overrides=new Map([[0,true],[1,tab],[2,[candidate]],[5,searchEp],[6,[candidate]],[24,savingKey]]);
+  // Four selected-folder state slots precede the existing bundle saving state.
+  const overrides=new Map([[0,true],[1,tab],[2,[candidate]],[5,searchEp],[6,[candidate]],[28,savingKey]]);
   const react={useEffect(){},useRef:value=>({current:value}),useState:initial=>{
     const index=hook++,value=overrides.has(index)?overrides.get(index):typeof initial==='function'?initial():initial;
     return[value,next=>stateWrites.push({index,next})];
@@ -150,6 +152,7 @@ function renderSubtitleModal(candidate,{animeId,episode=1,tab='creators',searchE
   const jsx=(type,props)=>({type,props});
   const dependencies={react,'react/jsx-runtime':{jsx,jsxs:jsx},'react-dom':{createPortal:tree=>tree},
     'lucide-react':new Proxy({},{get:(_,name)=>name}),'@/lib/subtitleLocalIdentity':identity,
+    '@/lib/subtitleEpisodes':episodeEvidence,
     './SubtitleFolderAssignments':()=>null,'./SubtitleEpisodeExceptions':()=>null};
   const code=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../src/components/SubtitleSelectModal.tsx'),'utf8'),
     {compilerOptions:{...compilerOptions,jsx:ts.JsxEmit.ReactJSX}}).outputText;

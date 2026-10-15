@@ -1,6 +1,7 @@
 "use client";
 import SubtitleFolderAssignments from "./SubtitleFolderAssignments";
 import {parseBundleScope,bundleSelectionMatches} from "@/lib/subtitleLocalIdentity";
+import {readEpisodeEvidence} from "@/lib/subtitleEpisodes";
 import SubtitleEpisodeExceptions from "./SubtitleEpisodeExceptions";
 
 import { useState, useRef, useEffect, DragEvent, ChangeEvent } from "react";
@@ -57,8 +58,10 @@ export interface SubtitleOption {
   sourceBundleKey?: string;
   sourceBundleLabel?: string;
   bundleAssigned?: boolean;
+  orig_filename?: string;
 }
 
+type LocalSubtitleFolderChoice = { folderName: string;folderKey?:string;archivePath?:string;entryType?:"folder"|"zip";provider:"aniall"|"anissia"|"naver" };
 const creatorKey = (creator: CreatorInfo) => `${creator.website}\n${creator.matchedTitle || ""}`;
 type RejectedSource = { provider: string; sourceKey: string };
 type BundleAssignment = {
@@ -119,7 +122,12 @@ export default function SubtitleSelectModal({
   const [searchResults, setSearchResults] = useState<SubtitleOption[]>([]);
   const [searchCreators, setSearchCreators] = useState<CreatorInfo[]>([]);
   const [catalogTitles, setCatalogTitles] = useState<Array<{ title: string; sources: string[] }>>([]);
-  const [localFolders, setLocalFolders] = useState<Array<{ folderName: string;folderKey?:string; archivePath?:string; entryType?:"folder"|"zip"; provider: "aniall" | "anissia" | "naver" }>>([]);
+  const [localFolders, setLocalFolders] = useState<LocalSubtitleFolderChoice[]>([]);
+  const [selectedLocalFolder, setSelectedLocalFolder] = useState<LocalSubtitleFolderChoice | null>(null);
+  const [selectedFolderSubtitles, setSelectedFolderSubtitles] = useState<SubtitleOption[]>([]);
+  const [isLoadingSelectedFolder, setIsLoadingSelectedFolder] = useState(false);
+  const [showOtherLocalResults, setShowOtherLocalResults] = useState(false);
+  const selectedFolderRequestRef = useRef(0);
   const [isSearching, setIsSearching] = useState(false);
   const [isSearchingLocal, setIsSearchingLocal] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -164,6 +172,10 @@ export default function SubtitleSelectModal({
       setSearchEp(episodeNumber || 1);
       setCreatorError(null);
       setSearchError(null);
+      selectedFolderRequestRef.current++;
+      setSelectedLocalFolder(null);
+      setSelectedFolderSubtitles([]);
+      setShowOtherLocalResults(false);
       setFileError(null);
       setFileNotice(null);
       setExceptionCandidate(null);
@@ -484,6 +496,10 @@ export default function SubtitleSelectModal({
     setSearchResults([]);
     setSearchCreators([]);
     setLocalFolders([]);
+    selectedFolderRequestRef.current++;
+    setSelectedLocalFolder(null);
+    setSelectedFolderSubtitles([]);
+    setShowOtherLocalResults(false);
     setCatalogTitles([]);
 
     try {
@@ -550,6 +566,10 @@ export default function SubtitleSelectModal({
     setSearchCreators([]);
     setCatalogTitles([]);
     setLocalFolders([]);
+    selectedFolderRequestRef.current++;
+    setSelectedLocalFolder(null);
+    setSelectedFolderSubtitles([]);
+    setShowOtherLocalResults(false);
     try {
       const folderRes = await fetch(`/api/anime/subtitles/local?mode=folders&title=${encodeURIComponent(keyword)}&ep=${searchEp}&animeId=${encodeURIComponent(animeId)}`);
       const folderData = await folderRes.json();
@@ -561,6 +581,7 @@ export default function SubtitleSelectModal({
       if (!res.ok || !data.success) throw new Error(data.message || "로컬 자막 검색 실패");
       const subs: SubtitleOption[] = (data.subtitles || []).map((s: any) => ({
         name: s.name,
+        orig_filename: s.orig_filename,
         format: s.is_ass ? "ASS" : "VTT",
         is_ass: Boolean(s.is_ass),
         temporary: Boolean(s.temporary),
@@ -589,6 +610,84 @@ export default function SubtitleSelectModal({
       setIsSearchingLocal(false);
     }
   };
+
+
+  // Inspect the exact physical folder/ZIP without replacing the broad search.
+  const openLocalFolder = async (folder: LocalSubtitleFolderChoice) => {
+    const token = ++selectedFolderRequestRef.current;
+    setSelectedLocalFolder(folder);
+    setSelectedFolderSubtitles([]);
+    setShowOtherLocalResults(false);
+    setIsLoadingSelectedFolder(true);
+    setSearchError(null);
+    try {
+      const params = new URLSearchParams({
+        mode: "search", title: folder.folderName, ep: String(searchEp), animeId,
+      });
+      if (folder.archivePath) params.set("archivePath", folder.archivePath);
+      const response = await fetch(`/api/anime/subtitles/local?${params.toString()}`);
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.message || "선택한 폴더의 자막을 읽지 못했습니다.");
+      const candidates: SubtitleOption[] = (data.subtitles || []).map((s: any) => ({
+        name: s.name,
+        orig_filename: s.orig_filename,
+        format: s.is_ass ? "ASS" : "VTT",
+        is_ass: Boolean(s.is_ass),
+        temporary: Boolean(s.temporary),
+        content: s.content || "",
+        url: s.url || "",
+        matchScore: s.matchScore,
+        matchedTitle: s.matchedTitle || s.sourceMatchedTitle,
+        verifiedMatch: s.verifiedMatch,
+        sourceProvider: s.sourceProvider,
+        sourceCreatorWebsite: s.sourceCreatorWebsite,
+        sourceMatchedTitle: s.sourceMatchedTitle,
+        localArchive: Boolean(s.localArchive),
+        localArchiveTrackKey: s.localArchiveTrackKey,
+        reviewedFileId: s.reviewedFileId,
+        localFileId:s.localFileId,episodeConfirmed:s.episodeConfirmed,episodeException:s.episodeException,
+        sourceFolderKey:s.sourceFolderKey,sourceFolderLabel:s.sourceFolderLabel,
+        sourceBundleKey: s.sourceBundleKey,
+        sourceBundleLabel: s.sourceBundleLabel,
+        bundleAssigned: Boolean(s.bundleAssigned),
+      }));
+      // A similarly titled season, movie, or special must never enter this panel.
+      const exact = folder.entryType === "zip" ? candidates : candidates.filter((subtitle) => {
+        const scope = parseBundleScope(subtitle.sourceFolderKey || "");
+        return scope?.type === "folder" && scope.provider === folder.provider && scope.work === folder.folderName;
+      });
+      if (selectedFolderRequestRef.current === token) setSelectedFolderSubtitles(exact);
+    } catch (error) {
+      if (selectedFolderRequestRef.current === token)
+        setSearchError(error instanceof Error ? error.message : "폴더 자막 검색 실패");
+    } finally {
+      if (selectedFolderRequestRef.current === token) setIsLoadingSelectedFolder(false);
+    }
+  };
+
+  const belongsToSelectedFolder = (subtitle: SubtitleOption, folder: LocalSubtitleFolderChoice): boolean => {
+    const scope = parseBundleScope(subtitle.sourceFolderKey || "");
+    if (scope?.type === "folder") return scope.provider === folder.provider && scope.work === folder.folderName;
+    // Archive paths are passed to the server for exact ZIP retrieval.
+    return folder.entryType === "zip" && subtitle.sourceProvider === folder.provider
+      && subtitle.name.includes(folder.folderName);
+  };
+  const selectedVisibleResults = [...selectedFolderSubtitles.filter(option => !isRejected(subtitleSource(option)))].sort((a,b) => {
+    const episodeOf = (option: SubtitleOption) => {
+      const evidence = readEpisodeEvidence(option.orig_filename || option.name, true);
+      return evidence.episodes.length === 1 ? evidence.episodes[0] : Number.MAX_SAFE_INTEGER;
+    };
+    return episodeOf(a) - episodeOf(b) || (a.orig_filename || a.name).localeCompare(b.orig_filename || b.name, "ko", {numeric:true});
+  });
+  const selectedIds = new Set(selectedVisibleResults.map(s => s.localFileId || s.reviewedFileId || s.name));
+  const otherVisibleResults = selectedLocalFolder
+    ? visibleSearchResults.filter(s => !belongsToSelectedFolder(s, selectedLocalFolder)
+      && !selectedIds.has(s.localFileId || s.reviewedFileId || s.name))
+    : visibleSearchResults;
+  const otherLocalFolders = selectedLocalFolder
+    ? localFolders.filter(f => f.provider !== selectedLocalFolder.provider
+      || (f.archivePath || f.folderName) !== (selectedLocalFolder.archivePath || selectedLocalFolder.folderName))
+    : localFolders;
 
   // Open a subtitle file directly, or unpack and save an episode ZIP on the Pi.
   const processSubtitleFile = async (file: File) => {
@@ -673,6 +772,72 @@ export default function SubtitleSelectModal({
       void processSubtitleFile(e.target.files[0]);
     }
   };
+
+  const renderSearchCard = (sub: SubtitleOption, idx: number) => (
+                  <div
+                    key={sub.localFileId || sub.reviewedFileId || `${idx}-${sub.name}`}
+                    className="flex min-w-0 flex-col items-stretch gap-3 rounded-2xl border border-white/10 bg-slate-900/60 p-4 hover:border-purple-500/40 transition"
+                  >
+                    <div className="flex min-w-0 flex-col gap-1">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="w-full min-w-0 whitespace-normal break-words [overflow-wrap:anywhere] font-bold leading-relaxed text-white text-xs">{subtitleDisplayName(sub)}</span>
+                        {sub.sourceProvider && <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${sub.sourceProvider === "aniall" ? "bg-amber-500/15 text-amber-200" : "bg-cyan-500/15 text-cyan-200"}`}>{sub.sourceProvider === "aniall" ? "AniAll" : sub.sourceProvider === "naver" ? "네이버" : "애니시아"}</span>}
+                        {sub.localArchive && <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">Pi 로컬</span>}
+                        {sub.verifiedMatch ? (
+                          <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">DB 연결 확인</span>
+                        ) : typeof sub.matchScore === "number" ? (
+                          <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">제목 매칭 {sub.matchScore}점</span>
+                        ) : null}
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-extrabold ${
+                            sub.is_ass
+                              ? "bg-purple-500/20 text-purple-300 border border-purple-500/40"
+                              : "bg-sky-500/20 text-sky-300 border border-sky-500/40"
+                          }`}
+                        >
+                          {sub.format}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 whitespace-normal break-words [overflow-wrap:anywhere]">
+                        {sub.matchedTitle ? `${sub.sourceProvider === "anissia" ? "애니시아" : "DB 작품명"}: ${sub.matchedTitle} · ` : ""}자막 내용 {sub.content?.length || 0}자 포함
+                      </p>
+                    </div>
+
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    {sub.localArchive && sub.sourceProvider && sub.sourceBundleKey && (
+                      <button type="button" onClick={() => assignBundle(sub)}
+                        disabled={Boolean(savingBundleKey) || Boolean(bundleAssignment
+                          && bundleAssignment.provider === sub.sourceProvider
+                          && bundleSelectionMatches(bundleAssignment.bundleKey,sub.sourceBundleKey!))}
+                        className="rounded-lg bg-emerald-600 px-3 py-2 text-[11px] font-bold text-white hover:bg-emerald-500 disabled:bg-emerald-950/50 disabled:text-emerald-300">
+                        {bundleAssignment && bundleAssignment.provider === sub.sourceProvider
+                          && bundleSelectionMatches(bundleAssignment.bundleKey,sub.sourceBundleKey!)
+                          ? "작품 지정됨"
+                          : savingBundleKey === `${sub.sourceProvider}:${sub.sourceBundleKey}` ? "지정 중…" : sub.sourceFolderKey ? "이 버전 계속" : "작품 전체 지정"}
+                      </button>
+                    )}
+                    {sub.localArchive && sub.sourceProvider && (sub.reviewedFileId || sub.localFileId) && <button type="button"
+                      onClick={() => selectThisEpisodeSubtitle(sub)} disabled={Boolean(savingBundleKey)}
+                      className="rounded-lg border border-cyan-500/40 px-3 py-2 text-[11px] font-bold text-cyan-200 hover:bg-cyan-500/10 disabled:opacity-50">
+                      {savingBundleKey === `episode:${sub.sourceProvider}:${sub.localFileId || sub.reviewedFileId}` ? "저장 중…" : "이번 화만 지정"}
+                    </button>}
+                    {sub.localArchive && (sub.reviewedFileId || sub.localFileId) && <button type="button" onClick={()=>{setExceptionCandidate(sub);setActiveTab("creators");}}
+                      className="rounded-lg border border-amber-500/40 px-3 py-2 text-[11px] font-bold text-amber-200">예외 만들기</button>}
+                    <button type="button" onClick={() => changeRejection(subtitleSource(sub), true)}
+                      disabled={Boolean(savingRejection)}
+                      className="rounded-lg px-2 py-2 text-[11px] text-slate-400 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50">이 자막은 아니야</button>
+                    <button
+                      disabled={Boolean(savingBundleKey)}
+                      onClick={() => {
+                        selectLocalSubtitle(sub);
+                      }}
+                      className="rounded-xl bg-purple-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-purple-500 active:scale-95"
+                    >
+                      {!sub.episodeException && (sub.sourceFolderKey || sub.reviewedFileId) ? "선택 · 다음 화 유지" : "현재 화 선택"}
+                    </button>
+                    </div>
+                  </div>
+  );
 
   const modalContent = (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -1041,23 +1206,6 @@ export default function SubtitleSelectModal({
                 </div>
               )}
 
-              {localFolders.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-xs font-semibold text-slate-300">Pi 로컬 폴더·ZIP ({localFolders.length})</p>
-                  <div className="max-h-64 space-y-1 overflow-y-auto rounded-xl border border-white/10 bg-slate-950/40 p-2">
-                    {localFolders.map((folder, index) => (
-                      <button type="button" key={`${folder.provider}-${folder.folderName}-${index}`}
-                        onClick={() => handleLocalSearch(folder.folderName, folder.archivePath)}
-                        className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-xs hover:bg-white/10">
-                        <span className="min-w-0 break-words [overflow-wrap:anywhere] text-white">{folder.folderName}{folder.archivePath && <span className="mt-1 block text-[10px] text-slate-500">{folder.archivePath}</span>}</span>
-                        <span className="shrink-0 text-slate-400">{folder.provider === "aniall" ? "AniAll" : folder.provider === "naver" ? "Naver" : "Anissia"} · {folder.entryType === "zip" ? "ZIP" : "폴더"}</span>
-                      </button>
-                    ))}
-                  </div>
-                  <p className="text-[11px] text-slate-400">애니시아 폴더가 먼저 나와. 폴더나 ZIP을 누르면 내부 자막을 확인해.</p>
-                </div>
-              )}
-
               {visibleSearchCreators.length > 0 && (
                 <div className="space-y-2">
                   <p className="text-xs font-semibold text-slate-300">온라인 제작자 후보 ({visibleSearchCreators.length})</p>
@@ -1078,75 +1226,76 @@ export default function SubtitleSelectModal({
                 </div>
               )}
 
-              <SubtitleFolderAssignments animeId={animeId} choices={[...localFolders,...searchResults]} onSaved={setBundleAssignment} />
-              {/* Search Results */}
-              <div className="space-y-2">
-                {visibleSearchResults.map((sub, idx) => (
-                  <div
-                    key={idx}
-                    className="flex min-w-0 flex-col items-stretch gap-3 rounded-2xl border border-white/10 bg-slate-900/60 p-4 hover:border-purple-500/40 transition"
-                  >
-                    <div className="flex min-w-0 flex-col gap-1">
-                      <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        <span className="w-full min-w-0 whitespace-normal break-words [overflow-wrap:anywhere] font-bold leading-relaxed text-white text-xs">{subtitleDisplayName(sub)}</span>
-                        {sub.sourceProvider && <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${sub.sourceProvider === "aniall" ? "bg-amber-500/15 text-amber-200" : "bg-cyan-500/15 text-cyan-200"}`}>{sub.sourceProvider === "aniall" ? "AniAll" : sub.sourceProvider === "naver" ? "네이버" : "애니시아"}</span>}
-                        {sub.localArchive && <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">Pi 로컬</span>}
-                        {sub.verifiedMatch ? (
-                          <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">DB 연결 확인</span>
-                        ) : typeof sub.matchScore === "number" ? (
-                          <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">제목 매칭 {sub.matchScore}점</span>
-                        ) : null}
-                        <span
-                          className={`rounded px-1.5 py-0.5 text-[10px] font-extrabold ${
-                            sub.is_ass
-                              ? "bg-purple-500/20 text-purple-300 border border-purple-500/40"
-                              : "bg-sky-500/20 text-sky-300 border border-sky-500/40"
-                          }`}
-                        >
-                          {sub.format}
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-slate-400 whitespace-normal break-words [overflow-wrap:anywhere]">
-                        {sub.matchedTitle ? `${sub.sourceProvider === "anissia" ? "애니시아" : "DB 작품명"}: ${sub.matchedTitle} · ` : ""}자막 내용 {sub.content?.length || 0}자 포함
-                      </p>
-                    </div>
 
-                    <div className="flex shrink-0 flex-wrap items-center gap-2">
-                    {sub.localArchive && sub.sourceProvider && sub.sourceBundleKey && (
-                      <button type="button" onClick={() => assignBundle(sub)}
-                        disabled={Boolean(savingBundleKey) || Boolean(bundleAssignment
-                          && bundleAssignment.provider === sub.sourceProvider
-                          && bundleSelectionMatches(bundleAssignment.bundleKey,sub.sourceBundleKey!))}
-                        className="rounded-lg bg-emerald-600 px-3 py-2 text-[11px] font-bold text-white hover:bg-emerald-500 disabled:bg-emerald-950/50 disabled:text-emerald-300">
-                        {bundleAssignment && bundleAssignment.provider === sub.sourceProvider
-                          && bundleSelectionMatches(bundleAssignment.bundleKey,sub.sourceBundleKey!)
-                          ? "작품 지정됨"
-                          : savingBundleKey === `${sub.sourceProvider}:${sub.sourceBundleKey}` ? "지정 중…" : sub.sourceFolderKey ? "이 버전 계속" : "작품 전체 지정"}
-                      </button>
-                    )}
-                    {sub.localArchive && sub.sourceProvider && (sub.reviewedFileId || sub.localFileId) && <button type="button"
-                      onClick={() => selectThisEpisodeSubtitle(sub)} disabled={Boolean(savingBundleKey)}
-                      className="rounded-lg border border-cyan-500/40 px-3 py-2 text-[11px] font-bold text-cyan-200 hover:bg-cyan-500/10 disabled:opacity-50">
-                      {savingBundleKey === `episode:${sub.sourceProvider}:${sub.localFileId || sub.reviewedFileId}` ? "저장 중…" : "이번 화만 지정"}
-                    </button>}
-                    {sub.localArchive && (sub.reviewedFileId || sub.localFileId) && <button type="button" onClick={()=>{setExceptionCandidate(sub);setActiveTab("creators");}}
-                      className="rounded-lg border border-amber-500/40 px-3 py-2 text-[11px] font-bold text-amber-200">예외 만들기</button>}
-                    <button type="button" onClick={() => changeRejection(subtitleSource(sub), true)}
-                      disabled={Boolean(savingRejection)}
-                      className="rounded-lg px-2 py-2 text-[11px] text-slate-400 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50">이 자막은 아니야</button>
-                    <button
-                      disabled={Boolean(savingBundleKey)}
-                      onClick={() => {
-                        selectLocalSubtitle(sub);
-                      }}
-                      className="rounded-xl bg-purple-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-purple-500 active:scale-95"
-                    >
-                      {!sub.episodeException && (sub.sourceFolderKey || sub.reviewedFileId) ? "선택 · 다음 화 유지" : "현재 화 선택"}
-                    </button>
+              {selectedLocalFolder ? (
+                <section className="space-y-3 rounded-2xl border border-emerald-500/45 bg-emerald-950/15 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <h3 className="text-sm font-bold text-emerald-200">선택한 {selectedLocalFolder.entryType === "zip" ? "ZIP" : "폴더"} · {selectedLocalFolder.folderName}</h3>
+                      <p className="break-all text-[11px] text-slate-400">{selectedLocalFolder.provider} · {selectedLocalFolder.archivePath || selectedLocalFolder.folderName}</p>
                     </div>
+                    <button type="button" onClick={() => { selectedFolderRequestRef.current++; setSelectedLocalFolder(null); setSelectedFolderSubtitles([]); setShowOtherLocalResults(false); }}
+                      className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800">선택 해제</button>
                   </div>
-                ))}
-              </div>
+                  <SubtitleFolderAssignments animeId={animeId} choices={[selectedLocalFolder, ...selectedFolderSubtitles]} onSaved={setBundleAssignment} />
+                  {isLoadingSelectedFolder ? <p className="text-xs text-emerald-200">선택한 항목의 자막 확인 중…</p>
+                    : selectedVisibleResults.length === 0 ? <p className="text-xs text-slate-400">선택한 항목에서 표시 가능한 자막을 찾지 못했어.</p>
+                    : <>
+                        <p className="text-xs font-semibold text-emerald-200">선택한 항목의 자막 ({selectedVisibleResults.length}) · 회차순</p>
+                        <div className="space-y-2">{selectedVisibleResults.map(renderSearchCard)}</div>
+                      </>}
+                </section>
+              ) : (
+                <>
+              {otherLocalFolders.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-slate-300">Pi 로컬 폴더·ZIP ({otherLocalFolders.length})</p>
+                  <div className="max-h-64 space-y-1 overflow-y-auto rounded-xl border border-white/10 bg-slate-950/40 p-2">
+                    {otherLocalFolders.map((folder, index) => (
+                      <button type="button" key={`${folder.provider}-${folder.folderName}-${index}`}
+                        onClick={() => void openLocalFolder(folder)}
+                        className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-xs hover:bg-white/10">
+                        <span className="min-w-0 break-words [overflow-wrap:anywhere] text-white">{folder.folderName}{folder.archivePath && <span className="mt-1 block text-[10px] text-slate-500">{folder.archivePath}</span>}</span>
+                        <span className="shrink-0 text-slate-400">{folder.provider === "aniall" ? "AniAll" : folder.provider === "naver" ? "Naver" : "Anissia"} · {folder.entryType === "zip" ? "ZIP" : "폴더"}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-slate-400">폴더나 ZIP을 누르면 그 항목의 자막을 맨 위에 따로 표시해.</p>
+                </div>
+              )}
+                  <div className="space-y-2">{visibleSearchResults.map(renderSearchCard)}</div>
+                </>
+              )}
+              {selectedLocalFolder && (
+                <section className="space-y-3 rounded-xl border border-white/15 bg-slate-950/30 p-3">
+                  <button type="button" className="flex w-full items-center justify-between gap-3 text-left text-xs font-semibold text-slate-300 hover:text-white"
+                    aria-expanded={showOtherLocalResults} onClick={() => setShowOtherLocalResults(value => !value)}>
+                    <span>다른 검색 결과 · 폴더·ZIP {otherLocalFolders.length}개 / 자막 {otherVisibleResults.length}개</span>
+                    <span>{showOtherLocalResults ? "접기 ▲" : "펼치기 ▼"}</span>
+                  </button>
+                  {showOtherLocalResults && (
+                    <div className="space-y-3">
+              {otherLocalFolders.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-slate-300">Pi 로컬 폴더·ZIP ({otherLocalFolders.length})</p>
+                  <div className="max-h-64 space-y-1 overflow-y-auto rounded-xl border border-white/10 bg-slate-950/40 p-2">
+                    {otherLocalFolders.map((folder, index) => (
+                      <button type="button" key={`${folder.provider}-${folder.folderName}-${index}`}
+                        onClick={() => void openLocalFolder(folder)}
+                        className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-xs hover:bg-white/10">
+                        <span className="min-w-0 break-words [overflow-wrap:anywhere] text-white">{folder.folderName}{folder.archivePath && <span className="mt-1 block text-[10px] text-slate-500">{folder.archivePath}</span>}</span>
+                        <span className="shrink-0 text-slate-400">{folder.provider === "aniall" ? "AniAll" : folder.provider === "naver" ? "Naver" : "Anissia"} · {folder.entryType === "zip" ? "ZIP" : "폴더"}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-slate-400">폴더나 ZIP을 누르면 그 항목의 자막을 맨 위에 따로 표시해.</p>
+                </div>
+              )}
+                      <div className="space-y-2">{otherVisibleResults.map(renderSearchCard)}</div>
+                    </div>
+                  )}
+                </section>
+              )}
             </div>
           )}
 
