@@ -143,6 +143,10 @@ export function normalizeSubtitleTrackFilename(filename: string, episode: number
     .replace(/(?:^|[^a-z\d])(s[1-9])\d{2}(?=$|[^a-z\d])/gi,'$1{ep}')
     .replace(/\b(s\s*0*\d{1,2}\s*e\s*)0*\d{1,4}(?!\d)/gi,'$1{ep}');
   const patterns = [
+    // Explicitly numbered loose files such as "Psycho-Pass S1 - 01 (BD ...).smi"
+    // use the same subtitle track in subsequent episodes. Do not include
+    // release metadata or the literal episode number in the track identity.
+    new RegExp("((?:^|[^a-z\\d])s\\s*0*\\d{1,2}\\s*[-–]\\s*)0*" + episode + "(?!\\d)", "i"),
     // A page-numbered release may append 화 on only one episode. This is the
     // same numbering style, unlike separate bare-number and N화 release sets.
     new RegExp("(\\bpage\\s+)0*" + episode + "(?:\\s*(?:화|회|편|話))?(?=$|[\\s._-]*(?:ns|s|tv)$)", "i"),
@@ -162,7 +166,9 @@ export function normalizeSubtitleTrackFilename(filename: string, episode: number
     if (match) {
       const prefix = match[1] || "";
       const suffix = match[2] || "";
-      return base.replace(pattern, `${prefix}{ep}${suffix}`);
+      return base.replace(pattern, `${prefix}{ep}${suffix}`)
+        // "22 END" is a completion marker, not a distinct release version.
+        .replace(/\{ep\}\s+(?:END|완결|끝)(?=\s*(?:\([^)]*\)|\[[^\]]*\])*\s*$)/i, '{ep}');
     }
   }
   return base;
