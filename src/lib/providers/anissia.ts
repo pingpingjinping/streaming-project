@@ -216,24 +216,56 @@ export async function fetchAniListMeta(searchTitle: string): Promise<AniListMeta
 }
 
 const metaKey=(animeNo:unknown,title:string)=>`${animeNo || ''}:${title}`;
-async function fetchAnissiaMeta(animeNo:number,searchTitle:string,links?:Map<number,string>):Promise<AniListMeta|null> {
+type RecentCaptionTimingDetails = Record<string, number | string | boolean>;
+type RecentCaptionTiming = (stage: string, details?: RecentCaptionTimingDetails) => void;
+let recentCaptionTraceSequence = 0;
+
+async function fetchAnissiaMeta(
+  animeNo:number, searchTitle:string, links?:Map<number,string>, report?:RecentCaptionTiming
+):Promise<AniListMeta|null> {
   const reanimeId=(links || await getConfirmedReanimeIdsForAnissia([animeNo])).get(animeNo);
   if(reanimeId) {
+    const start=Date.now();
     const artwork=await getReanimeArtwork(reanimeId);
+    const durationMs=Date.now()-start;
+    if(durationMs>=1000)report?.("reanime_artwork_slow",{animeNo,durationMs});
     if(artwork)return artwork;
   }
-  return fetchAniListMeta(searchTitle);
+  const start=Date.now();
+  const artwork=await fetchAniListMeta(searchTitle);
+  const durationMs=Date.now()-start;
+  if(durationMs>=1000)report?.("anilist_artwork_slow",{animeNo,durationMs});
+  return artwork;
 }
 
 /** ReAnime first, AniList only when no confirmed ReAnime poster is available. */
-async function enrichWithArtwork(items:Array<{titleToSearch:string;animeNo:unknown;[k:string]:any}>):Promise<Map<string,AniListMeta>> {
+async function enrichWithArtwork(
+  items:Array<{titleToSearch:string;animeNo:unknown;[k:string]:any}>,
+  report?:RecentCaptionTiming
+):Promise<Map<string,AniListMeta>> {
   const metaMap=new Map<string,AniListMeta>();
   const targets=[...new Map(items.map(item=>[metaKey(item.animeNo,item.titleToSearch),item])).values()];
+  const matchStartedAt=Date.now();
+  report?.("matches_start",{targets:targets.length});
   const links=await getConfirmedReanimeIdsForAnissia(targets.map(item=>Number(item.animeNo)));
-  for(let i=0;i<targets.length;i+=5)await Promise.allSettled(targets.slice(i,i+5).map(async item=>{
-    const meta=await fetchAnissiaMeta(Number(item.animeNo),item.titleToSearch,links);
-    if(meta)metaMap.set(metaKey(item.animeNo,item.titleToSearch),meta);
-  }));
+  report?.("matches_done",{durationMs:Date.now()-matchStartedAt,linked:links.size});
+  for(let i=0;i<targets.length;i+=5) {
+    const batch=Math.floor(i/5)+1;
+    const batchStartedAt=Date.now();
+    report?.("artwork_batch_start",{batch,count:Math.min(5,targets.length-i)});
+    const outcomes=await Promise.allSettled(targets.slice(i,i+5).map(async item=>{
+      const animeNo=Number(item.animeNo);
+      const start=Date.now();
+      const meta=await fetchAnissiaMeta(animeNo,item.titleToSearch,links,report);
+      if(meta)metaMap.set(metaKey(item.animeNo,item.titleToSearch),meta);
+      const durationMs=Date.now()-start;
+      if(durationMs>=1000)report?.("artwork_item_slow",{animeNo,durationMs,batch});
+    }));
+    report?.("artwork_batch_done",{
+      batch,durationMs:Date.now()-batchStartedAt,
+      rejected:outcomes.filter(result=>result.status==="rejected").length
+    });
+  }
   return metaMap;
 }
 
@@ -317,8 +349,18 @@ class AnissiaProvider implements AnimeProvider {
    * 1. ⚡ 최근 등록 자막 피드 (/anime/caption/recent/{page})
    */
   private async getRecentCaptions(page: number = 1): Promise<AnimeListResponse> {
+    // Temporary production diagnostics: timings/counts only, no titles, URLs or credentials.
+    const startedAt=Date.now();
+    const traceId=`${process.pid}-${++recentCaptionTraceSequence}`;
+    const report:RecentCaptionTiming=(stage,details={})=>{
+      console.info("[AnissiaRecentTiming]",JSON.stringify({
+        traceId,page,stage,elapsedMs:Date.now()-startedAt,...details
+      }));
+    };
+    report("start");
     try {
       const anissiaPage = Math.max(0, page - 1);
+      const apiStartedAt=Date.now();
       let res = await fetch(`${ANISSIA_BASE_URL}/anime/caption/recent/${anissiaPage}`, {
         headers: HEADERS,
         signal: AbortSignal.timeout(4000),
@@ -334,6 +376,7 @@ class AnissiaProvider implements AnimeProvider {
 
       if (!res.ok) throw new Error(`Anissia API Error: ${res.status}`);
       const json = await res.json();
+      report("api_done",{status:res.status,durationMs:Date.now()-apiStartedAt});
 
       let list: any[] = [];
       let totalPages = 1;
@@ -361,8 +404,12 @@ class AnissiaProvider implements AnimeProvider {
         }
       }
 
+      report("list_ready",{count:uniqueItems.length,totalPages});
       // 원제를 보완하고 확정된 ReAnime ID로 포스터를 먼저 조회
+      const scheduleStartedAt=Date.now();
+      report("schedule_start");
       const scheduleMap = await getMasterScheduleMap();
+      report("schedule_done",{durationMs:Date.now()-scheduleStartedAt,count:scheduleMap.size});
       const enrichTargets = uniqueItems.map((u) => {
         const sched = scheduleMap.get(Number(u.animeNo));
         const searchTitle = sched?.originalSubject || u.subject || "";
@@ -372,7 +419,10 @@ class AnissiaProvider implements AnimeProvider {
           animeNo: u.animeNo,
         };
       });
-      const metaMap = await enrichWithArtwork(enrichTargets);
+      const artworkStartedAt=Date.now();
+      report("artwork_start",{count:enrichTargets.length});
+      const metaMap = await enrichWithArtwork(enrichTargets,report);
+      report("artwork_done",{durationMs:Date.now()-artworkStartedAt,matched:metaMap.size});
 
       const items: AnimeListItem[] = uniqueItems.map((item) => {
         const sched = scheduleMap.get(Number(item.animeNo));
@@ -400,6 +450,7 @@ class AnissiaProvider implements AnimeProvider {
         };
       });
 
+      report("complete",{items:items.length});
       return {
         items,
         page,
@@ -407,6 +458,7 @@ class AnissiaProvider implements AnimeProvider {
         total_pages: totalPages,
       };
     } catch (err) {
+      report("failed",{error:err instanceof Error ? err.name : "unknown"});
       console.error("[AnissiaProvider] getRecentCaptions error:", err);
       return { items: [], page, has_next: false, total_pages: 0 };
     }
