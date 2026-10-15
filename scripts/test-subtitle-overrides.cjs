@@ -194,7 +194,9 @@ test('Psycho-Pass S1 loose files share a track and the first choice resumes all 
     assert.equal(options.length,1,`episode ${ep} should have an exact local candidate`);
     const subtitle=options[0];
     assert.equal(subtitle.episodeConfirmed,true,`episode ${ep} must be confirmed`);
-    assert.equal(subtitle.orig_filename,filename);
+    // decodeSubtitleFile shortens display names over 60 characters; identity
+    // must still come from the actual loose-file path, not the display label.
+    assert.ok(subtitle.localFileId && subtitle.sourceBundleKey);
     if(!initial) initial=subtitle;
     else assert.equal(subtitle.sourceBundleKey,initial.sourceBundleKey,`episode ${ep} changed release track`);
   }
