@@ -35,11 +35,21 @@ export function readEpisodeEvidence(value: string, filename = false, filePath = 
     ...text.matchAll(/(?:제|第)?\s*(\d{1,2})\s*(?:기|期)/g),
     ...text.matchAll(/\b(\d{1,2})(?:st|nd|rd|th)\s+season\b/gi),
   ].map(m => Number(m[1])).filter(valid));
-  const multipleSeasons = seasons.length > 1 || /(?:\d+\s*[-~, ]\s*)+\d+\s*기/.test(text)
-    || /(?:season|시즌|s)\s*\d+\s*[-~]\s*\d+/i.test(text);
-  const paired = [...compact, ...base.matchAll(/(?:^|[^a-z\d])s\s*0*(\d{1,2})\s*e\s*0*(\d{1,4})(?!\d)/gi)];
+  // A loose subtitle named "S1 - 01" is season 1, episode 1, not a
+  // season 1–1 archive. Identify this before testing season ranges.
+  // Keep "Season 1-4.zip" and "S1-S2" as multi-season bundles.
+  const dashedPairs = filename && /\.(?:ass|ssa|srt|smi|vtt)$/i.test(value.trim())
+    ? [...base.matchAll(/(?:^|[^a-z\d])s\s*0*(\d{1,2})\s*[-–]\s*0*(\d{1,3})(?!\d)/gi)]
+    : [];
+  const seasonRangeText = dashedPairs.length
+    ? text.replace(/(?:^|[^a-z\d])s\s*0*\d{1,2}\s*[-–]\s*0*\d{1,3}(?!\d)/gi, ' ')
+    : text;
+  const multipleSeasons = seasons.length > 1 || /(?:\d+\s*[-~, ]\s*)+\d+\s*기/.test(seasonRangeText)
+    || /(?:season|시즌|s)\s*\d+\s*[-~]\s*\d+/i.test(seasonRangeText);
+  const paired = [...compact, ...base.matchAll(/(?:^|[^a-z\d])s\s*0*(\d{1,2})\s*e\s*0*(\d{1,4})(?!\d)/gi), ...dashedPairs];
   const episodes: number[] = paired.map(m => Number(m[2]));
-  let clean = base.replace(/(?:season|시즌|s)\s*\d+\s*[-~]\s*(?:season|시즌|s)?\s*\d+/gi, ' ').replace(/(?:\d+\s*[-~, ]\s*)+\d+\s*기/g, ' ').replace(/(?:^|[^a-z\d])s\s*\d{1,2}\s*e\s*\d{1,4}(?!\d)/gi, ' ')
+  let clean = (dashedPairs.length ? base.replace(/(?:^|[^a-z\d])s\s*0*\d{1,2}\s*[-–]\s*0*\d{1,3}(?!\d)/gi, ' ') : base)
+    .replace(/(?:season|시즌|s)\s*\d+\s*[-~]\s*(?:season|시즌|s)?\s*\d+/gi, ' ').replace(/(?:\d+\s*[-~, ]\s*)+\d+\s*기/g, ' ').replace(/(?:^|[^a-z\d])s\s*\d{1,2}\s*e\s*\d{1,4}(?!\d)/gi, ' ')
     .replace(/(?:season|part|cour|시즌|파트)\s*\d+|\bS\d+\b|\d+\s*(?:기|期)|\b\d+(?:st|nd|rd|th)\b/gi, ' ');
   let range = false;
   clean = clean.replace(/(?:^|[^\p{L}\d])(\d{1,4})\s*(?:-|~|～|to)\s*(\d{1,4})(?!\d)/giu, (all, a, b) => {
