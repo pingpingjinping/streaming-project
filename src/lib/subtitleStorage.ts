@@ -439,6 +439,8 @@ export async function getAnissiaArchiveSubtitles(
       .sort((a, b) => Number(b.toLowerCase() === "subtitle.zip") - Number(a.toLowerCase() === "subtitle.zip") ||
         a.localeCompare(b, undefined, { numeric: true }));
     const loose = files.filter((name) => /\.(ass|ssa|smi|srt|vtt)$/i.test(name));
+    // Only compare sibling filenames in this exact physical directory.
+    const looseSiblings = inferSiblingEpisodes(loose);
     const recordEpisode = folderParts.episode
       ? recordValue(candidate.entry.record, ["episode", "episodeNumber", "episode_number", "episodeNo", "ep"]) : "";
     const episodeFolder = folderParts.episode;
@@ -454,12 +456,12 @@ export async function getAnissiaArchiveSubtitles(
         const info = await stat(filePath);
         if (!info.isFile() || info.size <= 0 || info.size > 100 * 1024 * 1024) continue;
 
-        const addSubtitle = (subtitle: ReturnType<typeof extractSubtitleFromBuffer>, bytes: Buffer, member: string, confirmed: boolean) => {
+        const addSubtitle = (subtitle: ReturnType<typeof extractSubtitleFromBuffer>, bytes: Buffer, member: string, confirmed: boolean, sibling?:SiblingEpisode) => {
           if (!subtitle?.content) return;
-          const identity = anissiaTrackIdentity(fileCreator, filename, subtitle.orig_filename, episode);
+          const identity = anissiaTrackIdentity(fileCreator, filename, member || filename, sibling?.episode || episode, sibling);
           const relative = path.relative(root,filePath).split(path.sep).join('/');
           const scope = subtitleScope(member || filename, `${candidate.title} ${filename}`, parseSeason(candidate.title) || 1);
-          const bundle = rawBundleIdentity('anissia',relative,member,fileCreator,candidate.title,sourceRecord);
+          const bundle = rawBundleIdentity('anissia',relative,member,fileCreator,candidate.title,sourceRecord,sibling);
           const sourceBundleKey = bundle.sourceBundleKey;
           if (options.bundleKey && !bundleMatchesAssignment(options.bundleKey,sourceBundleKey)) return;
           const expectedKind = assignedScope?.kind || subtitleScope('',titles.join(' ')).kind;
@@ -487,24 +489,26 @@ export async function getAnissiaArchiveSubtitles(
         if (filename.toLowerCase().endsWith(".zip")) {
           const archiveBytes=await readFile(filePath);if(!sourceDigestMatches(sourceRecord,archiveBytes))continue;
           const { zip, entries } = inspectSubtitleArchive(archiveBytes);
-          const scoped = options.bundleKey ? entries.filter(item=>bundleMatchesAssignment(options.bundleKey!,rawBundleIdentity('anissia',path.relative(root,filePath).split(path.sep).join('/'),item.filename,fileCreator,candidate.title,sourceRecord).sourceBundleKey)) : entries;
+          const zipSiblings = inferSiblingEpisodes(entries.map(item=>item.filename));
+          const scoped = options.bundleKey ? entries.filter(item=>bundleMatchesAssignment(options.bundleKey!,rawBundleIdentity('anissia',path.relative(root,filePath).split(path.sep).join('/'),item.filename,fileCreator,candidate.title,sourceRecord,zipSiblings.get(item.filename)).sourceBundleKey)) : entries;
           const archiveEvidence=readEpisodeEvidence(filename,true);
           if(assignedScope) archiveEvidence.season=null;
-          const selectedEntries = selectEpisodeEntries(scoped, request,[...outer, archiveEvidence]);
+          const selectedEntries = selectWithSiblingEvidence(scoped, request,[...outer, archiveEvidence],zipSiblings);
           const manualEntries = options.manualSearch ? entries : [];
           for (const item of [...new Map([...selectedEntries,...manualEntries].map(item=>[item.index,item])).values()]) {
             try {
               const bytes = zip.getEntries()[item.index].getData();
-              addSubtitle(decodeSubtitleFile(bytes, item.filename),bytes,item.filename,selectedEntries.includes(item));
+              addSubtitle(decodeSubtitleFile(bytes, item.filename),bytes,item.filename,selectedEntries.includes(item),zipSiblings.get(item.filename));
             } catch {}
             if (results.length >= resultLimit) break;
           }
         } else {
           const bytes = await readFile(filePath);if(!sourceDigestMatches(sourceRecord,bytes))continue;
-          const exact = extractSubtitleFromBuffer(bytes, episode, filename, true, wantedSeason,
+          const inferred = looseSiblings.has(filename) && selectWithSiblingEvidence([{filename}],request,outer,looseSiblings).length===1;
+          const exact = inferred ? decodeSubtitleFile(bytes,filename) : extractSubtitleFromBuffer(bytes, episode, filename, true, wantedSeason,
             { localEpisode: request.episode, evidence: outer });
           const manual = options.manualSearch;
-          addSubtitle(exact || (manual ? decodeSubtitleFile(bytes,filename) : null),bytes,'',Boolean(exact));
+          addSubtitle(exact || (manual ? decodeSubtitleFile(bytes,filename) : null),bytes,'',Boolean(exact),looseSiblings.get(filename));
         }
       } catch {}
       if (results.length >= resultLimit) break;
