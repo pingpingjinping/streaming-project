@@ -6,7 +6,7 @@ import { deleteUploadedSubtitle as deleteLegacyUploadedSubtitle, getUploadedSubt
 import { extractSubtitleFromBuffer, decodeSubtitleFile } from "@/lib/subtitles";
 import { episodeFromSubtitleFilename, inspectSubtitleArchive } from "@/lib/subtitleUpload";
 import { parseSeason } from "@/lib/subtitles";
-import { readEpisodeEvidence, evidenceAgrees, selectEpisodeEntries } from "@/lib/subtitleEpisodes";
+import { readEpisodeEvidence, readWorkTitleEvidence, evidenceAgrees, selectEpisodeEntries } from "@/lib/subtitleEpisodes";
 import { normalizeSubtitleTrackFilename, bundleScopeKey, parseBundleScope, localFileKey, parseLocalFileKey, subtitleScope, scopeLabel, bundleScopesOverlap, bundleMatchesAssignment } from './subtitleLocalIdentity';
 
 import {readSubtitleSourceManifest,sourceDigestMatches,sourceTrackIdentity} from './subtitleSourceManifest';
@@ -407,7 +407,7 @@ export async function getAnissiaArchiveSubtitles(
     const recordEpisode = folderParts.episode
       ? recordValue(candidate.entry.record, ["episode", "episodeNumber", "episode_number", "episodeNo", "ep"]) : "";
     const episodeFolder = folderParts.episode;
-    const outer = [...(assignedScope ? [{...readEpisodeEvidence(''),season:assignedScope.season}] : [readEpisodeEvidence(candidate.title)]),readEpisodeEvidence(recordEpisode),readEpisodeEvidence(episodeFolder)];
+    const outer = [...(assignedScope ? [{...readEpisodeEvidence(''),season:assignedScope.season}] : [readWorkTitleEvidence(candidate.title)]),readEpisodeEvidence(recordEpisode),readEpisodeEvidence(episodeFolder)];
 
     for (const filename of [...archives, ...loose]) {
       try {
