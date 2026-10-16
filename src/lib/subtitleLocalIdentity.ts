@@ -1,4 +1,5 @@
 import { readEpisodeEvidence, readWorkTitleEvidence } from './subtitleEpisodes';
+import { numberedSequelEpisode } from './subtitleTitleSeason';
 
 export type LocalProvider = 'aniall' | 'anissia' | 'naver';
 export type SubtitleKind = 'main' | 'ova' | 'special' | 'movie' | 'preview' | 'drama' | 'unknown';
@@ -142,14 +143,15 @@ export function normalizeSubtitleTrackFilename(filename: string, episode: number
   const base = (filenameBase.replace(/(?:\s*\[\s*미완성\s*\]|\s*\(\s*미완성\s*\)|[\s_-]*미완성)\s*$/, "") || filenameBase)
     .replace(/(?:^|[^a-z\d])(s[1-9])\d{2}(?=$|[^a-z\d])/gi,'$1{ep}')
     .replace(/\b(s\s*0*\d{1,2}\s*e\s*)0*\d{1,4}(?!\d)/gi,'$1{ep}');
+  const numericSequel = numberedSequelEpisode(base);
+  if (numericSequel?.episode === episode) {
+    return base.slice(0,numericSequel.episodeStart) + '{ep}' + base.slice(numericSequel.episodeEnd);
+  }
   const patterns = [
     // Explicitly numbered loose files such as "Psycho-Pass S1 - 01 (BD ...).smi"
     // use the same subtitle track in subsequent episodes. Do not include
     // release metadata or the literal episode number in the track identity.
     new RegExp("((?:^|[^a-z\\d])s\\s*0*\\d{1,2}\\s*[-–]\\s*)0*" + episode + "(?!\\d)", "i"),
-    // The numeric season is part of the title: "PSYCHO-PASS 2 - 01".
-    // Normalize only the episode so the same release follows 02..11.
-    new RegExp("(\\s[2-9]\\s*[-–]\\s*)0*" + episode + "(?=\\s*(?:\\(|\\[|$))", "i"),
     // A page-numbered release may append 화 on only one episode. This is the
     // same numbering style, unlike separate bare-number and N화 release sets.
     new RegExp("(\\bpage\\s+)0*" + episode + "(?:\\s*(?:화|회|편|話))?(?=$|[\\s._-]*(?:ns|s|tv)$)", "i"),
