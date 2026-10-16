@@ -1,4 +1,5 @@
 import { toSourceEpisode } from "@/lib/episodeMapping";
+import { implicitSequelSeason } from "@/lib/subtitleTitleSeason";
 import * as cheerio from "cheerio";
 import { decodeSubtitleBuffer, cleanSubtitleText, convertToVtt, decodeSubtitleFile } from "@/lib/subtitleCodec";
 export { decodeSubtitleBuffer, cleanSubtitleText, convertToVtt, decodeSubtitleFile } from "@/lib/subtitleCodec";
@@ -290,11 +291,8 @@ export function parseSeason(text: string): number | null {
   if (m2) {
     return parseInt(m2[1], 10);
   }
-  // Titles such as "PSYCHO-PASS 2" use a separated terminal season
-  // number, not "S2" or "Season 2". Never infer seasons from release
-  // filenames or multi-digit years here.
-  const trailingSeason = text.trim().match(/\s([2-9])$/);
-  return trailingSeason ? Number(trailingSeason[1]) : null;
+  // A cautious, shared fallback for "PSYCHO-PASS 2" style sequel titles.
+  return implicitSequelSeason(text);
 }
 
 // 4. Episode numbers parser
