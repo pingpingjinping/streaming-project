@@ -110,6 +110,17 @@ for (let ep=1;ep<=11;ep++) {
   const bytes=Buffer.from(`<SAMI><BODY><SYNC Start=1000><P Class=KRCC>psycho pass two episode ${ep}<SYNC Start=3000><P Class=KRCC>&nbsp;</BODY></SAMI>`);
   put(`anissia_subtitles/PSYCHO-PASS 2/${filename}`,bytes);
 }
+// Sibling-only inference: neither the episode number nor the suffix is in
+// the old strict parser's supported filename positions.
+for(const ep of [1,2,3,4]) for(const variant of ['',' NS']) {
+  const name=`[Studio] Mystic Signal ${String(ep).padStart(3,'0')} encode x264 1080p${variant}.smi`;
+  put(`anissia_subtitles/미스틱 시그널/${name}`,Buffer.from(
+    `<SAMI><BODY><SYNC Start=1000><P Class=KRCC>sibling ${ep}${variant}<SYNC Start=3000><P Class=KRCC>&nbsp;</BODY></SAMI>`));
+}
+zipFile('aniall_subtitles/ZIP 형제 파일/collection.zip',
+  Object.fromEntries([1,2,3,4].map(ep=>[
+    `Subfolder/Mystic Signal ${String(ep).padStart(3,'0')} encode x265 1080p.srt`,srt(`zip sibling ${ep}`),
+  ])));
 const db=require('../src/lib/db.ts'),auth=require('../src/lib/auth.ts'),storage=require('../src/lib/subtitleStorage.ts');
 const reviewed=require('../src/lib/reviewedSubtitleStorage.ts'),titles=require('../src/lib/subtitles.ts'),matches=require('../src/lib/reanimeMatches.ts');
 const identity=require('../src/lib/subtitleLocalIdentity.ts');
@@ -294,6 +305,61 @@ test('Psycho-Pass 2 ReinForce loose subtitles keep sequel season and one release
   }
   assert.equal(titles.parseSeason('PSYCHO-PASS Sinners of the System'),null);
   assert.equal(titles.parseSeason('PSYCHO-PASS 3 FIRST INSPECTOR'),null);
+});
+
+test('physical sibling comparison infers episodes, separates NS tracks and falls back for ambiguous names',async()=>{
+  const infer=require('../src/lib/subtitleSiblingInference.ts').inferSiblingEpisodes;
+  const names=[1,2,3,4].flatMap(ep=>['',' NS'].map(variant=>
+    `[Studio] Mystic Signal ${String(ep).padStart(3,'0')} encode x264 1080p${variant}.smi`));
+  const siblings=infer(names);
+  assert.equal(siblings.size,8);
+  assert.equal(siblings.get(names[0]).episode,1);
+  assert.ok(siblings.get(names[0]).template.includes('{ep}'));
+  assert.notEqual(siblings.get(names[0]).template,siblings.get(names[1]).template,'NS release crossed normal release');
+  const ambiguous=['Twin 01 01.srt','Twin 01 02.srt','Twin 02 01.srt','Twin 02 02.srt'];
+  assert.equal(infer(ambiguous).size,0,'two simultaneously changing numeric positions are ambiguous');
+  assert.equal(infer(['onlyone.srt']).size,0);
+  const split=infer(['S01/E01.srt','S01/E02.srt','S02/E01.srt']);
+  assert.equal(split.get('S02/E01.srt'),undefined,'do not borrow siblings in another subfolder');
+  const work='미스틱 시그널',id='re_mystic_sibling';
+  const folder=identity.bundleScopeKey({type:'folder',provider:'anissia',work,kind:'main',season:1});
+  let first;
+  for(const ep of [1,2,3,4]){
+    const subtitles=await storage.getAnissiaArchiveSubtitles([work],ep,null,1,{bundleKey:folder});
+    assert.equal(subtitles.length,2,`folder sibling episode ${ep} not selected`);
+    for(const subtitle of subtitles) assert.equal(subtitle.episodeConfirmed,true);
+    const defaultOne=subtitles.find(x=>x.archiveFilename.includes('1080p.smi'));
+    if(!first)first=defaultOne;
+    else assert.equal(defaultOne.sourceBundleKey,first.sourceBundleKey,`folder release changed at ${ep}`);
+    assert.notEqual(subtitles[0].sourceBundleKey,subtitles[1].sourceBundleKey,'NS and base variants were merged');
+  }
+  assert.equal((await bundleRoute.PUT(request('subtitle-bundle','PUT',{
+    animeId:id,provider:'anissia',bundleKey:folder,fileId:first.localFileId,
+  }))).status,200);
+  for(const ep of [1,2,4]){
+    const result=await play(id,work,ep);
+    assert.equal(result.count,1);
+    assert.equal(result.needs_manual_subtitle_choice,false);
+    assert.ok(result.subtitles[0].content.includes(`sibling ${ep}`));
+    assert.equal(result.subtitles[0].sourceBundleKey,first.sourceBundleKey);
+  }
+  const zipTitle='ZIP 형제 파일',zipId='re_zip_sibling',zipFolder=identity.bundleScopeKey({
+    type:'folder',provider:'aniall',work:zipTitle,kind:'main',season:1,
+  });
+  let zipFirst;
+  for(const ep of [1,2,3,4]){
+    const subtitles=await storage.getAniAllArchiveSubtitles(zipTitle,ep,1,null,'',{bundleKey:zipFolder});
+    assert.equal(subtitles.length,1,`ZIP sibling episode ${ep} not selected`);
+    assert.equal(subtitles[0].episodeConfirmed,true);
+    if(!zipFirst)zipFirst=subtitles[0];
+    else assert.equal(subtitles[0].sourceBundleKey,zipFirst.sourceBundleKey);
+  }
+  assert.equal((await bundleRoute.PUT(request('subtitle-bundle','PUT',{
+    animeId:zipId,provider:'aniall',bundleKey:zipFolder,fileId:zipFirst.localFileId,
+  }))).status,200);
+  const zipNext=await play(zipId,zipTitle,3);
+  assert.equal(zipNext.count,1);
+  assert.ok(zipNext.subtitles[0].content.includes('zip sibling 3'));
 });
 
 test('same creator and generic ZIP names are scoped by work; assigned ns track follows episode two',async()=>{
