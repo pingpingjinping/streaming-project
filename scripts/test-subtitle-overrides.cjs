@@ -104,6 +104,12 @@ for (let ep = 1; ep <= 22; ep++) {
   const bytes = Buffer.from(`<SAMI><BODY><SYNC Start=1000><P Class=KRCC>psycho pass episode ${ep}<SYNC Start=3000><P Class=KRCC>&nbsp;</BODY></SAMI>`);
   put(`anissia_subtitles/PSYCHO-PASS/${filename}`,bytes);
 }
+// Numeric-suffix sequel title without an explicit S2 label.
+for (let ep=1;ep<=11;ep++) {
+  const filename=`[ReinForce] PSYCHO-PASS 2 - ${String(ep).padStart(2,'0')} (BDRip 1920x1080 x264 FLAC).smi`;
+  const bytes=Buffer.from(`<SAMI><BODY><SYNC Start=1000><P Class=KRCC>psycho pass two episode ${ep}<SYNC Start=3000><P Class=KRCC>&nbsp;</BODY></SAMI>`);
+  put(`anissia_subtitles/PSYCHO-PASS 2/${filename}`,bytes);
+}
 const db=require('../src/lib/db.ts'),auth=require('../src/lib/auth.ts'),storage=require('../src/lib/subtitleStorage.ts');
 const reviewed=require('../src/lib/reviewedSubtitleStorage.ts'),titles=require('../src/lib/subtitles.ts'),matches=require('../src/lib/reanimeMatches.ts');
 const identity=require('../src/lib/subtitleLocalIdentity.ts');
@@ -212,6 +218,51 @@ test('Psycho-Pass S1 loose files share a track and the first choice resumes all 
     assert.equal(result.subtitles[0].sourceBundleKey,initial.sourceBundleKey);
   }
 });
+test('Psycho-Pass 2 ReinForce loose subtitles keep sequel season and one release track across 11 episodes',async()=>{
+  const title='PSYCHO-PASS 2',id='re_psycho_pass_two',folder=identity.bundleScopeKey({
+    type:'folder',provider:'anissia',work:title,kind:'main',season:2,
+  });
+  const oldWrongScope=identity.bundleScopeKey({
+    type:'folder',provider:'anissia',work:title,kind:'main',season:1,
+  });
+  assert.equal(titles.parseSeason(title),2);
+  assert.equal(identity.subtitleScope('',title).season,2);
+  assert.deepEqual(episodeEvidence.readWorkTitleEvidence(title).episodes,[]);
+  assert.equal(episodeEvidence.readWorkTitleEvidence(title).season,2);
+  let first;
+  for(let ep=1;ep<=11;ep++){
+    const filename=`[ReinForce] PSYCHO-PASS 2 - ${String(ep).padStart(2,'0')} (BDRip 1920x1080 x264 FLAC).smi`;
+    const evidence=episodeEvidence.readEpisodeEvidence(filename,true);
+    assert.equal(evidence.season,2);
+    assert.deepEqual(evidence.episodes,[ep]);
+    const files=await storage.getAnissiaArchiveSubtitles([title],ep,null,2,{bundleKey:folder});
+    assert.equal(files.length,1,`Psycho-Pass 2 episode ${ep} missing`);
+    assert.equal(files[0].episodeConfirmed,true);
+    assert.equal(identity.parseBundleScope(files[0].sourceBundleKey).season,2);
+    if(!first)first=files[0];
+    else assert.equal(files[0].sourceBundleKey,first.sourceBundleKey,`Psycho-Pass 2 episode ${ep} changed track`);
+  }
+  // A stale assignment at the wrong season must never silently borrow season 2 files.
+  assert.deepEqual(await storage.getAnissiaArchiveSubtitles([title],1,null,1,{bundleKey:oldWrongScope}),[]);
+  const manual=await storage.getAnissiaArchiveSubtitles([title],1,null,2,{
+    folderNameQuery:title,manualSearch:true,
+  });
+  assert.ok(manual.some(s=>s.episodeConfirmed), 'manual search still finds the real episode one');
+  const saved=await bundleRoute.PUT(request('subtitle-bundle','PUT',{
+    animeId:id,provider:'anissia',bundleKey:folder,fileId:first.localFileId,
+  }));
+  assert.equal(saved.status,200);
+  for(const ep of [1,2,3,10,11]){
+    const result=await play(id,title,ep);
+    assert.equal(result.count,1,`episode ${ep} failed automatic bundle selection`);
+    assert.equal(result.needs_manual_subtitle_choice,false);
+    assert.ok(result.subtitles[0].content.includes(`psycho pass two episode ${ep}`));
+    assert.equal(result.subtitles[0].sourceBundleKey,first.sourceBundleKey);
+  }
+  assert.equal(titles.parseSeason('PSYCHO-PASS Sinners of the System'),null);
+  assert.equal(titles.parseSeason('PSYCHO-PASS 3 FIRST INSPECTOR'),null);
+});
+
 test('same creator and generic ZIP names are scoped by work; assigned ns track follows episode two',async()=>{
   const a=await storage.getAnissiaArchiveSubtitles(['작품 A'],1,101),b=await storage.getAnissiaArchiveSubtitles(['작품 B'],1,102);
   assert.notEqual(a[0].sourceBundleKey,b[0].sourceBundleKey);
