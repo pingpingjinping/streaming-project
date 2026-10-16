@@ -100,7 +100,9 @@ test('no cross-episode, OVA, offset, season mismatch or same-rank guesses',()=>{
 
 test('no file transfer occurs if current episode is not listed',async()=>{
   const calls=fakeNetwork([file(1),file(2),ova]);
-  const result=await fetchCreatorSubtitle('제작자',url,'스트라이크 위치스 501부대 발진합니다',8,10000,8,'ani_444');
+  // Different folder identity so the real three-minute listing cache is not reused.
+  const limitedUrl='https://drive.google.com/drive/folders/1bbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const result=await fetchCreatorSubtitle('제작자',limitedUrl,'스트라이크 위치스 501부대 발진합니다',8,10000,8,'ani_444');
   assert.equal(result,null);
   assert.equal(calls.filter(u=>u.includes('drive.usercontent.google.com')).length,0);
 });
