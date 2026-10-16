@@ -298,6 +298,34 @@ export async function searchLocalSubtitleFolders(query:string) {
   return matches.sort((a,b)=>a.folderName.localeCompare(b.folderName,'ko')).slice(0,200);
 }
 
+function selectWithSiblingEvidence<T extends {filename:string}>(
+  entries:T[], request:{episode:number;sourceEpisode:number;season:number},
+  outer:ReturnType<typeof readEpisodeEvidence>[], siblings:Map<string,SiblingEpisode>,
+):T[] {
+  if (outer.some(e=>!evidenceAgrees(e,request))) return [];
+  const inferred=entries.filter(entry=>{
+    const sibling=siblings.get(entry.filename);
+    if (!sibling) return false;
+    const evidence=readEpisodeEvidence(entry.filename,true);
+    if (evidence.multipleSeasons || (evidence.season && evidence.season!==request.season)) return false;
+    // An explicitly recognized, contradictory single episode wins over
+    // inferred siblings. Inference can still recover an ambiguous filename.
+    if (!evidence.range && evidence.episodes.length===1 && evidence.episodes[0]!==sibling.episode) return false;
+    const derived={...evidence,episodes:[sibling.episode],conflict:false,range:false,
+      seasonRelative:Boolean(evidence.season && evidence.season===request.season)};
+    return evidenceAgrees(derived,request);
+  });
+  if (inferred.length) return inferred;
+  // A proven sibling 03 must not be revived as 01 by the weaker parser.
+  return selectEpisodeEntries(entries,request,outer).filter(entry=>{
+    const sibling=siblings.get(entry.filename);
+    if (!sibling) return true;
+    const evidence=readEpisodeEvidence(entry.filename,true);
+    const expected=evidence.season && evidence.season===request.season ? request.episode : request.sourceEpisode;
+    return sibling.episode===expected;
+  });
+}
+
 function anissiaTrackIdentity(creator: string, archiveFilename: string, entryFilename: string, episode: number, sibling?:SiblingEpisode) {
   const rangePattern = /(?:^|[^\d])\d{1,3}\s*[-~]\s*\d{1,3}(?!\d)/;
   // Only ZIP archives can describe a multi-episode range. In a loose
@@ -328,7 +356,7 @@ function rawBundleIdentity(provider: 'aniall'|'anissia', relative: string, membe
   const parts=relative.split('/'),filename=parts[parts.length-1];
   const evidence=readEpisodeEvidence(parts[2] || '');
   const fileEvidence=readEpisodeEvidence(member || filename,true);
-  const episode=(fileEvidence.episodes.length===1 ? fileEvidence.episodes[0] : episodeFromSubtitleFilename(member || filename)) || (evidence.episodes.length===1 ? evidence.episodes[0] : 1);
+  const episode=sibling?.episode || (fileEvidence.episodes.length===1 ? fileEvidence.episodes[0] : episodeFromSubtitleFilename(member || filename)) || (evidence.episodes.length===1 ? evidence.episodes[0] : 1);
   const identity=anissiaTrackIdentity(creator,filename,member || filename,episode,sibling);
   const scope=subtitleScope(member || parts.slice(2).join('/'),`${title} ${filename}`,parseSeason(title) || 1);
   return {sourceFolderKey:bundleScopeKey({type:'folder',provider,work:parts[1],...scope}),sourceFolderLabel:scopeLabel(title,scope),
