@@ -265,6 +265,9 @@ test('Psycho-Pass 2 ReinForce loose subtitles keep sequel season and one release
     const evidence=episodeEvidence.readEpisodeEvidence(filename,true);
     assert.equal(evidence.season,2);
     assert.deepEqual(evidence.episodes,[ep]);
+    assert.equal(evidence.range,false,`episode ${ep} was mistaken for a numeric range`);
+    assert.equal(evidence.multipleSeasons,false);
+    assert.equal(evidence.conflict,false);
     const files=await storage.getAnissiaArchiveSubtitles([title],ep,null,2,{bundleKey:folder});
     assert.equal(files.length,1,`Psycho-Pass 2 episode ${ep} missing`);
     assert.equal(files[0].episodeConfirmed,true);
