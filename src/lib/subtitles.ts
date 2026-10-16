@@ -488,6 +488,7 @@ async function extractOnlineDriveFolderSubtitle(
       { localEpisode, evidence: [readEpisodeEvidence(selected.filename, true)] });
     return subtitle
       ? { name: creatorName, episode: localEpisode, ...subtitle,
+          orig_filename: selected.filename,
           url: folderUrl, sourceCreatorWebsite: folderUrl }
       : null;
   } catch (error) {
