@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ArrowLeft, FolderOpen, HardDrive, Link2, Loader2, Search, UploadCloud, Unlink2 } from "lucide-react";
 
 type LocalEntry = { relativePath: string; type: "folder" | "zip"; name: string; source: string };
-type Work = { animeId: string; title: string; year: string;
+type Work = { animeId: string; title: string; year: string; koreanTitle?: string;
   members: Array<{animeId:string;source:string;id:string;title:string;year:string}>;
   multiAnikotoIds: string[] };
 const sourceLabels: Record<string,string> = {
@@ -46,6 +46,8 @@ export default function SubtitleLinkManager() {
   const [workError, setWorkError] = useState("");
   const workRequestId = useRef(0);
   const [work, setWork] = useState<Work | null>(null);
+  const [koreanTitle, setKoreanTitle] = useState("");
+  const [keepPath, setKeepPath] = useState(true);
   const [kind, setKind] = useState("main");
   const [season, setSeason] = useState(1);
   const [links, setLinks] = useState<ExistingLink[]>([]);
@@ -53,6 +55,26 @@ export default function SubtitleLinkManager() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const folderRef = useRef<HTMLInputElement>(null);
+
+  function chooseWork(item: Work) {
+    setWork(item);
+    setKoreanTitle(item.koreanTitle ?? (/[가-힣]/.test(item.title) ? item.title : ""));
+  }
+  async function saveTitle() {
+    if(!work || !koreanTitle.trim() || busy)return;
+    setBusy(true);setError("");setNotice("");
+    try {
+      const data=await jsonRequest("/api/admin/subtitle-links",{
+        method:"PATCH",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({animeId:work.animeId,koreanTitle:koreanTitle.trim()}),
+      });
+      chooseWork(data.item);
+      setWorks(items=>items.map(item=>item.animeId===data.item.animeId?data.item:item));
+      await loadLinks();
+      setNotice("한글 이름을 저장했어. 폴더·파일은 그대로 유지되고 검색·작품 표시와 월간 DB에 반영돼.");
+    } catch(e) {setError(e instanceof Error?e.message:"한글 이름 저장 실패");}
+    finally {setBusy(false);}
+  }
 
   useEffect(() => {
     void Promise.all([loadFiles(""), loadLinks()]);
@@ -104,6 +126,7 @@ export default function SubtitleLinkManager() {
     setNotice(""); // A previous Pi index refresh is NOT a DB search response.
     setWorkError("");
     setWork(null);
+    setKoreanTitle("");
     setWorks([]); // Never leave stale DB results visible for a different query.
     if (q.length < 2) {
       setWorkStatus("검색어를 2글자 이상 입력해 줘.");
@@ -162,7 +185,7 @@ export default function SubtitleLinkManager() {
       uploaded.forEach(file => form.append("files", file));
       const data = await jsonRequest("/api/admin/subtitle-links/upload", { method: "POST", body: form });
       setSelected({ relativePath: data.item.relativePath, type: "folder", name: data.item.relativePath.split("/").pop(), source: "anissia" });
-      setNotice(data.item.count + "개 자막을 Pi에 저장했어. ZIP은 압축 해제됐어. DB 작품을 연결하면 폴더명도 자동 변경돼.");
+      setNotice(data.item.count + "개 자막을 Pi에 저장했어. ZIP은 압축 해제됐어. DB 작품을 선택해서 연결해 줘.");
       setUploaded([]);
       await loadFiles("");
     } catch (e) { setError(e instanceof Error ? e.message : "자막 업로드에 실패했습니다."); }
@@ -175,12 +198,15 @@ export default function SubtitleLinkManager() {
       const result = await jsonRequest("/api/admin/subtitle-links", {
         method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ relativePath: selected.relativePath, type: selected.type,
-          animeId: work.animeId, kind, season }),
+          animeId: work.animeId, kind, season,
+          koreanTitle: koreanTitle.trim() && koreanTitle.trim() !==
+            (work.koreanTitle ?? (/[가-힣]/.test(work.title) ? work.title : "")) ? koreanTitle.trim() : undefined,
+          keepPath }),
       });
-      setSelected({ relativePath: result.item.relativePath, type: "folder",
+      setSelected({ relativePath: result.item.relativePath, type: result.item.type,
         name: result.item.relativePath.split("/").pop(), source: selected.source });
       const merged = result.item.merged;
-      setNotice((merged
+      setNotice(result.item.keptPath ? "DB 연결·한글 이름을 저장했어. 폴더·ZIP 이름과 위치는 그대로야." : (merged
         ? "DB 연결 완료! 기존 " + result.item.title + " 폴더에 합쳤어. 추가 " +
           merged.added + "개 · 중복 건너뛰기 " + merged.skipped + "개 · 이름 충돌 보존 " + merged.renamed + "개. "
         : "DB 연결 완료! 자막을 " + result.item.title + " 폴더로 정리했어. ") +
@@ -291,7 +317,7 @@ export default function SubtitleLinkManager() {
         {workError}
       </div>}
       <div className="max-h-80 space-y-2 overflow-y-auto">
-        {works.map(item=><button key={item.animeId} type="button" onClick={()=>setWork(item)}
+        {works.map(item=><button key={item.animeId} type="button" onClick={()=>chooseWork(item)}
           className={`w-full rounded-xl border px-3 py-3 text-left transition hover:border-purple-400/60 ${work?.animeId===item.animeId
             ?"border-purple-400 bg-purple-600/20":"border-white/10 bg-slate-950/40"}`}>
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -325,6 +351,19 @@ export default function SubtitleLinkManager() {
           확정된 연결 ID는 함께 저장돼. Anikoto 다중 시즌 연결은 다른 시즌과 합쳐지지 않아.
         </p>
       </div>}
+      {work && <div className="space-y-2 rounded-xl border border-white/10 p-3">
+        <label htmlFor="work-korean-title" className="block text-xs font-semibold text-slate-200">
+          한글 이름 등록·수정
+        </label>
+        <div className="flex flex-wrap gap-2">
+          <input id="work-korean-title" value={koreanTitle} maxLength={300} disabled={busy}
+            onChange={e=>setKoreanTitle(e.target.value)} placeholder="예: 작품명 2기 / 극장판 작품명"
+            className="min-w-44 flex-1 rounded-lg border border-white/15 bg-slate-950 px-3 py-2 text-sm"/>
+          <button type="button" disabled={busy || !koreanTitle.trim()} onClick={()=>void saveTitle()}
+            className="rounded-lg bg-purple-600 px-3 py-2 text-xs font-bold disabled:opacity-50">한글 이름만 저장</button>
+        </div>
+        <p className="text-xs text-slate-400">기존 DB 작품도 수정할 수 있어. 확정된 같은 작품 ID에 반영하고, 다중 시즌 Anikoto는 제외해. 자막 파일·폴더는 이동하지 않아. 직접 등록한 이름은 월간 DB에 포함돼.</p>
+      </div>}
       <div className="flex flex-wrap items-center gap-2">
         <label className="text-xs text-slate-300">자막 종류
           <select value={kind} onChange={e=>setKind(e.target.value)} className="ml-2 rounded-lg border border-white/15 bg-slate-950 px-2 py-2 text-white">
@@ -336,12 +375,16 @@ export default function SubtitleLinkManager() {
             className="ml-2 w-16 rounded-lg border border-white/15 bg-slate-950 px-2 py-2 text-center text-white"/>
         </label>
       </div>
+      <label className="flex items-center gap-2 text-xs text-slate-300">
+        <input type="checkbox" checked={keepPath} onChange={e=>setKeepPath(e.target.checked)} disabled={busy}/>
+        폴더·ZIP 이름과 위치 유지 (체크를 끄면 DB 이름으로 폴더명도 변경)
+      </label>
       <button type="button" disabled={busy || !selected || !work || season<1 || season>99}
         onClick={()=>void saveLink()} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold disabled:opacity-50">
         {busy ? <Loader2 className="mr-2 inline h-4 w-4 animate-spin"/> : <Link2 className="mr-2 inline h-4 w-4"/>}
         자막 ↔ 작품 DB 연결 저장
       </button>
-      <p className="text-xs text-slate-500">저장 시 같은 작품 DB 연결의 동일 시즌·종류 폴더가 있으면 그 안에 합쳐. 완전히 같은 파일은 건너뛰고, 이름만 같은 다른 파일은 __2 같은 번호를 붙여 보존해. 연결된 폴더가 없으면 DB 작품명으로 새 폴더를 만들어. Pi ZIP 원본은 유지하고, 회차가 확실한 자막만 자동 연결해.</p>
+      <p className="text-xs text-slate-500">이름·위치 유지 선택 시 DB 정보만 저장해. 체크를 끄면 기존 폴더도 DB 이름으로 바꾸고 저장된 자막 지정·회차 예외·출처 기록을 함께 옮겨. 이름이 겹치면 번호를 붙여 보존해. ZIP은 압축을 풀고 원본을 유지해.</p>
     </section>
 
     {(notice || error) && <p role="status" className={`rounded-lg p-3 text-xs ${error?"bg-rose-950/50 text-rose-200":"bg-emerald-950/50 text-emerald-200"}`}>{error || notice}</p>}
@@ -354,7 +397,7 @@ export default function SubtitleLinkManager() {
             <div className="mt-1 break-all text-slate-400">{item.relativePath}</div>
             <div className="mt-1 text-slate-500">{item.type==="folder"?"폴더":"ZIP"} · {kinds.find(k=>k[0]===item.kind)?.[1] || item.kind} · {item.season}기</div>
           </div>
-          <button type="button" disabled={busy} onClick={()=>{setSelected({relativePath:item.relativePath,type:item.type,name:item.relativePath.split("/").pop()||"",source:item.relativePath.split("/")[0]});setKind(item.kind);setSeason(item.season);setWork({animeId:item.animeId,title:item.title,year:"",members:[{
+          <button type="button" disabled={busy} onClick={()=>{setSelected({relativePath:item.relativePath,type:item.type,name:item.relativePath.split("/").pop()||"",source:item.relativePath.split("/")[0]});setKeepPath(true);setKind(item.kind);setSeason(item.season);chooseWork({animeId:item.animeId,title:item.title,year:"",members:[{
               animeId:item.animeId,source:"",id:item.animeId,title:item.title,year:""
             }],multiAnikotoIds:[]});setNotice("위 선택 상태로 불러왔어. 수정 후 연결 저장을 누르면 돼.");}}
             className="rounded-lg border border-white/20 px-3 py-2 text-xs">수정</button>
@@ -366,3 +409,4 @@ export default function SubtitleLinkManager() {
     </section>
   </main>;
 }
+

@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { getAdminWorkTitles } from '@/lib/adminWorkTitles';
 import Navbar from '@/components/Navbar';
 import { requireAuth } from '@/lib/auth';
 import { getDb } from '@/lib/db';
@@ -34,6 +35,8 @@ export default async function CatalogWorkPage({ params, searchParams }: {
   const work = knownWork || {
     title: manualLinks[0].work_title,year:'',format:'',fileCount:0,postCount:0,
   };
+  const manualTitle=(await getAdminWorkTitles([workId])).get(workId);
+  if(manualTitle)work.title=manualTitle;
   let files: any[] = [];
   try { files = await sql`SELECT source,member_path,review_status FROM anime_subtitle_files
     WHERE target_source=${source} AND target_id=${id} AND work_confirmed
@@ -92,3 +95,4 @@ export default async function CatalogWorkPage({ params, searchParams }: {
     </main>
   </div>;
 }
+

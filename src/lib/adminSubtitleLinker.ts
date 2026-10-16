@@ -8,6 +8,9 @@ import { decodeSubtitleFile } from "@/lib/subtitles";
 import { readEpisodeEvidence, selectEpisodeEntries } from "@/lib/subtitleEpisodes";
 import { subtitleScope } from "@/lib/subtitleLocalIdentity";
 import { buildReviewedWorkGroups, type WorkRef, type Source, type SourceWork } from "@/lib/adminSubtitleWorkGroups";
+import { ensureAdminWorkTitlesTable, getAdminWorkTitles, normalizeAdminKoreanTitle,
+  persistAdminWorkTitle } from "@/lib/adminWorkTitles";
+import { migrateSavedSubtitlePaths, migrateSubtitleSourcePaths, assertMergeHasNoSavedPaths } from "@/lib/adminSubtitlePathMigration";
 
 const PROVIDERS = ["anissia", "aniall", "naver"] as const;
 const EXT = /\.(?:ass|ssa|smi|srt|vtt)$/i;
@@ -66,6 +69,7 @@ export async function ensureSubtitleLinksTable() {
   if (!subtitleLinkSchemaReady) {
     subtitleLinkSchemaReady = (async () => {
       await initDb();
+      await ensureAdminWorkTitlesTable();
       await sql`CREATE TABLE IF NOT EXISTS anime_admin_subtitle_links (
         relative_path TEXT PRIMARY KEY,
         entry_type VARCHAR(8) NOT NULL CHECK (entry_type IN ('folder','zip')),
@@ -94,14 +98,15 @@ export async function ensureSubtitleLinksTable() {
   return sql;
 }
 
-function sourceWork(row: any): SourceWork {
+function sourceWork(row: any, manualTitles: Map<string,string>): SourceWork {
   const source=String(row.source) as Source, id=String(row.source_record_id || row.anikoto_id);
   const payload=typeof row.payload==="object" && row.payload!==null ? row.payload : {};
-  const title=String(payload.title_ko || payload.title || payload.name ||
+  const animeId=source==="Anissia"?"ani_"+id:source==="ReAnime"?"re_"+id
+    :source==="Anikoto"?"ak_"+id:"db_"+source+"_"+id;
+  const title=manualTitles.get(animeId) || String(payload.title_ko || payload.title || payload.name ||
     payload.title_english || payload.english_title || payload.title_native ||
     payload.title_romaji || payload.romaji_title || id);
-  return {source,id,animeId:source==="Anissia"?"ani_"+id:source==="ReAnime"?"re_"+id
-    :source==="Anikoto"?"ak_"+id:"db_"+source+"_"+id,
+  return {source,id,animeId,
     title,year:String(payload.year || payload.release_year || ""),
     format:String(payload.format || "")};
 }
@@ -140,6 +145,12 @@ export async function findCatalogWorks(q: string, exactAnimeId?: string) {
   const escaped=query.replace(/[\\%_]/g,"\\$&");
   const pattern="%"+escaped+"%";
   await initDb();
+  const manualTitles=await getAdminWorkTitles();
+  const normalize=(value:string)=>value.normalize("NFKC").toLocaleLowerCase("ko-KR")
+    .replace(/[^\p{L}\p{N}]+/gu,"");
+  const needle=normalize(query);
+  const titleMatches=[...manualTitles].filter(([,title])=>needle && normalize(title).includes(needle))
+    .map(([id])=>id);
   const exactCore=exact&&exact.source!=="Anikoto"
     ? sql`SELECT source,source_record_id,payload FROM anime_catalog_entries
       WHERE source=${exact.source} AND source_record_id=${exact.id} LIMIT 1` : exact ? Promise.resolve([]) : null;
@@ -150,12 +161,16 @@ export async function findCatalogWorks(q: string, exactAnimeId?: string) {
     exactCore || sql`SELECT source,source_record_id,payload FROM anime_catalog_entries
       WHERE source IN ('Anissia','ReAnime','AniList','Onnada')
         AND (source_record_id=${query}
+          OR (CASE source WHEN 'Anissia' THEN 'ani_'||source_record_id
+            WHEN 'ReAnime' THEN 're_'||source_record_id
+            ELSE 'db_'||source||'_'||source_record_id END)=ANY(${titleMatches}::text[])
           OR CONCAT_WS(' ',payload->>'title_ko',payload->>'title_native',
             payload->>'title_romaji',payload->>'title_english') ILIKE ${pattern})
       ORDER BY CASE source WHEN 'Anissia' THEN 0 WHEN 'ReAnime' THEN 1 ELSE 2 END,
         payload->>'year' DESC NULLS LAST LIMIT 120`,
     exactAk || sql`SELECT anikoto_id,payload FROM anime_anikoto_catalog
-      WHERE anikoto_id=${query} OR CONCAT_WS(' ',payload->>'title',payload->>'name',
+      WHERE anikoto_id=${query} OR ('ak_'||anikoto_id)=ANY(${titleMatches}::text[])
+        OR CONCAT_WS(' ',payload->>'title_ko',payload->>'title',payload->>'name',
         payload->>'title_english',payload->>'english_title',
         payload->>'title_romaji',payload->>'title_native') ILIKE ${pattern}
       LIMIT 40`,
@@ -218,7 +233,8 @@ export async function findCatalogWorks(q: string, exactAnimeId?: string) {
       status:String(row.link_status),mappingKind:String(row.mapping_kind||"")}))
   };
   const preliminary=buildReviewedWorkGroups({seeds,catalog:[
-    ...matched.map(sourceWork),...akMatched.map(row=>sourceWork({...row,source:"Anikoto"}))],
+    ...matched.map(row=>sourceWork(row,manualTitles)),
+    ...akMatched.map(row=>sourceWork({...row,source:"Anikoto"},manualTitles))],
     ...evidence,limit:100,hydrateMissing:true});
   const refs=[...new Set(preliminary.flatMap(group=>group.members)
     .filter(m=>m.source!=="Anikoto").map(m=>m.source+":"+m.id))];
@@ -231,14 +247,28 @@ export async function findCatalogWorks(q: string, exactAnimeId?: string) {
       WHERE anikoto_id=ANY(${akIds}::text[])`:Promise.resolve([]),
   ]);
   const groups=buildReviewedWorkGroups({seeds,catalog:[
-    ...expanded.map(sourceWork),
-    ...akExpanded.map(row=>sourceWork({...row,source:"Anikoto"}))],
+    ...expanded.map(row=>sourceWork(row,manualTitles)),
+    ...akExpanded.map(row=>sourceWork({...row,source:"Anikoto"},manualTitles))],
     ...evidence,limit:100});
   const order=new Map(seeds.map((ref,i)=>[ref.source+":"+ref.id,i]));
   return groups.sort((a,b)=>{
     const rank=(group:typeof a)=>Math.min(...group.members.map(m=>order.get(m.source+":"+m.id)??9999));
     return rank(a)-rank(b)||a.title.localeCompare(b.title,"ko");
-  }).slice(0,60);
+  }).slice(0,60).map(group=>({...group,
+    koreanTitle: /[가-힣]/.test(group.title) ? group.title : "",
+  }));
+}
+
+export async function saveAdminKoreanWorkTitle(animeId: string, rawTitle: unknown, admin: string) {
+  const title=normalizeAdminKoreanTitle(rawTitle);
+  if(!parseWorkId(animeId) || !title)throw new Error("작품과 한글 이름을 확인해 주세요.");
+  const sql=await ensureSubtitleLinksTable();
+  const groups=await findCatalogWorks("",animeId);
+  const matches=groups.filter(item=>item.members.some(member=>member.animeId===animeId));
+  const group=matches.length===1?matches[0]:null;
+  if(!group)throw new Error("선택한 작품을 다시 검색해 주세요. 다중 시즌 작품은 각 시즌 DB를 선택해 주세요.");
+  await sql.begin(async tx=>{ await persistAdminWorkTitle(tx,group,title,admin); });
+  return {...group,title,koreanTitle:title};
 }
 
 /** Browse an existing on-disk name index; no ZIP decompression or DB title lookup.
@@ -289,7 +319,10 @@ export async function getAdminSubtitleLinks(animeId?: string) {
 
 export async function saveAdminSubtitleLink(values: {
   relativePath: string; type: EntryType; animeId: string; kind: Kind; season: number; admin: string;
+  koreanTitle?: string;
+  keepPath?: boolean;
 }) {
+  const koreanTitle=normalizeAdminKoreanTitle(values.koreanTitle);
   if (!safeSubtitlePath(values.relativePath, values.type) || !parseWorkId(values.animeId) ||
     !KINDS.includes(values.kind) || !Number.isInteger(values.season) || values.season < 1 || values.season > 99)
     throw new Error("파일·작품·시즌 정보를 확인해 주세요.");
@@ -308,11 +341,31 @@ export async function saveAdminSubtitleLink(values: {
   const reviewedGroups=await findCatalogWorks(id.id,values.animeId);
   const reviewedGroup=reviewedGroups.find(group=>group.members.some(member=>member.animeId===values.animeId));
   if(!reviewedGroup)throw new Error("선택한 작품의 확정 연결 정보를 다시 확인해 주세요.");
-  title=reviewedGroup.title.slice(0,300);
+  title=koreanTitle || reviewedGroup.title.slice(0,300);
   // Multi-target Anikoto URL must not implicitly attach unrelated seasons.
   const memberIds=[...new Set(reviewedGroup.members
     .filter(member=>!reviewedGroup.multiAnikotoIds.includes(member.animeId))
     .map(member=>member.animeId).concat(values.animeId))];
+
+  // Editing a saved mapping changes database pointers, not physical subtitles.
+  const previous=await sql`SELECT relative_path FROM anime_admin_subtitle_links
+    WHERE relative_path=${values.relativePath} LIMIT 1`;
+  if(values.keepPath !== false) {
+    await sql.begin(async tx=>{
+      if(koreanTitle)await persistAdminWorkTitle(tx,reviewedGroup,koreanTitle,values.admin);
+      await tx`INSERT INTO anime_admin_subtitle_links
+        (relative_path,entry_type,anime_id,work_title,subtitle_kind,season,updated_by)
+        VALUES (${values.relativePath},${values.type},${values.animeId},${title},${values.kind},${values.season},${values.admin})
+        ON CONFLICT(relative_path) DO UPDATE SET anime_id=EXCLUDED.anime_id,
+          work_title=EXCLUDED.work_title,subtitle_kind=EXCLUDED.subtitle_kind,
+          season=EXCLUDED.season,updated_by=EXCLUDED.updated_by,updated_at=CURRENT_TIMESTAMP`;
+      await tx`DELETE FROM anime_admin_subtitle_link_members WHERE relative_path=${values.relativePath}`;
+      for(const memberId of memberIds)await tx`INSERT INTO anime_admin_subtitle_link_members(relative_path,anime_id)
+        VALUES(${values.relativePath},${memberId}) ON CONFLICT DO NOTHING`;
+    });
+    return {relativePath:values.relativePath,type:values.type,animeId:values.animeId,title,
+      merged:null,keptPath:true};
+  }
 
   const sourceRoot = values.relativePath.split("/")[0];
   const destinationRoot = path.join(storageRoot(), sourceRoot);
@@ -332,22 +385,16 @@ export async function saveAdminSubtitleLink(values: {
       break;
     }
   }
+  // An explicit rename of a saved folder keeps its contents together; it does
+  // not merge it into a different saved folder just because the work matches.
+  if(previous.length && values.type==="folder")existingTarget=null;
   const target = existingTarget || await allocateCanonicalFolder(destinationRoot, title,
     values.type === "folder" ? current.full : undefined);
-
-  // Preflight: never rename a folder holding somebody else's stored links or
-  // legacy per-account player assignment. Those pointers would become stale.
-  if (values.type === "folder" && target.full !== current.full) {
-    const nested = await sql`SELECT relative_path FROM anime_admin_subtitle_links
-      WHERE relative_path LIKE ${values.relativePath + "/%"} AND relative_path != ${values.relativePath} LIMIT 1`;
-    if (nested.length) throw new Error("하위 ZIP에 다른 DB 연결이 있어 폴더명을 변경할 수 없습니다.");
-    const users = await sql`SELECT 1 FROM subtitle_bundle_assignments
-      WHERE provider=${sourceRoot.replace("_subtitles", "")}
-        AND bundle_key LIKE ${"%" + values.relativePath.split("/")[1] + "%"} LIMIT 1`;
-    if (users.length) throw new Error("다른 계정의 자막 묶음 지정이 있는 폴더라 이동할 수 없습니다. 새 폴더에 복사한 후 연결해 주세요.");
-  }
+  if(existingTarget && target.full!==current.full && values.type==="folder")
+    await assertMergeHasNoSavedPaths(sql,values.relativePath,[sourceRoot,path.basename(target.full)].join("/"));
 
   let moved = false, extracted = false;
+  let restoreManifest: null | (()=>Promise<void>) = null;
   let scratch: string | null = null;
   let merge: Awaited<ReturnType<typeof mergeSubtitleFolders>> | null = null;
   try {
@@ -371,6 +418,7 @@ export async function saveAdminSubtitleLink(values: {
     }
     const relativePath = [sourceRoot, path.basename(target.full)].join("/");
     const former = values.relativePath;
+    if(moved)restoreManifest=await migrateSubtitleSourcePaths(storageRoot(),former,relativePath);
     // Two work IDs may not silently claim the same physical folder.
     const owners = await sql`SELECT relative_path,anime_id FROM anime_admin_subtitle_links
       WHERE relative_path IN (${relativePath},${former}) FOR UPDATE`;
@@ -382,6 +430,8 @@ export async function saveAdminSubtitleLink(values: {
       throw new Error("다른 작품으로 연결된 원본 폴더는 병합할 수 없습니다.");
 
     await sql.begin(async tx => {
+      if(moved)await migrateSavedSubtitlePaths(tx,former,relativePath);
+      if(koreanTitle)await persistAdminWorkTitle(tx,reviewedGroup,koreanTitle,values.admin);
       await tx`DELETE FROM anime_admin_subtitle_links WHERE relative_path=${former}`;
       await tx`INSERT INTO anime_admin_subtitle_links (
         relative_path, entry_type, anime_id, work_title, subtitle_kind, season, updated_by
@@ -405,6 +455,9 @@ export async function saveAdminSubtitleLink(values: {
     return { relativePath, type: "folder" as const, animeId: values.animeId, title,
       merged: merge ? { added: merge.added, skipped: merge.skipped, renamed: merge.renamed } : null };
   } catch (error) {
+    if(restoreManifest)await restoreManifest().catch(rollback=>{
+      console.error("[Admin subtitle provenance rollback failed]",rollback);
+    });
     if (merge) await merge.rollback().catch(rollback => {
       console.error("[Admin subtitle merge rollback failed]", rollback);
     });
@@ -692,3 +745,4 @@ export async function getAdminLinkedSubtitles(animeId: string, episode: number, 
   }
   return results;
 }
+

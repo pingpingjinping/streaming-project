@@ -4,6 +4,7 @@ import { isTrustedAdminWriteRequest } from "@/lib/adminSubtitleRequestAuth";
 import {
   browseLocalEntries, deleteAdminSubtitleLink, findCatalogWorks,
   getAdminSubtitleLinks, saveAdminSubtitleLink, safeSubtitlePath,
+  saveAdminKoreanWorkTitle,
 } from "@/lib/adminSubtitleLinker";
 
 export const dynamic = "force-dynamic";
@@ -61,10 +62,28 @@ export async function PUT(request: NextRequest) {
     const item = await saveAdminSubtitleLink({
       relativePath: data.relativePath, type: data.type,
       animeId: data.animeId, season: data.season, kind: data.kind, admin: user.username,
+      koreanTitle: data.koreanTitle,
+      keepPath: data.keepPath !== false,
     });
     return NextResponse.json({ success: true, item }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return respond(error instanceof Error ? error.message : "연결을 저장하지 못했습니다.", 400);
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  const auth=await adminSession();
+  if(!auth.user)return auth.failure!;
+  const originFailure=writeOriginFailure(request);
+  if(originFailure)return originFailure;
+  const data=await request.json().catch(()=>null);
+  if(!data || typeof data.animeId!=="string" || data.animeId.length>150)
+    return respond("작품 DB ID를 확인해 주세요.",400);
+  try {
+    const item=await saveAdminKoreanWorkTitle(data.animeId,data.koreanTitle,auth.user.username);
+    return NextResponse.json({success:true,item},{headers:{"Cache-Control":"no-store"}});
+  } catch(error) {
+    return respond(error instanceof Error ? error.message : "한글 이름 저장에 실패했습니다.",400);
   }
 }
 
@@ -81,3 +100,4 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ success: true }, { headers: { "Cache-Control": "no-store" } });
   } catch { return respond("연결을 해제하지 못했습니다.", 500); }
 }
+

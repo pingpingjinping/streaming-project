@@ -1,4 +1,5 @@
 import {getLinkedReanimeCatalog} from "@/lib/linkedReanimeCatalog";
+import { applyAdminWorkTitles } from "@/lib/adminWorkTitles";
 import { searchManualSubtitleLinks, mergeManualSubtitleSearchResults } from "@/lib/manualSubtitleSearch";
 import { getKoreanSubtitleCatalog } from '@/lib/koreanSubtitleCatalog';
 import { NextRequest, NextResponse } from "next/server";
@@ -94,6 +95,7 @@ export async function GET(request: NextRequest) {
   }
 
   const noCache = searchParams.get("nocache") === "1";
+  result={...result,items:await applyAdminWorkTitles(result.items)};
   const cacheControl =
     noCache || q || result.error || searchParams.get("linked")==="1" || (source === "anissia" && tab === "list")
       ? "no-store"
@@ -121,4 +123,5 @@ export async function GET(request: NextRequest) {
     }
   );
 }
+
 

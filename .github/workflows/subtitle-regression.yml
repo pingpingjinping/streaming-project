@@ -57,6 +57,7 @@ jobs:
       - run: python -m unittest discover -s scripts -p test_export_reviewed_subtitle_links.py -v
       - run: python -m unittest discover -s scripts -p test_export_manual_work_match_overrides.py -v
       - run: python -m unittest discover -s scripts -p test_export_db_search_posters.py -v
+      - run: python -m unittest discover -s scripts -p test_export_admin_work_titles.py -v
       - run: python -m unittest discover -s scripts -p test_work_audit_snapshot.py -v
       - uses: actions/setup-node@v4
         with:
@@ -81,3 +82,4 @@ jobs:
         run: node scripts/test-video-server-browser.cjs
       - name: Verify navigation indicators remain until real route completion
         run: node scripts/test-navigation-loading-browser.cjs
+

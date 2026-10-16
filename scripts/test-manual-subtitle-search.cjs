@@ -15,8 +15,10 @@ const rows = [
     member_ids:["db_Onnada_888","db_AniList_101","re_tora1","ak_tora1"]},
 ];
 let enabled=true;
+let namedRows=[];
 const sql = (strings,...params)=>{
   const query=String(strings[0]);
+  if(query.includes("canonical_id"))return Promise.resolve(namedRows);
   if(query.includes("anime_admin_subtitle_links"))return Promise.resolve(enabled?rows:[]);
   if(query.includes("anime_catalog_entries"))return Promise.resolve([
     {source:"Onnada",source_record_id:"777",payload:{title_ko:"전생했더니 슬라임이었던 건에 대하여"}},
@@ -74,6 +76,8 @@ test("A Cloudflare card matching any member ID is not duplicated",()=>{
   assert.equal(combined[0].id,"db_AniList_101");
   assert.equal(combined[0].source_name,"Pi 자막 연결");
   assert.equal(combined[0].detail_url,"/anime/re_tora1");
+  assert.equal(combined[0].title,"토라도라!");
+  assert.equal(remote[0].title,"Toradora");
 });
 
 test("Cloudflare misses are added without removing remote result pages",()=>{
@@ -92,3 +96,15 @@ test("No manual links means no extra DB search results",async()=>{
   try {assert.deepEqual(await searchManualSubtitleLinks("토라도라"),[]);}
   finally {enabled=true;}
 });
+
+test("A title registered before attaching any subtitles is searchable",async()=>{
+  namedRows=[{anime_id:"re_new",work_title:"새 작품 2기",member_ids:["re_new","db_AniList_202"]}];
+  try {
+    const hits=await searchManualSubtitleLinks("새 작품");
+    assert.equal(hits.length,1);
+    assert.equal(hits[0].item.id,"re_new");
+    assert.equal(hits[0].item.source_name,"한글 이름 등록");
+    assert.deepEqual(hits[0].memberIds,["re_new","db_AniList_202"]);
+  } finally {namedRows=[];}
+});
+

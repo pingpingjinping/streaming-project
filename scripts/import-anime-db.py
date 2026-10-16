@@ -9,6 +9,7 @@ Requires the existing `docker compose` services. Manual user links are kept.
 import csv
 import io
 import json
+import re
 import sqlite3
 import subprocess
 import sys
@@ -210,6 +211,16 @@ if db.execute("SELECT 1 FROM sqlite_master WHERE name='pi_reviewed_work_groups' 
             release_members.append((member,group['group_id']))
 
 
+manual_titles=[]
+if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pi_admin_work_titles'").fetchone():
+    for row in db.execute("SELECT anime_id,title FROM pi_admin_work_titles ORDER BY anime_id"):
+        aid,title=row['anime_id'],row['title']
+        if (not isinstance(aid,str) or len(aid)>150 or not re.fullmatch(r'(?:ani_[1-9]\d*|re_[A-Za-z0-9_-]+|ak_[A-Za-z0-9_-]+|db_(?:AniList|Onnada)_[A-Za-z0-9_-]+)',aid)
+                or not isinstance(title,str) or not 0<len(title)<=300 or not re.search('[가-힣]',title)
+                or any(ord(c)<32 or ord(c)==127 for c in title)):
+            raise SystemExit('Invalid manual Korean name in release database')
+        manual_titles.append((aid,aid,title))
+
 stream = io.StringIO()
 stream.write('''\nBEGIN;
 CREATE TABLE IF NOT EXISTS anime_catalog_entries (
@@ -274,6 +285,14 @@ CREATE INDEX IF NOT EXISTS idx_release_reviewed_members_group
 CREATE TEMP TABLE catalog_alias_stage (
  normalized_title VARCHAR(512),original_title TEXT,korean_title TEXT
 );
+CREATE TABLE IF NOT EXISTS anime_admin_work_titles (
+ anime_id VARCHAR(150) PRIMARY KEY, canonical_id VARCHAR(150) NOT NULL,
+ korean_title TEXT NOT NULL, updated_by VARCHAR(100) NOT NULL,
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TEMP TABLE manual_work_title_stage (
+ anime_id VARCHAR(150),canonical_id VARCHAR(150),korean_title TEXT
+);
 TRUNCATE anime_catalog_entries, anime_unmatched_review, anime_korean_catalog,
  anime_reanime_matches, anime_monthly_match_candidates, anime_anikoto_catalog,
  anime_anikoto_work_targets, anime_anikoto_work_lookup,
@@ -324,11 +343,16 @@ for member,group_id in release_members:
     writer.writerow((member,group_id))
 stream.write('\\.\nCOPY catalog_alias_stage (normalized_title,original_title,korean_title) FROM STDIN WITH (FORMAT csv);\n')
 for alias in aliases:writer.writerow(alias)
+stream.write('\\.\nCOPY manual_work_title_stage (anime_id,canonical_id,korean_title) FROM STDIN WITH (FORMAT csv);\n')
+for row in manual_titles:writer.writerow(row)
 stream.write('''\\.
 DELETE FROM anime_title_aliases WHERE source='four_source';
 INSERT INTO anime_title_aliases (normalized_title,original_title,korean_title,source)
 SELECT normalized_title,original_title,korean_title,'four_source' FROM catalog_alias_stage WHERE true
 ON CONFLICT (normalized_title) DO NOTHING;
+INSERT INTO anime_admin_work_titles (anime_id,canonical_id,korean_title,updated_by)
+SELECT anime_id,canonical_id,korean_title,'monthly-release' FROM manual_work_title_stage WHERE true
+ON CONFLICT(anime_id) DO NOTHING;
 COMMIT;
 ''')
 
@@ -338,3 +362,4 @@ result=subprocess.run(cmd,input=stream.getvalue(),text=True,check=False)
 if result.returncode:
     raise SystemExit(f'Import failed (exit {result.returncode}); transaction rolled back.')
 print(f'Imported {len(entries)} source records {source_counts}, {len(catalog)} Korean titles, {len(reanime_matches)} ReAnime links ({sum(r["anissiaNo"] is not None for r in reanime_matches)} direct subtitles), {len(monthly_candidates)} scored new-work candidates, {len(aliases)} aliases and {len(reviews)} review items; Anikoto {len(anikoto_catalog)} accepted works, {len(anikoto_targets)} target rows, {len(anikoto_lookup)} verified lookup rows. Imported {len(release_reviewed)} durable Pi-reviewed source groups; existing administrator/local stream links kept.')
+
