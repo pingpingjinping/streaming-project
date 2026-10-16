@@ -303,11 +303,19 @@ function selectWithSiblingEvidence<T extends {filename:string}>(
   outer:ReturnType<typeof readEpisodeEvidence>[], siblings:Map<string,SiblingEpisode>,
 ):T[] {
   if (outer.some(e=>!evidenceAgrees(e,request))) return [];
+  const parsed=entries.map(entry=>readEpisodeEvidence(entry.filename,true));
+  const explicitSeasons=new Set(parsed.flatMap(e=>e.season?[e.season]:[]));
+  const combined=explicitSeasons.size>1 || outer.some(e=>e.multipleSeasons);
+  const scopedSeason=outer.some(e=>e.season===request.season && !e.multipleSeasons);
+  const explicitOffset=request.sourceEpisode!==request.episode;
+  // Keep the existing fail-closed rule for mixed-season ZIPs and unscoped
+  // season-two filenames, even when the changing digit looks like an episode.
   const inferred=entries.filter(entry=>{
     const sibling=siblings.get(entry.filename);
     if (!sibling) return false;
     const evidence=readEpisodeEvidence(entry.filename,true);
     if (evidence.multipleSeasons || (evidence.season && evidence.season!==request.season)) return false;
+    if (!evidence.season && !explicitOffset && (combined || (request.season>1 && !scopedSeason))) return false;
     // An explicitly recognized, contradictory single episode wins over
     // inferred siblings. Inference can still recover an ambiguous filename.
     if (!evidence.range && evidence.episodes.length===1 && evidence.episodes[0]!==sibling.episode) return false;
