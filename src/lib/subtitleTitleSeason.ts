@@ -9,7 +9,7 @@
  */
 export function implicitSequelSeason(title: string): number | null {
   const value = title.normalize("NFKC").trim();
-  if (!/[A-Za-z가-힣]/.test(value)) return null;
+  if (!/\p{L}/u.test(value)) return null;
   const found = value.match(/\s([2-9])$/);
   return found ? Number(found[1]) : null;
 }
@@ -27,7 +27,7 @@ export interface NumberedSequelEpisode {
  */
 export function numberedSequelEpisode(filenameStem: string): NumberedSequelEpisode | null {
   const match = /\s([2-9])\s*[-–]\s*(0*\d{1,3})(?=\s*(?:\(|\[|$))/.exec(filenameStem);
-  if (!match || !/[A-Za-z가-힣]/.test(filenameStem.slice(0, match.index))) return null;
+  if (!match || !/\p{L}/u.test(filenameStem.slice(0, match.index))) return null;
   const episode = Number(match[2]);
   if (!Number.isInteger(episode) || episode < 1 || episode > 999) return null;
   const episodeStart = match.index + match[0].length - match[2].length;
