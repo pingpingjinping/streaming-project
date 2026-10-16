@@ -6,10 +6,11 @@ import { deleteUploadedSubtitle as deleteLegacyUploadedSubtitle, getUploadedSubt
 import { extractSubtitleFromBuffer, decodeSubtitleFile } from "@/lib/subtitles";
 import { episodeFromSubtitleFilename, inspectSubtitleArchive } from "@/lib/subtitleUpload";
 import { parseSeason } from "@/lib/subtitles";
-import { readEpisodeEvidence, evidenceAgrees, selectEpisodeEntries } from "@/lib/subtitleEpisodes";
+import { readEpisodeEvidence, readWorkTitleEvidence, evidenceAgrees, selectEpisodeEntries } from "@/lib/subtitleEpisodes";
 import { normalizeSubtitleTrackFilename, bundleScopeKey, parseBundleScope, localFileKey, parseLocalFileKey, subtitleScope, scopeLabel, bundleScopesOverlap, bundleMatchesAssignment } from './subtitleLocalIdentity';
 
 import {readSubtitleSourceManifest,sourceDigestMatches,sourceTrackIdentity} from './subtitleSourceManifest';
+import { inferSiblingEpisodes, type SiblingEpisode } from './subtitleSiblingInference';
 import type {DownloadRecord} from './subtitleSourceManifest';
 import { excludeRegisteredLooseFiles } from './reviewedLooseSubtitles';
 
@@ -297,16 +298,56 @@ export async function searchLocalSubtitleFolders(query:string) {
   return matches.sort((a,b)=>a.folderName.localeCompare(b.folderName,'ko')).slice(0,200);
 }
 
-function anissiaTrackIdentity(creator: string, archiveFilename: string, entryFilename: string, episode: number) {
+function selectWithSiblingEvidence<T extends {filename:string}>(
+  entries:T[], request:{episode:number;sourceEpisode:number;season:number},
+  outer:ReturnType<typeof readEpisodeEvidence>[], siblings:Map<string,SiblingEpisode>,
+):T[] {
+  if (outer.some(e=>!evidenceAgrees(e,request))) return [];
+  const parsed=entries.map(entry=>readEpisodeEvidence(entry.filename,true));
+  const explicitSeasons=new Set(parsed.flatMap(e=>e.season?[e.season]:[]));
+  const combined=explicitSeasons.size>1 || outer.some(e=>e.multipleSeasons);
+  const scopedSeason=outer.some(e=>e.season===request.season && !e.multipleSeasons);
+  const explicitOffset=request.sourceEpisode!==request.episode;
+  // Keep the existing fail-closed rule for mixed-season ZIPs and unscoped
+  // season-two filenames, even when the changing digit looks like an episode.
+  const inferred=entries.filter(entry=>{
+    const sibling=siblings.get(entry.filename);
+    if (!sibling) return false;
+    const evidence=readEpisodeEvidence(entry.filename,true);
+    if (evidence.multipleSeasons || (evidence.season && evidence.season!==request.season)) return false;
+    if (!evidence.season && !explicitOffset && (combined || (request.season>1 && !scopedSeason))) return false;
+    // An explicitly recognized, contradictory single episode wins over
+    // inferred siblings. Inference can still recover an ambiguous filename.
+    if (!evidence.range && evidence.episodes.length===1 && evidence.episodes[0]!==sibling.episode) return false;
+    const derived={...evidence,episodes:[sibling.episode],conflict:false,range:false,
+      seasonRelative:Boolean(evidence.season && evidence.season===request.season)};
+    return evidenceAgrees(derived,request);
+  });
+  // Resolve confident sibling series FIRST, while retaining a legacy
+  // fallback for other unrelated files in this same folder/ZIP. Otherwise
+  // one recognized series could accidentally hide another valid release.
+  const proven=new Set(inferred.map(entry=>entry.filename));
+  const fallback=selectEpisodeEntries(entries,request,outer).filter(entry=>
+    !siblings.has(entry.filename) && !proven.has(entry.filename));
+  return [...inferred,...fallback];
+}
+
+function anissiaTrackIdentity(creator: string, archiveFilename: string, entryFilename: string, episode: number, sibling?:SiblingEpisode) {
   const rangePattern = /(?:^|[^\d])\d{1,3}\s*[-~]\s*\d{1,3}(?!\d)/;
   // Only ZIP archives can describe a multi-episode range. In a loose
   // subtitle "S1 - 01.smi", the same digits are season + episode, not a range.
   const archiveBase = path.basename(archiveFilename).replace(/\.(zip)$/i, "");
   const archiveTrackBase = /\.zip$/i.test(archiveFilename) ? archiveBase.replace(rangePattern, "{range}") : archiveBase;
-  const normalizedArchive = normalizeSubtitleTrackFilename(archiveTrackBase, episode);
+  const legacyArchive = normalizeSubtitleTrackFilename(archiveTrackBase, episode);
+  // Prefer consistent sibling evidence when the previous single-file parser
+  // could not normalize an episode slot. Preserve existing saved track IDs
+  // whenever that parser already produced the {ep} placeholder.
+  const normalizedArchive = sibling && !/\.zip$/i.test(archiveFilename) && !legacyArchive.includes('{ep}')
+    ? sibling.template : legacyArchive;
   const entryEvidence=readEpisodeEvidence(entryFilename,true);
   const entryEpisode=entryEvidence.episodes.length===1 ? entryEvidence.episodes[0] : episodeFromSubtitleFilename(entryFilename);
-  const normalizedEntry = entryEpisode === episode ? normalizeSubtitleTrackFilename(entryFilename, episode) : "";
+  const legacyEntry = entryEpisode === episode ? normalizeSubtitleTrackFilename(entryFilename, episode) : "";
+  const normalizedEntry = sibling && !legacyEntry.includes('{ep}') ? sibling.template : legacyEntry;
   const trackKey = [normalizeBlogTitle(creator), normalizeBlogTitle(normalizedArchive), normalizeBlogTitle(normalizedEntry)].join("|");
   const entryTrack = normalizedEntry.match(/\{ep\}[\s._-]*([a-z][a-z0-9._-]*)$/i)?.[1] || "";
   const archiveTrack = normalizedArchive.match(/(?:\{ep\}|\{range\})[\s._-]*([a-z][a-z0-9._-]*)$/i)?.[1] || "";
@@ -317,12 +358,12 @@ function anissiaTrackIdentity(creator: string, archiveFilename: string, entryFil
   return { localArchiveTrackKey: trackKey, localArchiveTrackLabel: trackLabel };
 }
 
-function rawBundleIdentity(provider: 'aniall'|'anissia', relative: string, member: string, creator: string, title: string, sourceRecord?:DownloadRecord) {
+function rawBundleIdentity(provider: 'aniall'|'anissia', relative: string, member: string, creator: string, title: string, sourceRecord?:DownloadRecord, sibling?:SiblingEpisode) {
   const parts=relative.split('/'),filename=parts[parts.length-1];
   const evidence=readEpisodeEvidence(parts[2] || '');
   const fileEvidence=readEpisodeEvidence(member || filename,true);
-  const episode=(fileEvidence.episodes.length===1 ? fileEvidence.episodes[0] : episodeFromSubtitleFilename(member || filename)) || (evidence.episodes.length===1 ? evidence.episodes[0] : 1);
-  const identity=anissiaTrackIdentity(creator,filename,member || filename,episode);
+  const episode=sibling?.episode || (fileEvidence.episodes.length===1 ? fileEvidence.episodes[0] : episodeFromSubtitleFilename(member || filename)) || (evidence.episodes.length===1 ? evidence.episodes[0] : 1);
+  const identity=anissiaTrackIdentity(creator,filename,member || filename,episode,sibling);
   const scope=subtitleScope(member || parts.slice(2).join('/'),`${title} ${filename}`,parseSeason(title) || 1);
   return {sourceFolderKey:bundleScopeKey({type:'folder',provider,work:parts[1],...scope}),sourceFolderLabel:scopeLabel(title,scope),
     sourceBundleKey:bundleScopeKey({type:'local',provider,work:parts[1],track:identity.localArchiveTrackKey+(sourceRecord ? '|source:'+sourceTrackIdentity(sourceRecord) : ''),...scope}),
@@ -404,10 +445,12 @@ export async function getAnissiaArchiveSubtitles(
       .sort((a, b) => Number(b.toLowerCase() === "subtitle.zip") - Number(a.toLowerCase() === "subtitle.zip") ||
         a.localeCompare(b, undefined, { numeric: true }));
     const loose = files.filter((name) => /\.(ass|ssa|smi|srt|vtt)$/i.test(name));
+    // Only compare sibling filenames in this exact physical directory.
+    const looseSiblings = inferSiblingEpisodes(loose);
     const recordEpisode = folderParts.episode
       ? recordValue(candidate.entry.record, ["episode", "episodeNumber", "episode_number", "episodeNo", "ep"]) : "";
     const episodeFolder = folderParts.episode;
-    const outer = [...(assignedScope ? [{...readEpisodeEvidence(''),season:assignedScope.season}] : [readEpisodeEvidence(candidate.title)]),readEpisodeEvidence(recordEpisode),readEpisodeEvidence(episodeFolder)];
+    const outer = [...(assignedScope ? [{...readEpisodeEvidence(''),season:assignedScope.season}] : [readWorkTitleEvidence(candidate.title)]),readEpisodeEvidence(recordEpisode),readEpisodeEvidence(episodeFolder)];
 
     for (const filename of [...archives, ...loose]) {
       try {
@@ -419,12 +462,12 @@ export async function getAnissiaArchiveSubtitles(
         const info = await stat(filePath);
         if (!info.isFile() || info.size <= 0 || info.size > 100 * 1024 * 1024) continue;
 
-        const addSubtitle = (subtitle: ReturnType<typeof extractSubtitleFromBuffer>, bytes: Buffer, member: string, confirmed: boolean) => {
+        const addSubtitle = (subtitle: ReturnType<typeof extractSubtitleFromBuffer>, bytes: Buffer, member: string, confirmed: boolean, sibling?:SiblingEpisode) => {
           if (!subtitle?.content) return;
-          const identity = anissiaTrackIdentity(fileCreator, filename, subtitle.orig_filename, episode);
+          const identity = anissiaTrackIdentity(fileCreator, filename, member || filename, sibling?.episode || episode, sibling);
           const relative = path.relative(root,filePath).split(path.sep).join('/');
           const scope = subtitleScope(member || filename, `${candidate.title} ${filename}`, parseSeason(candidate.title) || 1);
-          const bundle = rawBundleIdentity('anissia',relative,member,fileCreator,candidate.title,sourceRecord);
+          const bundle = rawBundleIdentity('anissia',relative,member,fileCreator,candidate.title,sourceRecord,sibling);
           const sourceBundleKey = bundle.sourceBundleKey;
           if (options.bundleKey && !bundleMatchesAssignment(options.bundleKey,sourceBundleKey)) return;
           const expectedKind = assignedScope?.kind || subtitleScope('',titles.join(' ')).kind;
@@ -452,24 +495,26 @@ export async function getAnissiaArchiveSubtitles(
         if (filename.toLowerCase().endsWith(".zip")) {
           const archiveBytes=await readFile(filePath);if(!sourceDigestMatches(sourceRecord,archiveBytes))continue;
           const { zip, entries } = inspectSubtitleArchive(archiveBytes);
-          const scoped = options.bundleKey ? entries.filter(item=>bundleMatchesAssignment(options.bundleKey!,rawBundleIdentity('anissia',path.relative(root,filePath).split(path.sep).join('/'),item.filename,fileCreator,candidate.title,sourceRecord).sourceBundleKey)) : entries;
+          const zipSiblings = inferSiblingEpisodes(entries.map(item=>item.filename));
+          const scoped = options.bundleKey ? entries.filter(item=>bundleMatchesAssignment(options.bundleKey!,rawBundleIdentity('anissia',path.relative(root,filePath).split(path.sep).join('/'),item.filename,fileCreator,candidate.title,sourceRecord,zipSiblings.get(item.filename)).sourceBundleKey)) : entries;
           const archiveEvidence=readEpisodeEvidence(filename,true);
           if(assignedScope) archiveEvidence.season=null;
-          const selectedEntries = selectEpisodeEntries(scoped, request,[...outer, archiveEvidence]);
+          const selectedEntries = selectWithSiblingEvidence(scoped, request,[...outer, archiveEvidence],zipSiblings);
           const manualEntries = options.manualSearch ? entries : [];
           for (const item of [...new Map([...selectedEntries,...manualEntries].map(item=>[item.index,item])).values()]) {
             try {
               const bytes = zip.getEntries()[item.index].getData();
-              addSubtitle(decodeSubtitleFile(bytes, item.filename),bytes,item.filename,selectedEntries.includes(item));
+              addSubtitle(decodeSubtitleFile(bytes, item.filename),bytes,item.filename,selectedEntries.includes(item),zipSiblings.get(item.filename));
             } catch {}
             if (results.length >= resultLimit) break;
           }
         } else {
           const bytes = await readFile(filePath);if(!sourceDigestMatches(sourceRecord,bytes))continue;
-          const exact = extractSubtitleFromBuffer(bytes, episode, filename, true, wantedSeason,
+          const inferred = looseSiblings.has(filename) && selectWithSiblingEvidence([{filename}],request,outer,looseSiblings).length===1;
+          const exact = inferred ? decodeSubtitleFile(bytes,filename) : extractSubtitleFromBuffer(bytes, episode, filename, true, wantedSeason,
             { localEpisode: request.episode, evidence: outer });
           const manual = options.manualSearch;
-          addSubtitle(exact || (manual ? decodeSubtitleFile(bytes,filename) : null),bytes,'',Boolean(exact));
+          addSubtitle(exact || (manual ? decodeSubtitleFile(bytes,filename) : null),bytes,'',Boolean(exact),looseSiblings.get(filename));
         }
       } catch {}
       if (results.length >= resultLimit) break;
@@ -517,10 +562,10 @@ export async function getAniAllArchiveSubtitles(blogTitle: string, episode: numb
   const wantedKind = assigned?.kind || subtitleScope('',blogTitle).kind;
   const results: Array<{blogTitle:string;name:string;orig_filename:string;content:string;format:'ASS'|'VTT';is_ass:boolean;
     sourceBundleKey:string;sourceBundleLabel:string;sourceFolderKey:string;sourceFolderLabel:string;localFileId:string;episodeConfirmed:boolean}> = [];
-  const add = (filename: string, member: string, bytes: Buffer, confirmed: boolean) => {
+  const add = (filename: string, member: string, bytes: Buffer, confirmed: boolean, sibling?:SiblingEpisode) => {
     const scope = subtitleScope(member || filename, `${folderTitle} ${filename}`,parseSeason(folderTitle) || 1);
     const relative=path.relative(root,path.join(dir,filename)).split(path.sep).join('/');
-    const bundle=rawBundleIdentity('aniall',relative,member,'aniall',folderTitle,sourceFor(filename)), key=bundle.sourceBundleKey;
+    const bundle=rawBundleIdentity('aniall',relative,member,'aniall',folderTitle,sourceFor(filename),sibling), key=bundle.sourceBundleKey;
     if ((options.bundleKey && !bundleMatchesAssignment(options.bundleKey,key)) || (!options.manualSearch && scope.kind !== wantedKind)) return;
     const subtitle = decodeSubtitleFile(bytes,member || filename);
     if (!subtitle?.content) return;
@@ -534,25 +579,27 @@ export async function getAniAllArchiveSubtitles(blogTitle: string, episode: numb
       if (!info.isFile() || !info.size || info.size > 100*1024*1024) continue;
       const archiveBytes=await readFile(file);if(!sourceDigestMatches(sourceFor(filename),archiveBytes))continue;
       const {zip,entries} = inspectSubtitleArchive(archiveBytes);
-      const scoped=options.bundleKey ? entries.filter(e=>bundleMatchesAssignment(options.bundleKey!,rawBundleIdentity('aniall',path.relative(root,file).split(path.sep).join('/'),e.filename,'aniall',folderTitle,sourceFor(filename)).sourceBundleKey)) : entries;
+      const zipSiblings=inferSiblingEpisodes(entries.map(e=>e.filename));
+      const scoped=options.bundleKey ? entries.filter(e=>bundleMatchesAssignment(options.bundleKey!,rawBundleIdentity('aniall',path.relative(root,file).split(path.sep).join('/'),e.filename,'aniall',folderTitle,sourceFor(filename),zipSiblings.get(e.filename)).sourceBundleKey)) : entries;
       const archiveEvidence=readEpisodeEvidence(filename,true);if(assigned) archiveEvidence.season=null;
-      const selected = selectEpisodeEntries(scoped,request,[...(assigned?[{...readEpisodeEvidence(''),season:assigned.season}]:[readEpisodeEvidence(folderTitle)]),archiveEvidence]);
+      const selected = selectWithSiblingEvidence(scoped,request,[...(assigned?[{...readEpisodeEvidence(''),season:assigned.season}]:[readWorkTitleEvidence(folderTitle)]),archiveEvidence],zipSiblings);
       const manual = options.manualSearch ? entries : [];
       for (const entry of [...new Map([...selected,...manual].map(e=>[e.index,e])).values()]) {
-        add(filename,entry.filename,zip.getEntries()[entry.index].getData(),selected.includes(entry));
+        add(filename,entry.filename,zip.getEntries()[entry.index].getData(),selected.includes(entry),zipSiblings.get(entry.filename));
         if(results.length>=50) break;
       }
     } catch { /* An unreadable ZIP cannot authorize a different episode. */ }
     if(results.length>=50) break;
   }
   const loose = names.filter(n=>/\.(?:ass|ssa|srt|smi|vtt)$/i.test(n) && eligibleFile(n)).map(filename=>({filename}));
-  const scopedLoose=options.bundleKey ? loose.filter(e=>bundleMatchesAssignment(options.bundleKey!,rawBundleIdentity('aniall',path.relative(root,path.join(dir,e.filename)).split(path.sep).join('/'),'','aniall',folderTitle,sourceFor(e.filename)).sourceBundleKey)) : loose;
-  const selected = selectEpisodeEntries(scopedLoose,request,assigned ? [{...readEpisodeEvidence(''),season:assigned.season}] : [readEpisodeEvidence(folderTitle)]);
+  const looseSiblings = inferSiblingEpisodes(loose.map(item=>item.filename));
+  const scopedLoose=options.bundleKey ? loose.filter(e=>bundleMatchesAssignment(options.bundleKey!,rawBundleIdentity('aniall',path.relative(root,path.join(dir,e.filename)).split(path.sep).join('/'),'','aniall',folderTitle,sourceFor(e.filename),looseSiblings.get(e.filename)).sourceBundleKey)) : loose;
+  const selected = selectWithSiblingEvidence(scopedLoose,request,assigned ? [{...readEpisodeEvidence(''),season:assigned.season}] : [readWorkTitleEvidence(folderTitle)],looseSiblings);
   const manual = options.manualSearch ? loose : [];
   for (const entry of [...new Map([...selected,...manual].map(e=>[e.filename,e])).values()]) {
     try {
       const file=path.join(dir,entry.filename),info=await stat(file);
-      if(info.isFile() && info.size > 0 && info.size <= 2*1024*1024) {const bytes=await readFile(file);if(sourceDigestMatches(sourceFor(entry.filename),bytes))add(entry.filename,'',bytes,selected.includes(entry));}
+      if(info.isFile() && info.size > 0 && info.size <= 2*1024*1024) {const bytes=await readFile(file);if(sourceDigestMatches(sourceFor(entry.filename),bytes))add(entry.filename,'',bytes,selected.includes(entry),looseSiblings.get(entry.filename));}
     } catch { /* Keep other readable candidates available for manual selection. */ }
     if(results.length>=50) break;
   }
@@ -583,15 +630,18 @@ export async function getLocalSubtitleFile(fileId: string) {
     const sourceRecord=(await readSubtitleSourceManifest(root))[reference.relative];
     const originalBytes=await readFile(resolved);if(!sourceDigestMatches(sourceRecord,originalBytes))return null;
     let bytes: Buffer, filename=path.basename(file);
+    let sibling:SiblingEpisode|undefined;
     if(reference.member) {
       if(!/\.zip$/i.test(file)) return null;
       const {zip,entries}=inspectSubtitleArchive(originalBytes);
       const selected=entries.find(e=>e.filename===reference.member);
       if(!selected) return null;
       bytes=zip.getEntries()[selected.index].getData();filename=selected.filename;
+      sibling=inferSiblingEpisodes(entries.map(item=>item.filename)).get(reference.member);
     } else {
       if(info.size>2*1024*1024 || !/\.(ass|ssa|smi|srt|vtt)$/i.test(file)) return null;
       bytes=originalBytes;
+      sibling=inferSiblingEpisodes(await readdir(path.dirname(file))).get(filename);
     }
     if(createHash('sha256').update(bytes).digest('hex')!==reference.sha256) return null;
     const subtitle=decodeSubtitleFile(bytes,filename);if(!subtitle?.content) return null;
@@ -601,7 +651,7 @@ export async function getLocalSubtitleFile(fileId: string) {
     const workTitle=entry ? recordValue(entry.record,['subject','animeTitle','workTitle','title','anime_name','work']) || title : title;
     return {name:subtitle.filename,orig_filename:subtitle.orig_filename,content:subtitle.content,format:subtitle.format,is_ass:subtitle.is_ass,
       localFileId:fileId,sourceProvider:provider,sourceMatchedTitle:workTitle,localArchive:true,
-      ...rawBundleIdentity(provider,reference.relative,reference.member,creator,workTitle,sourceRecord)};
+      ...rawBundleIdentity(provider,reference.relative,reference.member,creator,workTitle,sourceRecord,sibling)};
   } catch(error:any) { if(error?.code!=='ENOENT' && error?.code!=='ENOTDIR') console.warn('[Local subtitle override unreadable]',error.message); return null; }
 }
 

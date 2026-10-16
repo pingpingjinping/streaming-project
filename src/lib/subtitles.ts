@@ -1,4 +1,5 @@
 import { toSourceEpisode } from "@/lib/episodeMapping";
+import { implicitSequelSeason } from "@/lib/subtitleTitleSeason";
 import * as cheerio from "cheerio";
 import { decodeSubtitleBuffer, cleanSubtitleText, convertToVtt, decodeSubtitleFile } from "@/lib/subtitleCodec";
 export { decodeSubtitleBuffer, cleanSubtitleText, convertToVtt, decodeSubtitleFile } from "@/lib/subtitleCodec";
@@ -290,7 +291,8 @@ export function parseSeason(text: string): number | null {
   if (m2) {
     return parseInt(m2[1], 10);
   }
-  return null;
+  // A cautious, shared fallback for "PSYCHO-PASS 2" style sequel titles.
+  return implicitSequelSeason(text);
 }
 
 // 4. Episode numbers parser

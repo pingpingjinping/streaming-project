@@ -1,4 +1,5 @@
-import { readEpisodeEvidence } from './subtitleEpisodes';
+import { readEpisodeEvidence, readWorkTitleEvidence } from './subtitleEpisodes';
+import { numberedSequelEpisode } from './subtitleTitleSeason';
 
 export type LocalProvider = 'aniall' | 'anissia' | 'naver';
 export type SubtitleKind = 'main' | 'ova' | 'special' | 'movie' | 'preview' | 'drama' | 'unknown';
@@ -49,7 +50,7 @@ export function subtitleScope(filename: string, workTitle = '', defaultSeason = 
   const member = declaredKinds(filename), outer = declaredKinds(workTitle);
   const declared = member.length ? member : outer;
   return {kind: (declared.length > 1 ? 'unknown' : declared[0] || 'main') as SubtitleKind,
-    season: readEpisodeEvidence(filename, true).season || readEpisodeEvidence(workTitle).season || defaultSeason || 1};
+    season: readEpisodeEvidence(filename, true).season || readWorkTitleEvidence(workTitle).season || defaultSeason || 1};
 }
 export function scopeLabel(title: string, scope: {kind: SubtitleKind; season: number}) {
   const label = {main:'TV/본편',ova:'OVA/OAD',special:'특전/특별편',movie:'극장판',preview:'예고/CM',drama:'음성드라마',unknown:'형식 확인 필요'}[scope.kind];
@@ -142,6 +143,10 @@ export function normalizeSubtitleTrackFilename(filename: string, episode: number
   const base = (filenameBase.replace(/(?:\s*\[\s*미완성\s*\]|\s*\(\s*미완성\s*\)|[\s_-]*미완성)\s*$/, "") || filenameBase)
     .replace(/(?:^|[^a-z\d])(s[1-9])\d{2}(?=$|[^a-z\d])/gi,'$1{ep}')
     .replace(/\b(s\s*0*\d{1,2}\s*e\s*)0*\d{1,4}(?!\d)/gi,'$1{ep}');
+  const numericSequel = numberedSequelEpisode(base);
+  if (numericSequel?.episode === episode) {
+    return base.slice(0,numericSequel.episodeStart) + '{ep}' + base.slice(numericSequel.episodeEnd);
+  }
   const patterns = [
     // Explicitly numbered loose files such as "Psycho-Pass S1 - 01 (BD ...).smi"
     // use the same subtitle track in subsequent episodes. Do not include

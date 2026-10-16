@@ -1,3 +1,5 @@
+import { implicitSequelSeason, numberedSequelEpisode } from "./subtitleTitleSeason";
+
 /** Episode evidence is kept separate from title similarity and release priority. */
 export interface EpisodeEvidence {
   episodes: number[];
@@ -29,8 +31,15 @@ export function readEpisodeEvidence(value: string, filename = false, filePath = 
   const base = parts[parts.length - 1].replace(/\.(?:ass|ssa|srt|smi|vtt|zip)$/i, '');
   // Compact S101 means season 1, episode 01; longer ambiguous numbers stay unknown.
   const compact=[...base.matchAll(/(?:^|[^a-z\d])s([1-9])(\d{2})(?=$|[^a-z\d])/gi)];
+  // Use the same title/episode interpretation as the release-track matcher.
+  const sequelFile = filename && /\.(?:ass|ssa|smi|srt|vtt)$/i.test(value.trim())
+    ? numberedSequelEpisode(base) : null;
+  const namedSeasonPairs = sequelFile
+    ? [{ 1: String(sequelFile.season), 2: String(sequelFile.episode) }]
+    : [];
   const seasons = unique([
     ...compact,
+    ...namedSeasonPairs,
     ...text.matchAll(/(?:^|[^a-z\d])(?:season|시즌|s)\s*0*(\d{1,2})(?=$|[^\d])/gi),
     ...text.matchAll(/(?:제|第)?\s*(\d{1,2})\s*(?:기|期)/g),
     ...text.matchAll(/\b(\d{1,2})(?:st|nd|rd|th)\s+season\b/gi),
@@ -45,10 +54,14 @@ export function readEpisodeEvidence(value: string, filename = false, filePath = 
     ? text.replace(/(?:^|[^a-z\d])s\s*0*\d{1,2}\s*[-–]\s*0*\d{1,3}(?!\d)/gi, ' ')
     : text;
   const multipleSeasons = seasons.length > 1 || /(?:\d+\s*[-~, ]\s*)+\d+\s*기/.test(seasonRangeText)
-    || /(?:season|시즌|s)\s*\d+\s*[-~]\s*\d+/i.test(seasonRangeText);
-  const paired = [...compact, ...base.matchAll(/(?:^|[^a-z\d])s\s*0*(\d{1,2})\s*e\s*0*(\d{1,4})(?!\d)/gi), ...dashedPairs];
+    || /(?:^|[^a-z\d])(?:season|시즌|s)\s*\d+\s*[-~]\s*\d+/i.test(seasonRangeText);
+  const paired = [...compact, ...namedSeasonPairs, ...base.matchAll(/(?:^|[^a-z\d])s\s*0*(\d{1,2})\s*e\s*0*(\d{1,4})(?!\d)/gi), ...dashedPairs];
   const episodes: number[] = paired.map(m => Number(m[2]));
-  let clean = (dashedPairs.length ? base.replace(/(?:^|[^a-z\d])s\s*0*\d{1,2}\s*[-–]\s*0*\d{1,3}(?!\d)/gi, ' ') : base)
+  // The "2 - 02" token is a season/episode pair, NOT the range 2-2.
+  // Remove its episode digits from subsequent generic range detection.
+  const withoutNamedSequelEpisode = sequelFile
+    ? base.slice(0,sequelFile.episodeStart) + ' ' + base.slice(sequelFile.episodeEnd) : base;
+  let clean = (dashedPairs.length ? withoutNamedSequelEpisode.replace(/(?:^|[^a-z\d])s\s*0*\d{1,2}\s*[-–]\s*0*\d{1,3}(?!\d)/gi, ' ') : withoutNamedSequelEpisode)
     .replace(/(?:season|시즌|s)\s*\d+\s*[-~]\s*(?:season|시즌|s)?\s*\d+/gi, ' ').replace(/(?:\d+\s*[-~, ]\s*)+\d+\s*기/g, ' ').replace(/(?:^|[^a-z\d])s\s*\d{1,2}\s*e\s*\d{1,4}(?!\d)/gi, ' ')
     .replace(/(?:season|part|cour|시즌|파트)\s*\d+|\bS\d+\b|\d+\s*(?:기|期)|\b\d+(?:st|nd|rd|th)\b/gi, ' ');
   let range = false;
@@ -88,6 +101,18 @@ export function readEpisodeEvidence(value: string, filename = false, filePath = 
     seasonRelative: paired.length > 0 || (filename && seasons.length === 1),
     seasonEpisodePair: paired.length > 0,
   };
+}
+
+/** A work's terminal numeric sequel title is not episode 2 of the work. */
+export function readWorkTitleEvidence(title: string): EpisodeEvidence {
+  const evidence = readEpisodeEvidence(title);
+  const season = implicitSequelSeason(title);
+  if (!season) return evidence;
+  if (evidence.episodes.length === 1 && evidence.episodes[0] === season
+      && !evidence.multipleSeasons && !evidence.range && !evidence.conflict) {
+    return {...evidence, episodes: [], season, seasonRelative: false};
+  }
+  return evidence;
 }
 
 export function evidenceAgrees(evidence: EpisodeEvidence, request: EpisodeRequest): boolean {

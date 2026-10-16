@@ -104,6 +104,23 @@ for (let ep = 1; ep <= 22; ep++) {
   const bytes = Buffer.from(`<SAMI><BODY><SYNC Start=1000><P Class=KRCC>psycho pass episode ${ep}<SYNC Start=3000><P Class=KRCC>&nbsp;</BODY></SAMI>`);
   put(`anissia_subtitles/PSYCHO-PASS/${filename}`,bytes);
 }
+// Numeric-suffix sequel title without an explicit S2 label.
+for (let ep=1;ep<=11;ep++) {
+  const filename=`[ReinForce] PSYCHO-PASS 2 - ${String(ep).padStart(2,'0')} (BDRip 1920x1080 x264 FLAC).smi`;
+  const bytes=Buffer.from(`<SAMI><BODY><SYNC Start=1000><P Class=KRCC>psycho pass two episode ${ep}<SYNC Start=3000><P Class=KRCC>&nbsp;</BODY></SAMI>`);
+  put(`anissia_subtitles/PSYCHO-PASS 2/${filename}`,bytes);
+}
+// Sibling-only inference: neither the episode number nor the suffix is in
+// the old strict parser's supported filename positions.
+for(const ep of [1,2,3,4]) for(const variant of ['',' NS']) {
+  const name=`[Studio] Mystic Signal ${String(ep).padStart(3,'0')} encode x264 1080p${variant}.smi`;
+  put(`anissia_subtitles/미스틱 시그널/${name}`,Buffer.from(
+    `<SAMI><BODY><SYNC Start=1000><P Class=KRCC>sibling ${ep}${variant}<SYNC Start=3000><P Class=KRCC>&nbsp;</BODY></SAMI>`));
+}
+zipFile('aniall_subtitles/ZIP 형제 파일/collection.zip',
+  Object.fromEntries([1,2,3,4].map(ep=>[
+    `Subfolder/Mystic Signal ${String(ep).padStart(3,'0')} encode x265 1080p.srt`,srt(`zip sibling ${ep}`),
+  ])));
 const db=require('../src/lib/db.ts'),auth=require('../src/lib/auth.ts'),storage=require('../src/lib/subtitleStorage.ts');
 const reviewed=require('../src/lib/reviewedSubtitleStorage.ts'),titles=require('../src/lib/subtitles.ts'),matches=require('../src/lib/reanimeMatches.ts');
 const identity=require('../src/lib/subtitleLocalIdentity.ts');
@@ -212,6 +229,139 @@ test('Psycho-Pass S1 loose files share a track and the first choice resumes all 
     assert.equal(result.subtitles[0].sourceBundleKey,initial.sourceBundleKey);
   }
 });
+test('shared sequel parser avoids ordinary numbered titles and preserves season-qualified release identities',()=>{
+  const sequel=require('../src/lib/subtitleTitleSeason.ts');
+  const positive=['PSYCHO-PASS 2','모브 사이코 3','My Series 4'];
+  for(const title of positive){
+    const number=Number(title.slice(-1));
+    assert.equal(sequel.implicitSequelSeason(title),number);
+    assert.equal(titles.parseSeason(title),number);
+    assert.equal(episodeEvidence.readWorkTitleEvidence(title).season,number);
+    assert.deepEqual(episodeEvidence.readWorkTitleEvidence(title).episodes,[]);
+  }
+  for(const title of ['86','86 - Eighty Six','PSYCHO-PASS 3 FIRST INSPECTOR','PSYCHO-PASS 2020','PSYCHO-PASS Sinners of the System','Steins;Gate 0']){
+    assert.equal(sequel.implicitSequelSeason(title),null,`unexpected sequel inference: ${title}`);
+  }
+  assert.equal(titles.parseSeason('PSYCHO-PASS 3 FIRST INSPECTOR'),null);
+  const first='[ReinForce] PSYCHO-PASS 2 - 01 (BDRip 1920x1080 x264 FLAC).smi';
+  const second=first.replace(' - 01 ', ' - 02 ');
+  const parsed=sequel.numberedSequelEpisode(first.slice(0,-4));
+  assert.equal(parsed.season,2);
+  assert.equal(parsed.episode,1);
+  assert.equal(first.slice(0,-4).slice(parsed.episodeStart,parsed.episodeEnd),'01');
+  assert.deepEqual(episodeEvidence.readEpisodeEvidence(first,true).episodes,[1]);
+  assert.equal(episodeEvidence.readEpisodeEvidence(first,true).season,2);
+  assert.equal(identity.normalizeSubtitleTrackFilename(first,1),identity.normalizeSubtitleTrackFilename(second,2));
+  assert.equal(sequel.numberedSequelEpisode('86 - Eighty Six'),null);
+  assert.equal(sequel.numberedSequelEpisode('PSYCHO-PASS 3 FIRST INSPECTOR'),null);
+  assert.equal(sequel.numberedSequelEpisode('1080 - 720 (HD)'),null);
+  assert.equal(identity.subtitleScope(first,'PSYCHO-PASS 2').season,2);
+  assert.equal(identity.subtitleScope('[Moozzi2] Psycho-Pass S1 - 01 (BD...).smi','PSYCHO-PASS').season,1);
+});
+
+test('Psycho-Pass 2 ReinForce loose subtitles keep sequel season and one release track across 11 episodes',async()=>{
+  const title='PSYCHO-PASS 2',id='re_psycho_pass_two',folder=identity.bundleScopeKey({
+    type:'folder',provider:'anissia',work:title,kind:'main',season:2,
+  });
+  const oldWrongScope=identity.bundleScopeKey({
+    type:'folder',provider:'anissia',work:title,kind:'main',season:1,
+  });
+  assert.equal(titles.parseSeason(title),2);
+  assert.equal(identity.subtitleScope('',title).season,2);
+  assert.deepEqual(episodeEvidence.readWorkTitleEvidence(title).episodes,[]);
+  assert.equal(episodeEvidence.readWorkTitleEvidence(title).season,2);
+  let first;
+  for(let ep=1;ep<=11;ep++){
+    const filename=`[ReinForce] PSYCHO-PASS 2 - ${String(ep).padStart(2,'0')} (BDRip 1920x1080 x264 FLAC).smi`;
+    const evidence=episodeEvidence.readEpisodeEvidence(filename,true);
+    assert.equal(evidence.season,2);
+    assert.deepEqual(evidence.episodes,[ep]);
+    assert.equal(evidence.range,false,`episode ${ep} was mistaken for a numeric range`);
+    assert.equal(evidence.multipleSeasons,false);
+    assert.equal(evidence.conflict,false);
+    const files=await storage.getAnissiaArchiveSubtitles([title],ep,null,2,{bundleKey:folder});
+    assert.equal(files.length,1,`Psycho-Pass 2 episode ${ep} missing`);
+    assert.equal(files[0].episodeConfirmed,true);
+    assert.equal(identity.parseBundleScope(files[0].sourceBundleKey).season,2);
+    if(!first)first=files[0];
+    else assert.equal(files[0].sourceBundleKey,first.sourceBundleKey,`Psycho-Pass 2 episode ${ep} changed track`);
+  }
+  // A stale assignment at the wrong season must never silently borrow season 2 files.
+  assert.deepEqual(await storage.getAnissiaArchiveSubtitles([title],1,null,1,{bundleKey:oldWrongScope}),[]);
+  const manual=await storage.getAnissiaArchiveSubtitles([title],1,null,2,{
+    folderNameQuery:title,manualSearch:true,
+  });
+  assert.ok(manual.some(s=>s.episodeConfirmed), 'manual search still finds the real episode one');
+  const saved=await bundleRoute.PUT(request('subtitle-bundle','PUT',{
+    animeId:id,provider:'anissia',bundleKey:folder,fileId:first.localFileId,
+  }));
+  assert.equal(saved.status,200);
+  for(const ep of [1,2,3,10,11]){
+    const result=await play(id,title,ep);
+    assert.equal(result.count,1,`episode ${ep} failed automatic bundle selection`);
+    assert.equal(result.needs_manual_subtitle_choice,false);
+    assert.ok(result.subtitles[0].content.includes(`psycho pass two episode ${ep}`));
+    assert.equal(result.subtitles[0].sourceBundleKey,first.sourceBundleKey);
+  }
+  assert.equal(titles.parseSeason('PSYCHO-PASS Sinners of the System'),null);
+  assert.equal(titles.parseSeason('PSYCHO-PASS 3 FIRST INSPECTOR'),null);
+});
+
+test('physical sibling comparison infers episodes, separates NS tracks and falls back for ambiguous names',async()=>{
+  const infer=require('../src/lib/subtitleSiblingInference.ts').inferSiblingEpisodes;
+  const names=[1,2,3,4].flatMap(ep=>['',' NS'].map(variant=>
+    `[Studio] Mystic Signal ${String(ep).padStart(3,'0')} encode x264 1080p${variant}.smi`));
+  const siblings=infer(names);
+  assert.equal(siblings.size,8);
+  assert.equal(siblings.get(names[0]).episode,1);
+  assert.ok(siblings.get(names[0]).template.includes('{ep}'));
+  assert.notEqual(siblings.get(names[0]).template,siblings.get(names[1]).template,'NS release crossed normal release');
+  const ambiguous=['Twin 01 01.srt','Twin 01 02.srt','Twin 02 01.srt','Twin 02 02.srt'];
+  assert.equal(infer(ambiguous).size,0,'two simultaneously changing numeric positions are ambiguous');
+  assert.equal(infer(['onlyone.srt']).size,0);
+  const split=infer(['S01/E01.srt','S01/E02.srt','S02/E01.srt']);
+  assert.equal(split.get('S02/E01.srt'),undefined,'do not borrow siblings in another subfolder');
+  const work='미스틱 시그널',id='re_mystic_sibling';
+  const folder=identity.bundleScopeKey({type:'folder',provider:'anissia',work,kind:'main',season:1});
+  let first;
+  for(const ep of [1,2,3,4]){
+    const subtitles=await storage.getAnissiaArchiveSubtitles([work],ep,null,1,{bundleKey:folder});
+    assert.equal(subtitles.length,2,`folder sibling episode ${ep} not selected`);
+    for(const subtitle of subtitles) assert.equal(subtitle.episodeConfirmed,true);
+    const defaultOne=subtitles.find(x=>x.archiveFilename.includes('1080p.smi'));
+    if(!first)first=defaultOne;
+    else assert.equal(defaultOne.sourceBundleKey,first.sourceBundleKey,`folder release changed at ${ep}`);
+    assert.notEqual(subtitles[0].sourceBundleKey,subtitles[1].sourceBundleKey,'NS and base variants were merged');
+  }
+  assert.equal((await bundleRoute.PUT(request('subtitle-bundle','PUT',{
+    animeId:id,provider:'anissia',bundleKey:folder,fileId:first.localFileId,
+  }))).status,200);
+  for(const ep of [1,2,4]){
+    const result=await play(id,work,ep);
+    assert.equal(result.count,1);
+    assert.equal(result.needs_manual_subtitle_choice,false);
+    assert.ok(result.subtitles[0].content.includes(`sibling ${ep}`));
+    assert.equal(result.subtitles[0].sourceBundleKey,first.sourceBundleKey);
+  }
+  const zipTitle='ZIP 형제 파일',zipId='re_zip_sibling',zipFolder=identity.bundleScopeKey({
+    type:'folder',provider:'aniall',work:zipTitle,kind:'main',season:1,
+  });
+  let zipFirst;
+  for(const ep of [1,2,3,4]){
+    const subtitles=await storage.getAniAllArchiveSubtitles(zipTitle,ep,1,null,'',{bundleKey:zipFolder});
+    assert.equal(subtitles.length,1,`ZIP sibling episode ${ep} not selected`);
+    assert.equal(subtitles[0].episodeConfirmed,true);
+    if(!zipFirst)zipFirst=subtitles[0];
+    else assert.equal(subtitles[0].sourceBundleKey,zipFirst.sourceBundleKey);
+  }
+  assert.equal((await bundleRoute.PUT(request('subtitle-bundle','PUT',{
+    animeId:zipId,provider:'aniall',bundleKey:zipFolder,fileId:zipFirst.localFileId,
+  }))).status,200);
+  const zipNext=await play(zipId,zipTitle,3);
+  assert.equal(zipNext.count,1);
+  assert.ok(zipNext.subtitles[0].content.includes('zip sibling 3'));
+});
+
 test('same creator and generic ZIP names are scoped by work; assigned ns track follows episode two',async()=>{
   const a=await storage.getAnissiaArchiveSubtitles(['작품 A'],1,101),b=await storage.getAnissiaArchiveSubtitles(['작품 B'],1,102);
   assert.notEqual(a[0].sourceBundleKey,b[0].sourceBundleKey);

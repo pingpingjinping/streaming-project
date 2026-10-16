@@ -83,8 +83,16 @@ const subtitleSource = (subtitle: SubtitleOption): RejectedSource => ({
     : subtitle.sourceCreatorWebsite || (subtitle.localArchive ? subtitle.name : subtitle.url || subtitle.name),
 });
 
-const subtitleDisplayName = (subtitle: SubtitleOption) => subtitle.localArchive && subtitle.sourceProvider === "anissia" && subtitle.sourceFolderLabel
-  ? `${subtitle.sourceFolderLabel} · ${subtitle.name}` : subtitle.name;
+const subtitleDisplayName = (subtitle: SubtitleOption) => {
+  // The decoder abbreviates long filename labels to "subtitle.smi".
+  // Loose Anissia files already show the actual filename immediately before
+  // that fallback; hide only the redundant UI suffix, preserving raw IDs.
+  const name = subtitle.localArchive && subtitle.sourceProvider === "anissia"
+    && /\.(?:ass|ssa|smi|srt|vtt) · subtitle\.(?:ass|ssa|smi|srt|vtt)$/i.test(subtitle.name)
+    ? subtitle.name.replace(/ · subtitle\.(?:ass|ssa|smi|srt|vtt)$/i, "") : subtitle.name;
+  return subtitle.localArchive && subtitle.sourceProvider === "anissia" && subtitle.sourceFolderLabel
+    ? `${subtitle.sourceFolderLabel} · ${name}` : name;
+};
 
 interface SubtitleSelectModalProps {
   isOpen: boolean;
