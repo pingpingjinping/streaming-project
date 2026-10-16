@@ -10,6 +10,7 @@ import { readEpisodeEvidence, readWorkTitleEvidence, evidenceAgrees, selectEpiso
 import { normalizeSubtitleTrackFilename, bundleScopeKey, parseBundleScope, localFileKey, parseLocalFileKey, subtitleScope, scopeLabel, bundleScopesOverlap, bundleMatchesAssignment } from './subtitleLocalIdentity';
 
 import {readSubtitleSourceManifest,sourceDigestMatches,sourceTrackIdentity} from './subtitleSourceManifest';
+import { inferSiblingEpisodes, type SiblingEpisode } from './subtitleSiblingInference';
 import type {DownloadRecord} from './subtitleSourceManifest';
 import { excludeRegisteredLooseFiles } from './reviewedLooseSubtitles';
 
@@ -297,16 +298,22 @@ export async function searchLocalSubtitleFolders(query:string) {
   return matches.sort((a,b)=>a.folderName.localeCompare(b.folderName,'ko')).slice(0,200);
 }
 
-function anissiaTrackIdentity(creator: string, archiveFilename: string, entryFilename: string, episode: number) {
+function anissiaTrackIdentity(creator: string, archiveFilename: string, entryFilename: string, episode: number, sibling?:SiblingEpisode) {
   const rangePattern = /(?:^|[^\d])\d{1,3}\s*[-~]\s*\d{1,3}(?!\d)/;
   // Only ZIP archives can describe a multi-episode range. In a loose
   // subtitle "S1 - 01.smi", the same digits are season + episode, not a range.
   const archiveBase = path.basename(archiveFilename).replace(/\.(zip)$/i, "");
   const archiveTrackBase = /\.zip$/i.test(archiveFilename) ? archiveBase.replace(rangePattern, "{range}") : archiveBase;
-  const normalizedArchive = normalizeSubtitleTrackFilename(archiveTrackBase, episode);
+  const legacyArchive = normalizeSubtitleTrackFilename(archiveTrackBase, episode);
+  // Prefer consistent sibling evidence when the previous single-file parser
+  // could not normalize an episode slot. Preserve existing saved track IDs
+  // whenever that parser already produced the {ep} placeholder.
+  const normalizedArchive = sibling && !/\.zip$/i.test(archiveFilename) && !legacyArchive.includes('{ep}')
+    ? sibling.template : legacyArchive;
   const entryEvidence=readEpisodeEvidence(entryFilename,true);
   const entryEpisode=entryEvidence.episodes.length===1 ? entryEvidence.episodes[0] : episodeFromSubtitleFilename(entryFilename);
-  const normalizedEntry = entryEpisode === episode ? normalizeSubtitleTrackFilename(entryFilename, episode) : "";
+  const legacyEntry = entryEpisode === episode ? normalizeSubtitleTrackFilename(entryFilename, episode) : "";
+  const normalizedEntry = sibling && !legacyEntry.includes('{ep}') ? sibling.template : legacyEntry;
   const trackKey = [normalizeBlogTitle(creator), normalizeBlogTitle(normalizedArchive), normalizeBlogTitle(normalizedEntry)].join("|");
   const entryTrack = normalizedEntry.match(/\{ep\}[\s._-]*([a-z][a-z0-9._-]*)$/i)?.[1] || "";
   const archiveTrack = normalizedArchive.match(/(?:\{ep\}|\{range\})[\s._-]*([a-z][a-z0-9._-]*)$/i)?.[1] || "";
@@ -317,12 +324,12 @@ function anissiaTrackIdentity(creator: string, archiveFilename: string, entryFil
   return { localArchiveTrackKey: trackKey, localArchiveTrackLabel: trackLabel };
 }
 
-function rawBundleIdentity(provider: 'aniall'|'anissia', relative: string, member: string, creator: string, title: string, sourceRecord?:DownloadRecord) {
+function rawBundleIdentity(provider: 'aniall'|'anissia', relative: string, member: string, creator: string, title: string, sourceRecord?:DownloadRecord, sibling?:SiblingEpisode) {
   const parts=relative.split('/'),filename=parts[parts.length-1];
   const evidence=readEpisodeEvidence(parts[2] || '');
   const fileEvidence=readEpisodeEvidence(member || filename,true);
   const episode=(fileEvidence.episodes.length===1 ? fileEvidence.episodes[0] : episodeFromSubtitleFilename(member || filename)) || (evidence.episodes.length===1 ? evidence.episodes[0] : 1);
-  const identity=anissiaTrackIdentity(creator,filename,member || filename,episode);
+  const identity=anissiaTrackIdentity(creator,filename,member || filename,episode,sibling);
   const scope=subtitleScope(member || parts.slice(2).join('/'),`${title} ${filename}`,parseSeason(title) || 1);
   return {sourceFolderKey:bundleScopeKey({type:'folder',provider,work:parts[1],...scope}),sourceFolderLabel:scopeLabel(title,scope),
     sourceBundleKey:bundleScopeKey({type:'local',provider,work:parts[1],track:identity.localArchiveTrackKey+(sourceRecord ? '|source:'+sourceTrackIdentity(sourceRecord) : ''),...scope}),
