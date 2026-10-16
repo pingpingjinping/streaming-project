@@ -57,7 +57,11 @@ export function readEpisodeEvidence(value: string, filename = false, filePath = 
     || /(?:^|[^a-z\d])(?:season|시즌|s)\s*\d+\s*[-~]\s*\d+/i.test(seasonRangeText);
   const paired = [...compact, ...namedSeasonPairs, ...base.matchAll(/(?:^|[^a-z\d])s\s*0*(\d{1,2})\s*e\s*0*(\d{1,4})(?!\d)/gi), ...dashedPairs];
   const episodes: number[] = paired.map(m => Number(m[2]));
-  let clean = (dashedPairs.length ? base.replace(/(?:^|[^a-z\d])s\s*0*\d{1,2}\s*[-–]\s*0*\d{1,3}(?!\d)/gi, ' ') : base)
+  // The "2 - 02" token is a season/episode pair, NOT the range 2-2.
+  // Remove its episode digits from subsequent generic range detection.
+  const withoutNamedSequelEpisode = sequelFile
+    ? base.slice(0,sequelFile.episodeStart) + ' ' + base.slice(sequelFile.episodeEnd) : base;
+  let clean = (dashedPairs.length ? withoutNamedSequelEpisode.replace(/(?:^|[^a-z\d])s\s*0*\d{1,2}\s*[-–]\s*0*\d{1,3}(?!\d)/gi, ' ') : withoutNamedSequelEpisode)
     .replace(/(?:season|시즌|s)\s*\d+\s*[-~]\s*(?:season|시즌|s)?\s*\d+/gi, ' ').replace(/(?:\d+\s*[-~, ]\s*)+\d+\s*기/g, ' ').replace(/(?:^|[^a-z\d])s\s*\d{1,2}\s*e\s*\d{1,4}(?!\d)/gi, ' ')
     .replace(/(?:season|part|cour|시즌|파트)\s*\d+|\bS\d+\b|\d+\s*(?:기|期)|\b\d+(?:st|nd|rd|th)\b/gi, ' ');
   let range = false;
