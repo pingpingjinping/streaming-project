@@ -624,15 +624,18 @@ export async function getLocalSubtitleFile(fileId: string) {
     const sourceRecord=(await readSubtitleSourceManifest(root))[reference.relative];
     const originalBytes=await readFile(resolved);if(!sourceDigestMatches(sourceRecord,originalBytes))return null;
     let bytes: Buffer, filename=path.basename(file);
+    let sibling:SiblingEpisode|undefined;
     if(reference.member) {
       if(!/\.zip$/i.test(file)) return null;
       const {zip,entries}=inspectSubtitleArchive(originalBytes);
       const selected=entries.find(e=>e.filename===reference.member);
       if(!selected) return null;
       bytes=zip.getEntries()[selected.index].getData();filename=selected.filename;
+      sibling=inferSiblingEpisodes(entries.map(item=>item.filename)).get(reference.member);
     } else {
       if(info.size>2*1024*1024 || !/\.(ass|ssa|smi|srt|vtt)$/i.test(file)) return null;
       bytes=originalBytes;
+      sibling=inferSiblingEpisodes(await readdir(path.dirname(file))).get(filename);
     }
     if(createHash('sha256').update(bytes).digest('hex')!==reference.sha256) return null;
     const subtitle=decodeSubtitleFile(bytes,filename);if(!subtitle?.content) return null;
@@ -642,7 +645,7 @@ export async function getLocalSubtitleFile(fileId: string) {
     const workTitle=entry ? recordValue(entry.record,['subject','animeTitle','workTitle','title','anime_name','work']) || title : title;
     return {name:subtitle.filename,orig_filename:subtitle.orig_filename,content:subtitle.content,format:subtitle.format,is_ass:subtitle.is_ass,
       localFileId:fileId,sourceProvider:provider,sourceMatchedTitle:workTitle,localArchive:true,
-      ...rawBundleIdentity(provider,reference.relative,reference.member,creator,workTitle,sourceRecord)};
+      ...rawBundleIdentity(provider,reference.relative,reference.member,creator,workTitle,sourceRecord,sibling)};
   } catch(error:any) { if(error?.code!=='ENOENT' && error?.code!=='ENOTDIR') console.warn('[Local subtitle override unreadable]',error.message); return null; }
 }
 
