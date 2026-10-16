@@ -8,6 +8,7 @@ import { getCachedKoreanAnimeTitle, saveKoreanAnimeTitleMapping, getAniAllMatche
 import { getMonthlyAnissiaCandidates } from "@/lib/reanimeMatches";
 import { extractTistoryWinPngFiles } from "@/lib/tistoryWinPng";
 import { getAnimeWorkIdentity, canSelectUnnumberedMovie, type AnimeWorkIdentity } from "@/lib/animeWorkIdentity";
+import { driveFolderId, listOnlineDriveFolder, selectOnlineDriveFolderFile, driveFileViewUrl } from "@/lib/googleDriveFolderSubtitles";
 
 export const HEADERS: Record<string, string> = {
   "User-Agent":
@@ -467,6 +468,35 @@ export async function downloadFileWithTimeout(url: string, referer?: string, tim
   return (await downloadFileWithMetadata(url, referer, timeoutMs))?.buffer || null;
 }
 
+
+/** Shared-drive online subtitle: list once, transfer only the exact episode file. */
+async function extractOnlineDriveFolderSubtitle(
+  folderUrl: string, creatorName: string, episodeNumber: number,
+  targetSeason: number | null, timeoutMs: number, localEpisode: number,
+): Promise<SubtitleResult | null> {
+  try {
+    const files = await listOnlineDriveFolder(folderUrl);
+    const selected = selectOnlineDriveFolderFile(files, localEpisode, episodeNumber, targetSeason);
+    if (!selected) return null;
+    const result = await downloadFileWithMetadata(
+      driveFileViewUrl(selected.id), folderUrl, Math.max(timeoutMs, 12000));
+    if (!result) return null;
+    // Trust the listed filename for episode evidence, not the opaque Drive ID or
+    // a Content-Disposition header that could be missing on a fallback path.
+    const subtitle = extractSubtitleFromBuffer(
+      result.buffer, episodeNumber, selected.filename, true, targetSeason,
+      { localEpisode, evidence: [readEpisodeEvidence(selected.filename, true)] });
+    return subtitle
+      ? { name: creatorName, episode: localEpisode, ...subtitle,
+          url: folderUrl, sourceCreatorWebsite: folderUrl }
+      : null;
+  } catch (error) {
+    console.warn("[Online Google Drive folder subtitle unavailable]",
+      error instanceof Error ? error.message : String(error));
+    return null;
+  }
+}
+
 function subtitlePostTitle($: cheerio.CheerioAPI): string {
   return $(".post-title, .entry-title, .title_post, .tit_post, .se-title-text").first().text().trim()
     || $('meta[property="og:title"]').attr("content")?.trim() || $("title").text().trim();
@@ -502,7 +532,7 @@ export async function extractSubtitleFromBlogPage(
     if (!/^https?:/i.test(url)) return;
     const filename = subtitleFilenameFromUrl(url);
     const label = $(anchor).text().trim();
-    if (!extractGdriveId(url) && !filename && !/tfile|attachment|kakaocdn\.net|download\.blog|blogfiles\.naver|attach/i.test(url)
+    if (!driveFolderId(url) && !extractGdriveId(url) && !filename && !/tfile|attachment|kakaocdn\.net|download\.blog|blogfiles\.naver|attach/i.test(url)
         && !/\.(zip|ass|ssa|srt|smi|vtt)\b|자막\s*다운/i.test(label)) return;
     if (/\.(?:png|jpe?g|gif|webp)(?:[?#]|$)/i.test(url)) return;
     const labels = [label, $(anchor).attr("download") || "", $(anchor).attr("title") || "",
@@ -518,6 +548,13 @@ export async function extractSubtitleFromBlogPage(
   for (const item of links.values()) {
     const outer = [postEvidence, ...item.evidence, readEpisodeEvidence(item.filename, true)];
     if (outer.some(e => !evidenceAgrees(e, request))) continue;
+    if (driveFolderId(item.url)) {
+      const folderSubtitle = await extractOnlineDriveFolderSubtitle(
+        item.url, creatorName, episodeNumber, targetSeason, timeoutMs, localEpisode);
+      if (folderSubtitle) return { ...folderSubtitle,
+        url: postUrl, sourceCreatorWebsite: postUrl };
+      continue;
+    }
     const downloaded = await downloadFileWithMetadata(item.url, postUrl, Math.max(timeoutMs + 1500, 12000));
     if (!downloaded) continue;
     const extracted = extractSubtitleFromBuffer(downloaded.buffer, episodeNumber,
@@ -885,6 +922,13 @@ export async function fetchCreatorSubtitle(
       resolveKoreanTitle(animeTitle), getAnimeWorkIdentity(animeId),
     ]);
     const targetSeason = parseSeason(resolvedTitle) || parseSeason(animeTitle);
+
+    // The Anissia website may itself be a shared Drive folder rather than a
+    // blog or single Drive file. Do not fetch that folder as a post HTML page.
+    if (driveFolderId(website)) {
+      return extractOnlineDriveFolderSubtitle(
+        website, creatorName, episodeNumber, targetSeason, timeoutMs, localEpisode);
+    }
 
     // 단일 페이지에서 자막 파일(첨부파일/구글드라이브/다운로드링크) 추출 헬퍼 함수
     const tryExtractFromPage = async (targetUrl: string, providedHtml?: string): Promise<SubtitleResult | null> => {
