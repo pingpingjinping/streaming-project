@@ -556,10 +556,10 @@ export async function getAniAllArchiveSubtitles(blogTitle: string, episode: numb
   const wantedKind = assigned?.kind || subtitleScope('',blogTitle).kind;
   const results: Array<{blogTitle:string;name:string;orig_filename:string;content:string;format:'ASS'|'VTT';is_ass:boolean;
     sourceBundleKey:string;sourceBundleLabel:string;sourceFolderKey:string;sourceFolderLabel:string;localFileId:string;episodeConfirmed:boolean}> = [];
-  const add = (filename: string, member: string, bytes: Buffer, confirmed: boolean) => {
+  const add = (filename: string, member: string, bytes: Buffer, confirmed: boolean, sibling?:SiblingEpisode) => {
     const scope = subtitleScope(member || filename, `${folderTitle} ${filename}`,parseSeason(folderTitle) || 1);
     const relative=path.relative(root,path.join(dir,filename)).split(path.sep).join('/');
-    const bundle=rawBundleIdentity('aniall',relative,member,'aniall',folderTitle,sourceFor(filename)), key=bundle.sourceBundleKey;
+    const bundle=rawBundleIdentity('aniall',relative,member,'aniall',folderTitle,sourceFor(filename),sibling), key=bundle.sourceBundleKey;
     if ((options.bundleKey && !bundleMatchesAssignment(options.bundleKey,key)) || (!options.manualSearch && scope.kind !== wantedKind)) return;
     const subtitle = decodeSubtitleFile(bytes,member || filename);
     if (!subtitle?.content) return;
@@ -573,25 +573,27 @@ export async function getAniAllArchiveSubtitles(blogTitle: string, episode: numb
       if (!info.isFile() || !info.size || info.size > 100*1024*1024) continue;
       const archiveBytes=await readFile(file);if(!sourceDigestMatches(sourceFor(filename),archiveBytes))continue;
       const {zip,entries} = inspectSubtitleArchive(archiveBytes);
-      const scoped=options.bundleKey ? entries.filter(e=>bundleMatchesAssignment(options.bundleKey!,rawBundleIdentity('aniall',path.relative(root,file).split(path.sep).join('/'),e.filename,'aniall',folderTitle,sourceFor(filename)).sourceBundleKey)) : entries;
+      const zipSiblings=inferSiblingEpisodes(entries.map(e=>e.filename));
+      const scoped=options.bundleKey ? entries.filter(e=>bundleMatchesAssignment(options.bundleKey!,rawBundleIdentity('aniall',path.relative(root,file).split(path.sep).join('/'),e.filename,'aniall',folderTitle,sourceFor(filename),zipSiblings.get(e.filename)).sourceBundleKey)) : entries;
       const archiveEvidence=readEpisodeEvidence(filename,true);if(assigned) archiveEvidence.season=null;
-      const selected = selectEpisodeEntries(scoped,request,[...(assigned?[{...readEpisodeEvidence(''),season:assigned.season}]:[readEpisodeEvidence(folderTitle)]),archiveEvidence]);
+      const selected = selectWithSiblingEvidence(scoped,request,[...(assigned?[{...readEpisodeEvidence(''),season:assigned.season}]:[readWorkTitleEvidence(folderTitle)]),archiveEvidence],zipSiblings);
       const manual = options.manualSearch ? entries : [];
       for (const entry of [...new Map([...selected,...manual].map(e=>[e.index,e])).values()]) {
-        add(filename,entry.filename,zip.getEntries()[entry.index].getData(),selected.includes(entry));
+        add(filename,entry.filename,zip.getEntries()[entry.index].getData(),selected.includes(entry),zipSiblings.get(entry.filename));
         if(results.length>=50) break;
       }
     } catch { /* An unreadable ZIP cannot authorize a different episode. */ }
     if(results.length>=50) break;
   }
   const loose = names.filter(n=>/\.(?:ass|ssa|srt|smi|vtt)$/i.test(n) && eligibleFile(n)).map(filename=>({filename}));
-  const scopedLoose=options.bundleKey ? loose.filter(e=>bundleMatchesAssignment(options.bundleKey!,rawBundleIdentity('aniall',path.relative(root,path.join(dir,e.filename)).split(path.sep).join('/'),'','aniall',folderTitle,sourceFor(e.filename)).sourceBundleKey)) : loose;
-  const selected = selectEpisodeEntries(scopedLoose,request,assigned ? [{...readEpisodeEvidence(''),season:assigned.season}] : [readEpisodeEvidence(folderTitle)]);
+  const looseSiblings = inferSiblingEpisodes(loose.map(item=>item.filename));
+  const scopedLoose=options.bundleKey ? loose.filter(e=>bundleMatchesAssignment(options.bundleKey!,rawBundleIdentity('aniall',path.relative(root,path.join(dir,e.filename)).split(path.sep).join('/'),'','aniall',folderTitle,sourceFor(e.filename),looseSiblings.get(e.filename)).sourceBundleKey)) : loose;
+  const selected = selectWithSiblingEvidence(scopedLoose,request,assigned ? [{...readEpisodeEvidence(''),season:assigned.season}] : [readWorkTitleEvidence(folderTitle)],looseSiblings);
   const manual = options.manualSearch ? loose : [];
   for (const entry of [...new Map([...selected,...manual].map(e=>[e.filename,e])).values()]) {
     try {
       const file=path.join(dir,entry.filename),info=await stat(file);
-      if(info.isFile() && info.size > 0 && info.size <= 2*1024*1024) {const bytes=await readFile(file);if(sourceDigestMatches(sourceFor(entry.filename),bytes))add(entry.filename,'',bytes,selected.includes(entry));}
+      if(info.isFile() && info.size > 0 && info.size <= 2*1024*1024) {const bytes=await readFile(file);if(sourceDigestMatches(sourceFor(entry.filename),bytes))add(entry.filename,'',bytes,selected.includes(entry),looseSiblings.get(entry.filename));}
     } catch { /* Keep other readable candidates available for manual selection. */ }
     if(results.length>=50) break;
   }
