@@ -51,7 +51,7 @@ export function readEpisodeEvidence(value: string, filename = false, filePath = 
     ? text.replace(/(?:^|[^a-z\d])s\s*0*\d{1,2}\s*[-–]\s*0*\d{1,3}(?!\d)/gi, ' ')
     : text;
   const multipleSeasons = seasons.length > 1 || /(?:\d+\s*[-~, ]\s*)+\d+\s*기/.test(seasonRangeText)
-    || /(?:season|시즌|s)\s*\d+\s*[-~]\s*\d+/i.test(seasonRangeText);
+    || /(?:^|[^a-z\d])(?:season|시즌|s)\s*\d+\s*[-~]\s*\d+/i.test(seasonRangeText);
   const paired = [...compact, ...namedSeasonPairs, ...base.matchAll(/(?:^|[^a-z\d])s\s*0*(\d{1,2})\s*e\s*0*(\d{1,4})(?!\d)/gi), ...dashedPairs];
   const episodes: number[] = paired.map(m => Number(m[2]));
   let clean = (dashedPairs.length ? base.replace(/(?:^|[^a-z\d])s\s*0*\d{1,2}\s*[-–]\s*0*\d{1,3}(?!\d)/gi, ' ') : base)
