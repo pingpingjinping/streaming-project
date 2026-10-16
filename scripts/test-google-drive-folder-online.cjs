@@ -116,9 +116,10 @@ test('private, empty and 50+ listings are refused rather than treated as full',a
 
 test('a three-minute promise cache avoids repeated listing',async()=>{
   let count=0;
+  const cacheUrl='https://drive.google.com/drive/folders/1cccccccccccccccccccccccccccc';
   const loader=async()=>{count++;return drivePage(files);};
-  const first=await listOnlineDriveFolder(url,loader,true);
-  const second=await listOnlineDriveFolder(url,loader,true);
+  const first=await listOnlineDriveFolder(cacheUrl,loader,true);
+  const second=await listOnlineDriveFolder(cacheUrl,loader,true);
   assert.deepEqual(first,second);
   assert.equal(count,1);
 });
