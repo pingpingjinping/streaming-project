@@ -315,15 +315,13 @@ function selectWithSiblingEvidence<T extends {filename:string}>(
       seasonRelative:Boolean(evidence.season && evidence.season===request.season)};
     return evidenceAgrees(derived,request);
   });
-  if (inferred.length) return inferred;
-  // A proven sibling 03 must not be revived as 01 by the weaker parser.
-  return selectEpisodeEntries(entries,request,outer).filter(entry=>{
-    const sibling=siblings.get(entry.filename);
-    if (!sibling) return true;
-    const evidence=readEpisodeEvidence(entry.filename,true);
-    const expected=evidence.season && evidence.season===request.season ? request.episode : request.sourceEpisode;
-    return sibling.episode===expected;
-  });
+  // Resolve confident sibling series FIRST, while retaining a legacy
+  // fallback for other unrelated files in this same folder/ZIP. Otherwise
+  // one recognized series could accidentally hide another valid release.
+  const proven=new Set(inferred.map(entry=>entry.filename));
+  const fallback=selectEpisodeEntries(entries,request,outer).filter(entry=>
+    !siblings.has(entry.filename) && !proven.has(entry.filename));
+  return [...inferred,...fallback];
 }
 
 function anissiaTrackIdentity(creator: string, archiveFilename: string, entryFilename: string, episode: number, sibling?:SiblingEpisode) {
