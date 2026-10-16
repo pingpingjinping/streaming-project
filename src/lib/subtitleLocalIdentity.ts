@@ -1,4 +1,4 @@
-import { readEpisodeEvidence } from './subtitleEpisodes';
+import { readEpisodeEvidence, readWorkTitleEvidence } from './subtitleEpisodes';
 
 export type LocalProvider = 'aniall' | 'anissia' | 'naver';
 export type SubtitleKind = 'main' | 'ova' | 'special' | 'movie' | 'preview' | 'drama' | 'unknown';
@@ -49,7 +49,7 @@ export function subtitleScope(filename: string, workTitle = '', defaultSeason = 
   const member = declaredKinds(filename), outer = declaredKinds(workTitle);
   const declared = member.length ? member : outer;
   return {kind: (declared.length > 1 ? 'unknown' : declared[0] || 'main') as SubtitleKind,
-    season: readEpisodeEvidence(filename, true).season || readEpisodeEvidence(workTitle).season || defaultSeason || 1};
+    season: readEpisodeEvidence(filename, true).season || readWorkTitleEvidence(workTitle).season || defaultSeason || 1};
 }
 export function scopeLabel(title: string, scope: {kind: SubtitleKind; season: number}) {
   const label = {main:'TV/본편',ova:'OVA/OAD',special:'특전/특별편',movie:'극장판',preview:'예고/CM',drama:'음성드라마',unknown:'형식 확인 필요'}[scope.kind];
@@ -147,6 +147,9 @@ export function normalizeSubtitleTrackFilename(filename: string, episode: number
     // use the same subtitle track in subsequent episodes. Do not include
     // release metadata or the literal episode number in the track identity.
     new RegExp("((?:^|[^a-z\\d])s\\s*0*\\d{1,2}\\s*[-–]\\s*)0*" + episode + "(?!\\d)", "i"),
+    // The numeric season is part of the title: "PSYCHO-PASS 2 - 01".
+    // Normalize only the episode so the same release follows 02..11.
+    new RegExp("(\\s[2-9]\\s*[-–]\\s*)0*" + episode + "(?=\\s*(?:\\(|\\[|$))", "i"),
     // A page-numbered release may append 화 on only one episode. This is the
     // same numbering style, unlike separate bare-number and N화 release sets.
     new RegExp("(\\bpage\\s+)0*" + episode + "(?:\\s*(?:화|회|편|話))?(?=$|[\\s._-]*(?:ns|s|tv)$)", "i"),
