@@ -218,6 +218,36 @@ test('Psycho-Pass S1 loose files share a track and the first choice resumes all 
     assert.equal(result.subtitles[0].sourceBundleKey,initial.sourceBundleKey);
   }
 });
+test('shared sequel parser avoids ordinary numbered titles and preserves season-qualified release identities',()=>{
+  const sequel=require('../src/lib/subtitleTitleSeason.ts');
+  const positive=['PSYCHO-PASS 2','모브 사이코 3','My Series 4'];
+  for(const title of positive){
+    const number=Number(title.slice(-1));
+    assert.equal(sequel.implicitSequelSeason(title),number);
+    assert.equal(titles.parseSeason(title),number);
+    assert.equal(episodeEvidence.readWorkTitleEvidence(title).season,number);
+    assert.deepEqual(episodeEvidence.readWorkTitleEvidence(title).episodes,[]);
+  }
+  for(const title of ['86','86 - Eighty Six','PSYCHO-PASS 3 FIRST INSPECTOR','PSYCHO-PASS 2020','PSYCHO-PASS Sinners of the System','Steins;Gate 0']){
+    assert.equal(sequel.implicitSequelSeason(title),null,`unexpected sequel inference: ${title}`);
+  }
+  assert.equal(titles.parseSeason('PSYCHO-PASS 3 FIRST INSPECTOR'),null);
+  const first='[ReinForce] PSYCHO-PASS 2 - 01 (BDRip 1920x1080 x264 FLAC).smi';
+  const second=first.replace(' - 01 ', ' - 02 ');
+  const parsed=sequel.numberedSequelEpisode(first.slice(0,-4));
+  assert.equal(parsed.season,2);
+  assert.equal(parsed.episode,1);
+  assert.equal(first.slice(0,-4).slice(parsed.episodeStart,parsed.episodeEnd),'01');
+  assert.deepEqual(episodeEvidence.readEpisodeEvidence(first,true).episodes,[1]);
+  assert.equal(episodeEvidence.readEpisodeEvidence(first,true).season,2);
+  assert.equal(identity.normalizeSubtitleTrackFilename(first,1),identity.normalizeSubtitleTrackFilename(second,2));
+  assert.equal(sequel.numberedSequelEpisode('86 - Eighty Six'),null);
+  assert.equal(sequel.numberedSequelEpisode('PSYCHO-PASS 3 FIRST INSPECTOR'),null);
+  assert.equal(sequel.numberedSequelEpisode('1080 - 720 (HD)'),null);
+  assert.equal(identity.subtitleScope(first,'PSYCHO-PASS 2').season,2);
+  assert.equal(identity.subtitleScope('[Moozzi2] Psycho-Pass S1 - 01 (BD...).smi','PSYCHO-PASS').season,1);
+});
+
 test('Psycho-Pass 2 ReinForce loose subtitles keep sequel season and one release track across 11 episodes',async()=>{
   const title='PSYCHO-PASS 2',id='re_psycho_pass_two',folder=identity.bundleScopeKey({
     type:'folder',provider:'anissia',work:title,kind:'main',season:2,
