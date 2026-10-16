@@ -29,8 +29,14 @@ export function readEpisodeEvidence(value: string, filename = false, filePath = 
   const base = parts[parts.length - 1].replace(/\.(?:ass|ssa|srt|smi|vtt|zip)$/i, '');
   // Compact S101 means season 1, episode 01; longer ambiguous numbers stay unknown.
   const compact=[...base.matchAll(/(?:^|[^a-z\d])s([1-9])(\d{2})(?=$|[^a-z\d])/gi)];
+  // In a loose release "PSYCHO-PASS 2 - 01 (BD...).smi", the
+  // title's terminal 2 is the season and 01 is the episode. Keep
+  // the explicit " - NN" separator to avoid guessing from bare numbers.
+  const namedSeasonPairs = filename && /\.(?:ass|ssa|smi|srt|vtt)$/i.test(value.trim())
+    ? [...base.matchAll(/\s([2-9])\s*[-–]\s*0*(\d{1,3})(?=\s*(?:\(|\[|$))/g)] : [];
   const seasons = unique([
     ...compact,
+    ...namedSeasonPairs,
     ...text.matchAll(/(?:^|[^a-z\d])(?:season|시즌|s)\s*0*(\d{1,2})(?=$|[^\d])/gi),
     ...text.matchAll(/(?:제|第)?\s*(\d{1,2})\s*(?:기|期)/g),
     ...text.matchAll(/\b(\d{1,2})(?:st|nd|rd|th)\s+season\b/gi),
@@ -46,7 +52,7 @@ export function readEpisodeEvidence(value: string, filename = false, filePath = 
     : text;
   const multipleSeasons = seasons.length > 1 || /(?:\d+\s*[-~, ]\s*)+\d+\s*기/.test(seasonRangeText)
     || /(?:season|시즌|s)\s*\d+\s*[-~]\s*\d+/i.test(seasonRangeText);
-  const paired = [...compact, ...base.matchAll(/(?:^|[^a-z\d])s\s*0*(\d{1,2})\s*e\s*0*(\d{1,4})(?!\d)/gi), ...dashedPairs];
+  const paired = [...compact, ...namedSeasonPairs, ...base.matchAll(/(?:^|[^a-z\d])s\s*0*(\d{1,2})\s*e\s*0*(\d{1,4})(?!\d)/gi), ...dashedPairs];
   const episodes: number[] = paired.map(m => Number(m[2]));
   let clean = (dashedPairs.length ? base.replace(/(?:^|[^a-z\d])s\s*0*\d{1,2}\s*[-–]\s*0*\d{1,3}(?!\d)/gi, ' ') : base)
     .replace(/(?:season|시즌|s)\s*\d+\s*[-~]\s*(?:season|시즌|s)?\s*\d+/gi, ' ').replace(/(?:\d+\s*[-~, ]\s*)+\d+\s*기/g, ' ').replace(/(?:^|[^a-z\d])s\s*\d{1,2}\s*e\s*\d{1,4}(?!\d)/gi, ' ')
@@ -88,6 +94,19 @@ export function readEpisodeEvidence(value: string, filename = false, filePath = 
     seasonRelative: paired.length > 0 || (filename && seasons.length === 1),
     seasonEpisodePair: paired.length > 0,
   };
+}
+
+/** A work's terminal numeric sequel title is not episode 2 of the work. */
+export function readWorkTitleEvidence(title: string): EpisodeEvidence {
+  const evidence = readEpisodeEvidence(title);
+  const suffix = title.trim().match(/\s([2-9])$/);
+  if (!suffix) return evidence;
+  const season = Number(suffix[1]);
+  if (evidence.episodes.length === 1 && evidence.episodes[0] === season
+      && !evidence.multipleSeasons && !evidence.range && !evidence.conflict) {
+    return {...evidence, episodes: [], season, seasonRelative: false};
+  }
+  return evidence;
 }
 
 export function evidenceAgrees(evidence: EpisodeEvidence, request: EpisodeRequest): boolean {
