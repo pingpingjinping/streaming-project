@@ -213,13 +213,17 @@ if db.execute("SELECT 1 FROM sqlite_master WHERE name='pi_reviewed_work_groups' 
 
 manual_titles=[]
 if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pi_admin_work_titles'").fetchone():
-    for row in db.execute("SELECT anime_id,title FROM pi_admin_work_titles ORDER BY anime_id"):
+    title_columns={row[1] for row in db.execute('PRAGMA table_info(pi_admin_work_titles)')}
+    canonical_column='canonical_id' if 'canonical_id' in title_columns else 'anime_id'
+    for row in db.execute("SELECT anime_id,title,"+canonical_column+" AS canonical_id FROM pi_admin_work_titles ORDER BY anime_id"):
         aid,title=row['anime_id'],row['title']
+        canonical=row['canonical_id']
         if (not isinstance(aid,str) or len(aid)>150 or not re.fullmatch(r'(?:ani_[1-9]\d*|re_[A-Za-z0-9_-]+|ak_[A-Za-z0-9_-]+|db_(?:AniList|Onnada)_[A-Za-z0-9_-]+)',aid)
+                or not isinstance(canonical,str) or len(canonical)>150 or not re.fullmatch(r'(?:ani_[1-9]\d*|re_[A-Za-z0-9_-]+|ak_[A-Za-z0-9_-]+|db_(?:AniList|Onnada)_[A-Za-z0-9_-]+)',canonical)
                 or not isinstance(title,str) or not 0<len(title)<=300 or not re.search('[가-힣]',title)
                 or any(ord(c)<32 or ord(c)==127 for c in title)):
             raise SystemExit('Invalid manual Korean name in release database')
-        manual_titles.append((aid,aid,title))
+        manual_titles.append((aid,canonical,title))
 
 stream = io.StringIO()
 stream.write('''\nBEGIN;
