@@ -3,6 +3,7 @@ const assert=require('node:assert/strict'),{test}=require('node:test');
 const root=path.join(__dirname,'..');
 const matchOverrides = {getWorkMatchOverrides:async()=>[], importedLinkIsOverridden:()=>false};
 function load(file,deps={},globals={}) {
+  deps={'@/lib/adminWorkTitles':{applyAdminWorkTitles:async items=>items,applyAdminWorkTitle:async item=>item},...deps};
   // HomePage imports its search-only modules even in unrelated catalog tests.
   deps = {
     '@/components/AnissiaDbSearchFallback': { default: () => null },
@@ -248,4 +249,5 @@ test('actual Postgres pages confirmed DB works, applies titles/year, and preserv
       assert.equal(await snapshot(),before);
     }finally {if(sql)await sql.end();await admin.unsafe(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await admin.end();}
   });
+
 
