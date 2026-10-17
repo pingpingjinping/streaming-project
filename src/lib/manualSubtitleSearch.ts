@@ -40,7 +40,12 @@ export function mergeManualSubtitleSearchResults(
     if (match) {
       if (touched.has(match.id)) continue;
       touched.add(match.id);
-      match.source_name = [match.source_name, "Pi 자막 연결"].filter(Boolean).join(" · ");
+      // A Korean name registered on the Pi takes effect before monthly D1 sync.
+      if (/[가-힣]/.test(hit.item.title)) {
+        match.original_title = match.original_title || match.title;
+        match.title = hit.item.title;
+      }
+      match.source_name = [match.source_name, hit.item.source_name || "Pi 자막 연결"].filter(Boolean).join(" · ");
       // If the Pi has a verified playable ID, a Cloudflare catalog card
       // should use that work link directly rather than stop at /catalog.
       const directHref = directManualSearchHref(match.id, hit.item.detail_url);
@@ -75,6 +80,20 @@ export async function searchManualSubtitleLinks(
     if (error?.code === "42P01") return [];
     console.warn("[Manual subtitle DB search]", error);
     return [];
+  }
+  // A name can be registered before a subtitle folder is attached.
+  try {
+    const named=await sql`SELECT canonical_id AS anime_id,korean_title AS work_title,
+        array_agg(anime_id ORDER BY anime_id) AS member_ids
+      FROM anime_admin_work_titles GROUP BY canonical_id,korean_title`;
+    const linkedIds=new Set(links.flatMap(row=>[row.anime_id,...(row.member_ids || [])]));
+    for(const row of named) {
+      const ids=Array.isArray(row.member_ids)?row.member_ids.map(String):[String(row.anime_id)];
+      if(ids.some(id=>linkedIds.has(id)))continue;
+      links.push({relative_path:"",anime_id:String(row.anime_id),work_title:String(row.work_title),member_ids:ids});
+    }
+  } catch(error:any) {
+    if(error?.code!=="42P01")console.warn("[Manual Korean title search]",error);
   }
   if (!links.length) return [];
 
@@ -132,7 +151,8 @@ export async function searchManualSubtitleLinks(
     found.push({
       item: {
         id,title:link.work_title,poster:"",detail_url:detailUrl,
-        remarks:"수동으로 연결한 Pi 자막", source_name:"Pi 자막 연결",
+        remarks:link.relative_path ? "수동으로 연결한 Pi 자막" : "직접 등록한 한글 이름",
+        source_name:link.relative_path ? "Pi 자막 연결" : "한글 이름 등록",
         caption_count:null,
       },
       memberIds,
@@ -141,3 +161,4 @@ export async function searchManualSubtitleLinks(
   }
   return found;
 }
+

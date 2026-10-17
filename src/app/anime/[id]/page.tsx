@@ -1,4 +1,5 @@
 import WorkMatchSetting from "@/components/WorkMatchSetting";
+import { applyAdminWorkTitle } from "@/lib/adminWorkTitles";
 import Navbar from "@/components/Navbar";
 import FavoriteButton from "@/components/FavoriteButton";
 import EpisodeListSection from "@/components/EpisodeListSection";
@@ -56,6 +57,7 @@ export default async function AnimeDetailPage({
     notFound();
   }
 
+  anime = await applyAdminWorkTitle(anime);
   const initialHistoryMap = await getAnimeHistoryMap(currentUserId, anime.id);
   const episodes = isDub ? anime.dub_episodes : anime.sub_episodes;
 
@@ -174,5 +176,6 @@ export default async function AnimeDetailPage({
     </div>
   );
 }
+
 
 

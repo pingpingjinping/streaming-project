@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { applyAdminWorkTitle } from "@/lib/adminWorkTitles";
 import { getProviderByAnimeId } from "@/lib/providers";
 import { getSessionUser } from "@/lib/auth";
 
@@ -37,12 +38,16 @@ export async function GET(request: NextRequest) {
   }
 
   const noCache = searchParams.get("nocache") === "1";
+  const titledDetail = await applyAdminWorkTitle(detail);
+  const manualTitleChanged = titledDetail.title !== detail.title;
+  detail = titledDetail;
   return NextResponse.json(detail, {
     headers: {
-      "Cache-Control": (noCache || provider.name === "anissia" || detail.video_available === false || videoSource === 'anikoto' || detail.playback_source === 'anikoto' || provider.name === 'anikoto')
+      "Cache-Control": (noCache || manualTitleChanged || provider.name === "anissia" || detail.video_available === false || videoSource === 'anikoto' || detail.playback_source === 'anikoto' || provider.name === 'anikoto')
         ? "no-store"
         : "public, s-maxage=600, stale-while-revalidate=3600",
     },
   });
 }
+
 

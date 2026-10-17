@@ -7,6 +7,7 @@ const ts = require('typescript');
 const root = path.join(__dirname, '..');
 const plain = value => JSON.parse(JSON.stringify(value));
 function load(file, deps = {}, globals = {}) {
+  deps={'@/lib/adminWorkTitles':{applyAdminWorkTitles:async items=>items,applyAdminWorkTitle:async item=>item},...deps};
   deps = {'@/lib/koreanSubtitleCatalog': {getKoreanSubtitleCatalog: async () => {
     throw Error('Anikoto tests must not request the Korean subtitle catalog');
   }}, ...deps};
@@ -177,4 +178,5 @@ test('Anikoto detail keeps the full work heading and native title for resolver v
   assert.equal(detail.original_title,'パリに咲くエトワール');
   assert.equal(detail.sub_episodes[0].number,1);
 });
+
 

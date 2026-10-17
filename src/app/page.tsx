@@ -5,6 +5,7 @@ import AnimeCard from "@/components/AnimeCard";
 import HistoryList, { HistoryItem } from "@/components/HistoryList";
 import ReanimeFeedFallback from "@/components/ReanimeFeedFallback";
 import AnissiaDbSearchFallback from "@/components/AnissiaDbSearchFallback";
+import { applyAdminWorkTitles } from "@/lib/adminWorkTitles";
 import { prepareAnissiaApiSearch } from "@/lib/anissiaSearchStages";
 import { searchCloudflareAnimeFirst } from "@/lib/cloudflareAnimeSearch";
 import { mergeManualSubtitleSearchResults, searchManualSubtitleLinks } from "@/lib/manualSubtitleSearch";
@@ -486,6 +487,7 @@ export default async function HomePage({
     sectionSubtitle='작품 DB에서 연결이 확정된 작품만 표시합니다. 자막 파일 보유 여부와는 별개의 기준입니다.';
   }
 
+  items = await applyAdminWorkTitles(items);
   return (
     <div className="min-h-screen bg-[#0b0f19]">
       <Navbar />
@@ -1305,4 +1307,5 @@ export default async function HomePage({
     </div>
   );
 }
+
 

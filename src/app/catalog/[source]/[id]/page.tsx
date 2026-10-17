@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { getAdminWorkTitles } from '@/lib/adminWorkTitles';
 import Navbar from '@/components/Navbar';
 import { requireAuth } from '@/lib/auth';
 import { getDb } from '@/lib/db';
@@ -30,10 +31,12 @@ export default async function CatalogWorkPage({ params, searchParams }: {
   } catch (error: any) {
     if (error?.code !== '42P01') throw error;
   }
-  if (!knownWork && !manualLinks.length) notFound();
+  const manualTitle=(await getAdminWorkTitles([workId])).get(workId);
+  if (!knownWork && !manualLinks.length && !manualTitle) notFound();
   const work = knownWork || {
-    title: manualLinks[0].work_title,year:'',format:'',fileCount:0,postCount:0,
+    title: manualTitle || manualLinks[0].work_title,year:'',format:'',fileCount:0,postCount:0,
   };
+  const displayTitle=manualTitle || work.title;
   let files: any[] = [];
   try { files = await sql`SELECT source,member_path,review_status FROM anime_subtitle_files
     WHERE target_source=${source} AND target_id=${id} AND work_confirmed
@@ -68,7 +71,7 @@ export default async function CatalogWorkPage({ params, searchParams }: {
 
   return <div className="min-h-screen bg-[#0b0f19] text-slate-200"><Navbar />
     <main className="mx-auto max-w-5xl px-4 py-8">
-      <h1 className="text-2xl font-bold">{work.title}</h1>
+      <h1 className="text-2xl font-bold">{displayTitle}</h1>
       <p className="mt-2 text-sm text-slate-400">{[work.year,work.format,`자막 파일 ${work.fileCount}개`,work.postCount ? `자막 글 ${work.postCount}개` : ''].filter(Boolean).join(' · ')}</p>
       <div className="mt-6 flex flex-wrap gap-3">
         {streams.map(row => <Link key={row.anikoto_id} href={'/anime/ak_' + row.anikoto_id}
@@ -92,3 +95,4 @@ export default async function CatalogWorkPage({ params, searchParams }: {
     </main>
   </div>;
 }
+
