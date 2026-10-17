@@ -24,6 +24,9 @@ test('Folder rename migrates exact bundle and episode keys without changing cont
   const other=identity.localFileKey(from+' Extra/01.srt','','b'.repeat(64));
   assert.equal(helpers.renamedSubtitleReference(other,from,to),other);
   assert.throws(()=>helpers.renamedSubtitleReference('legacy:'+from+'/01.srt',from,to),/옛 자막/);
+  const longTrack=identity.bundleScopeKey({type:'local',provider:'anissia',work:'Old Work',kind:'main',season:1,track:'a'.repeat(950)});
+  assert.ok(identity.parseBundleScope(longTrack));
+  assert.throws(()=>helpers.renamedSubtitleReference(longTrack,from,'anissia_subtitles/'+'긴'.repeat(110)),/너무 깁니다/);
 });
 test('Weekly provenance moves with the folder and can be restored if DB saving fails',async()=>{
   const root=await fsp.mkdtemp(path.join(os.tmpdir(),'subtitle-provenance-rename-'));

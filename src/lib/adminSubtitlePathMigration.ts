@@ -8,13 +8,17 @@ export function renamedSubtitleReference(key: string, former: string, next: stri
   const [source,work]=former.split("/"),newWork=next.split("/")[1];
   const scope=parseBundleScope(key);
   if(scope && scope.type!=="reviewed") {
-    return scope.provider+"_subtitles"===source && scope.work===work
-      ? bundleScopeKey({...scope,work:newWork}) : key;
+    if(scope.provider+"_subtitles"!==source || scope.work!==work)return key;
+    const changed=bundleScopeKey({...scope,work:newWork});
+    if(!parseBundleScope(changed))throw new Error("변경할 폴더명이 저장된 자막 지정에 비해 너무 깁니다. 이름 유지로 저장해 주세요.");
+    return changed;
   }
   const file=parseLocalFileKey(key);
   if(file) {
-    return file.relative===former || file.relative.startsWith(former+"/")
-      ? localFileKey(next+file.relative.slice(former.length),file.member,file.sha256) : key;
+    if(file.relative!==former && !file.relative.startsWith(former+"/"))return key;
+    const changed=localFileKey(next+file.relative.slice(former.length),file.member,file.sha256);
+    if(!parseLocalFileKey(changed))throw new Error("변경할 경로가 회차별 자막 지정에 비해 너무 깁니다. 이름 유지로 저장해 주세요.");
+    return changed;
   }
   if(key.includes(former) || key.includes(encodeURIComponent(former)) ||
       (key.startsWith("b") && (key.includes(work) || key.includes(encodeURIComponent(work)))))
