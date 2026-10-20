@@ -11,6 +11,8 @@ import { normalizeSubtitleTrackFilename, bundleScopeKey, parseBundleScope, local
 
 import {readSubtitleSourceManifest,sourceDigestMatches,sourceTrackIdentity} from './subtitleSourceManifest';
 import { inferSiblingEpisodes, type SiblingEpisode } from './subtitleSiblingInference';
+import { matchingSubtitleFolderRangePaths } from './subtitleFolderRanges';
+import type { SubtitleFolderRange } from './db';
 import type {DownloadRecord} from './subtitleSourceManifest';
 import { excludeRegisteredLooseFiles } from './reviewedLooseSubtitles';
 
@@ -656,3 +658,50 @@ export async function getLocalSubtitleFile(fileId: string) {
 }
 
 
+
+/**
+ * Exact folder-range playback. This intentionally bypasses the normal work-wide
+ * season matcher without changing its behavior. A missing or ambiguous slice is
+ * fail-closed so playback never silently jumps to a wrong subtitle.
+ */
+export async function getSubtitleForFolderRange(range: SubtitleFolderRange, episode: number) {
+  const scope=parseBundleScope(range.folderKey);
+  if(scope?.type!=='folder' || scope.provider!==range.provider || scope.season!==range.season
+      || !(await getLocalSubtitleFolder(range.folderKey))) return {subtitle:null,reason:'unavailable' as const};
+  const dir=path.join(root,`${scope.provider}_subtitles`,scope.work);
+  type Candidate={relative:string;member:string;bytes?:Buffer};
+  const candidates:Candidate[]=[];
+  let names:string[];
+  try {names=await folderSubtitleFiles(dir);} catch {return {subtitle:null,reason:'unavailable' as const};}
+  const loose=names.filter(name=>/\.(?:ass|ssa|smi|srt|vtt)$/i.test(name));
+  for(const filename of matchingSubtitleFolderRangePaths(loose,range,episode)) {
+    candidates.push({relative:path.relative(root,path.join(dir,filename)).split(path.sep).join('/'),member:''});
+  }
+  for(const filename of names.filter(name=>/\.zip$/i.test(name))) {
+    try {
+      const file=path.join(dir,filename),info=await stat(file);
+      if(!info.isFile() || info.size<=0 || info.size>100*1024*1024)continue;
+      const {zip,entries}=inspectSubtitleArchive(await readFile(file));
+      const matches=matchingSubtitleFolderRangePaths(entries.map(item=>`${filename}/${item.filename}`),range,episode);
+      for(const item of entries) {
+        if(!matches.includes(`${filename}/${item.filename}`))continue;
+        candidates.push({relative:path.relative(root,file).split(path.sep).join('/'),member:item.filename,
+          bytes:zip.getEntries()[item.index].getData()});
+      }
+    } catch { /* Skip unreadable archive without changing the assigned range. */ }
+    if(candidates.length>1)break;
+  }
+  if(candidates.length!==1)return {subtitle:null,reason:candidates.length?'ambiguous' as const:'missing' as const};
+  const candidate=candidates[0];
+  try {
+    const bytes=candidate.bytes || await readFile(path.join(root,candidate.relative));
+    if(bytes.length>2*1024*1024 && !candidate.member) return {subtitle:null,reason:'unavailable' as const};
+    const id=localFileKey(candidate.relative,candidate.member,createHash('sha256').update(bytes).digest('hex'));
+    const subtitle=await getLocalSubtitleFile(id);
+    if(!subtitle || subtitle.sourceProvider!==range.provider)
+      return {subtitle:null,reason:'unavailable' as const};
+    return {subtitle:{...subtitle,episodeConfirmed:true,bundleAssigned:true,folderRange:true},reason:null};
+  } catch {
+    return {subtitle:null,reason:'unavailable' as const};
+  }
+}
