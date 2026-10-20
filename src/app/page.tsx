@@ -137,6 +137,8 @@ export default async function HomePage({
   let historyItems: HistoryItem[] = [];
   let has_next = false;
   let total_pages = 1;
+  let totalPagesExact = true;
+  let mergedReanimeSearchHandled = false;
   let catalogError: string | undefined;
 
   if(linkedOnly) {
@@ -180,7 +182,7 @@ export default async function HomePage({
           const result = await providerForSource.searchAnime(term, page, source === "anikoto" && searchScope === "current"
             ? { genre, year, typeLang, status: statusFilter, sort } : undefined);
           lastResult = result;
-          if (result.items.length > 0) return { source, result };
+          if (result.items.length > 0 || result.total_pages_exact !== undefined) return { source, result };
         }
         return { source, result: lastResult };
       })
@@ -206,6 +208,9 @@ export default async function HomePage({
     }
     has_next = fulfilled.some(({ result }) => result.has_next);
     total_pages = Math.max(1, ...fulfilled.map(({ result }) => result.total_pages));
+    totalPagesExact = fulfilled.every(({ result }) => result.total_pages_exact !== false);
+    mergedReanimeSearchHandled = fulfilled.some(({ source, result }) =>
+      source === "reanime" && result.total_pages_exact !== undefined);
     if (searchScope === 'current') catalogError = fulfilled.find(({ source }) => source === activeSource)?.result.error;
   } else if (tab === "favorites") {
     const sql = getDb();
@@ -1261,7 +1266,7 @@ export default async function HomePage({
                 captionsOnly={captionsOnly}
                 initialPage={page}
               />
-            ) : activeSource === "reanime" && !linkedOnly && tab !== "favorites" ? (
+            ) : activeSource === "reanime" && !linkedOnly && !mergedReanimeSearchHandled && tab !== "favorites" ? (
               <ReanimeFeedFallback tab={tab} q={q} genre={genre} page={page} />
             ) : (
               <div className="flex min-h-[300px] flex-col items-center justify-center text-slate-400">
@@ -1276,7 +1281,7 @@ export default async function HomePage({
         )}
 
         {/* Pagination: ReAnime 모든 탭 및 애니24, Linkkf에서 페이지 이동 가능 */}
-        {tab !== "favorites" && tab !== "history" && !(activeSource === "linkkf" && tab === "top") && !needsAnissiaDbFallback && total_pages > 1 && (
+        {tab !== "favorites" && tab !== "history" && !(activeSource === "linkkf" && tab === "top") && !needsAnissiaDbFallback && (total_pages > 1 || page > 1 || has_next) && (
           <div className="mt-10 flex items-center justify-center gap-2">
             {page > 1 && (
               <Link
@@ -1289,7 +1294,7 @@ export default async function HomePage({
             )}
 
             <span className="px-4 py-2 text-sm font-semibold text-purple-300">
-              {captionsOnly && has_next ? `${page} 페이지` : `${page} / ${total_pages || 1} 페이지`}
+              {(!totalPagesExact || (captionsOnly && has_next)) ? `${page} 페이지` : `${page} / ${total_pages || 1} 페이지`}
             </span>
 
             {has_next && (
