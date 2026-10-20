@@ -25,7 +25,6 @@ import {
 } from "@/lib/providers";
 import { OHLI24_GENRES } from "@/lib/providers/ohli24";
 import { getDb, initDb, getEnabledStreamingProviders, getAnissiaCatalogCaptionsOnly, setAnissiaCatalogCaptionsOnly } from "@/lib/db";
-import { checkAndPromoteNewEpisodes } from "@/lib/historyPromotion";
 import { resolveKoreanTitle } from "@/lib/subtitles";
 import { getCurrentUserId, requireAuth } from "@/lib/auth";
 import Link from "next/link";
@@ -235,7 +234,6 @@ export default async function HomePage({
       await initDb();
       try {
         const currentUserId = await getCurrentUserId();
-        await checkAndPromoteNewEpisodes(currentUserId);
 
         const rows = await sql`
           SELECT * FROM (

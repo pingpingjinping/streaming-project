@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { Clock, Film, CheckCircle2, X } from "lucide-react";
 
@@ -47,6 +47,49 @@ export default function HistoryList({ initialItems }: { initialItems: HistoryIte
   const [items, setItems] = useState<HistoryItem[]>(initialItems);
   const [isDeleting, setIsDeleting] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [isChecking, setIsChecking] = useState(false);
+  const refreshController = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    setItems(initialItems);
+    const controller = new AbortController();
+    refreshController.current = controller;
+    setIsChecking(true);
+    void (async () => {
+      try {
+        const response = await fetch("/api/anime/history/refresh", {
+          method: "POST", signal: controller.signal, cache: "no-store",
+        });
+        if (!response.ok || controller.signal.aborted) return;
+        const result = await response.json();
+        if (!result.success || controller.signal.aborted) return;
+        // Another tab may have finished the shared check between SSR and this
+        // request. Read the saved list even when this call was TTL-throttled.
+        const history = await fetch("/api/anime/history", { signal: controller.signal, cache: "no-store" });
+        if (!history.ok || controller.signal.aborted) return;
+        const data = await history.json();
+        if (!controller.signal.aborted && data.success && Array.isArray(data.items)) {
+          setItems(data.items.map((item: HistoryItem & { current_time?: number }) => ({
+            ...item, watch_time: Number(item.watch_time ?? item.current_time ?? 0),
+            duration: Number(item.duration || 0),
+          })));
+        }
+      } catch {
+        // A slow/offline provider must never hide the saved history.
+      } finally {
+        if (!controller.signal.aborted) setIsChecking(false);
+      }
+    })();
+    return () => {
+      controller.abort();
+      if (refreshController.current === controller) refreshController.current = null;
+    };
+  }, [initialItems]);
+
+  const cancelRefresh = () => {
+    refreshController.current?.abort();
+    setIsChecking(false);
+  };
 
   useEffect(() => {
     setMounted(true);
@@ -56,6 +99,7 @@ export default function HistoryList({ initialItems }: { initialItems: HistoryIte
     e.preventDefault();
     e.stopPropagation();
 
+    cancelRefresh();
     // Optimistic UI update
     setItems((prev) =>
       prev.filter((i) => !(i.anime_id === animeId && i.episode_number === ep))
@@ -72,6 +116,7 @@ export default function HistoryList({ initialItems }: { initialItems: HistoryIte
 
   const handleClearAll = async () => {
     if (!window.confirm("모든 이어보기 시청 기록을 삭제하시겠습니까?")) return;
+    cancelRefresh();
     setIsDeleting(true);
     setItems([]);
     try {
@@ -118,6 +163,8 @@ export default function HistoryList({ initialItems }: { initialItems: HistoryIte
           전체 기록 삭제
         </button>
       </div>
+
+      {isChecking && <p role="status" className="text-xs text-slate-400">새 회차 확인 중…</p>}
 
       {/* 얇은 가로 줄 형태의 이어보기 목록 (2열 반응형) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">

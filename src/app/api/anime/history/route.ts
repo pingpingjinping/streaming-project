@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, initDb } from "@/lib/db";
-import { checkAndPromoteNewEpisodes } from "@/lib/historyPromotion";
 import { getCurrentUserId, getSessionUser } from "@/lib/auth";
 
 export async function GET(request: NextRequest) {
@@ -36,19 +35,16 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // 방영 중 신규 회차 감지 및 승격 (10분 캐시 내에서는 즉시 리턴)
-    await checkAndPromoteNewEpisodes(userId);
-
     const rows = await sql`
       SELECT * FROM (
         SELECT DISTINCT ON (anime_id)
-          anime_id, anime_title, anime_poster, episode_number, episode_title, watch_url, watch_time as current_time, duration, is_completed, updated_at
+          id, anime_id, anime_title, anime_poster, episode_number, episode_title, watch_url, watch_time, watch_time as current_time, duration, is_completed, updated_at
         FROM anime_history
         WHERE user_id = ${userId}
         ORDER BY anime_id, updated_at DESC
       ) t
       ORDER BY updated_at DESC
-      LIMIT 30;
+      LIMIT 50;
     `;
 
     // 보안: 사용자별 데이터이므로 어떤 캐시도 허용하지 않음
