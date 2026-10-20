@@ -1,13 +1,17 @@
 import { getDb, getSubtitleEpisodeStart } from "./db";
 import { getProviderByAnimeId } from "./providers";
 
-// 사용자별 10분 TTL 캐시로 잦은 외부 웹 크롤링 요청 방지
-const lastCheckMap: Record<string, number> = {};
+// A shared promise prevents overlapping refresh requests for the same viewer.
+// The cursor advances only over batches actually attempted, including timeouts.
+interface CheckState { lastCheck?: number; afterAnimeId: string; pending?: Promise<boolean> }
+const checkStates = new Map<string, CheckState>();
+const CHECK_INTERVAL_MS = 600_000;
+const CHECK_STATE_LIMIT = 1000;
 
 // 외부 스크래핑 제한 파라미터
 const MAX_ANIME_COUNT = 20;   // 패스당 검사할 완주 작품 수 상한
 const CONCURRENCY = 5;        // 동시 외부 스크래핑 개수
-const TOTAL_BUDGET_MS = 8000; // 패스 전체 타임아웃 예산 (SSR/API 지연 상한)
+const TOTAL_BUDGET_MS = 8000; // 외부 조회 대기 예산
 const MIN_USEFUL_WINDOW_MS = 2000; // 남은 예산이 이보다 적으면 새 호출 시작 안 함
 
 /**
@@ -37,20 +41,35 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
  * 성능/안정:
  * - 직렬이 아닌 CONCURRENCY(5) 제한 병렬 + 전체 TOTAL_BUDGET_MS(8초) 예산
  *   (직렬 20회 스크래핑은 Vercel 함수 타임아웃/SSR 지연의 주원인이었음)
- * - 예산 초과 시 남은 작품은 건너뛰고 다음 10분 주기에 재시도
+ * - 예산 초과 시 다음 10분 주기에 마지막으로 시도한 작품 다음부터 순환 검사
  * - 기존 진행도(watch_time > 0)가 있는 회차 기록은 초기화하지 않음
  */
-export async function checkAndPromoteNewEpisodes(userId = "default"): Promise<boolean> {
-  const now = Date.now();
-  const lastCheck = lastCheckMap[userId] || 0;
-  if (now - lastCheck < 600_000) {
-    // 10분 이내 재호출 시 건너뜀
-    return false;
+export function checkAndPromoteNewEpisodes(userId = "default"): Promise<boolean> {
+  let state = checkStates.get(userId);
+  if (state?.pending) return state.pending;
+  if (state?.lastCheck !== undefined && Date.now() - state.lastCheck < CHECK_INTERVAL_MS) {
+    return Promise.resolve(false);
   }
-  lastCheckMap[userId] = now;
+  if (!state) state = { afterAnimeId: "" };
+  checkStates.delete(userId);
+  checkStates.set(userId, state);
+  const current = state;
+  current.pending = runCheck(userId, current).then(changed => {
+    current.lastCheck = Date.now();
+    return changed;
+  }).finally(() => {
+    current.pending = undefined;
+    for (const [key, entry] of checkStates) {
+      if (checkStates.size <= CHECK_STATE_LIMIT) break;
+      if (!entry.pending) checkStates.delete(key);
+    }
+  });
+  return current.pending;
+}
 
+async function runCheck(userId: string, state: CheckState): Promise<boolean> {
   const sql = getDb();
-  if (!sql) return false;
+  if (!sql) throw new Error("Database not configured");
 
   let completedRows: any[];
   try {
@@ -58,17 +77,18 @@ export async function checkAndPromoteNewEpisodes(userId = "default"): Promise<bo
     completedRows = await sql`
       SELECT * FROM (
         SELECT DISTINCT ON (anime_id)
-          id, user_id, anime_id, anime_title, anime_poster, episode_number, episode_title, watch_url, is_completed, updated_at
+          id, user_id, anime_id, anime_title, anime_poster, episode_number, episode_title, watch_url, is_completed, updated_at, updated_at::text AS history_version
         FROM anime_history
         WHERE user_id = ${userId}
         ORDER BY anime_id, updated_at DESC
       ) t
       WHERE is_completed = TRUE
+      ORDER BY CASE WHEN anime_id > ${state.afterAnimeId} THEN 0 ELSE 1 END, anime_id
       LIMIT ${MAX_ANIME_COUNT};
     `;
   } catch (error) {
     console.error("[checkAndPromoteNewEpisodes db error]:", error);
-    return false;
+    throw error;
   }
 
   if (!completedRows || completedRows.length === 0) {
@@ -84,6 +104,7 @@ export async function checkAndPromoteNewEpisodes(userId = "default"): Promise<bo
     if (Date.now() >= deadline - MIN_USEFUL_WINDOW_MS) break;
 
     const batch = completedRows.slice(i, i + CONCURRENCY);
+    state.afterAnimeId = String(batch[batch.length - 1].anime_id);
     const results = await Promise.allSettled(
       batch.map(async (row): Promise<boolean> => {
         const animeId = row.anime_id as string;
@@ -99,17 +120,26 @@ export async function checkAndPromoteNewEpisodes(userId = "default"): Promise<bo
 
         const epList = detail.sub_episodes || [];
         // 현재 완주한 회차보다 큰 다음 회차가 올라왔는지 확인 (오름차순 기준 첫 번째 다음 화)
-        const nextEp = epList.find((e) => e.number > currentEpNum);
+        const nextEp = epList.filter(e => e.number > currentEpNum).sort((a, b) => a.number - b.number)[0];
         if (!nextEp) return false;
 
         // 다음 회차가 새로 등록됨 -> watch_time=0.0, is_completed=false로 신규 레코드 삽입 (NEW 상태 승격)
         // 기존 진행도가 있는 기록은 초기화하지 않음 (진행도 0인 스텁만 갱신)
-        await sql`
+        const promoted = await sql`
           INSERT INTO anime_history (
             user_id, anime_id, anime_title, anime_poster, episode_number, episode_title, watch_url, watch_time, duration, is_completed, updated_at
-          ) VALUES (
+          ) SELECT
             ${userId}, ${animeId}, ${row.anime_title || detail.title}, ${row.anime_poster || detail.poster}, ${nextEp.number}, ${nextEp.title}, ${nextEp.watch_url}, 0.0, 0.0, FALSE, CURRENT_TIMESTAMP
-          )
+          FROM anime_history source
+          WHERE source.id = ${row.id} AND source.user_id = ${userId}
+            -- Keep the bind parameter as text: the driver's timestamptz serializer
+            -- converts strings through JS Date and loses PostgreSQL microseconds.
+            AND source.updated_at = ${row.history_version}::text::timestamptz AND source.is_completed = TRUE
+            AND NOT EXISTS (
+              SELECT 1 FROM anime_history newer
+              WHERE newer.user_id = ${userId} AND newer.anime_id = ${animeId}
+                AND newer.updated_at > source.updated_at
+            )
           ON CONFLICT (user_id, anime_id, episode_number)
           DO UPDATE SET
             episode_title = EXCLUDED.episode_title,
@@ -117,9 +147,10 @@ export async function checkAndPromoteNewEpisodes(userId = "default"): Promise<bo
             updated_at = CURRENT_TIMESTAMP
           WHERE anime_history.is_completed = FALSE
             AND anime_history.watch_time = 0
-            AND anime_history.duration = 0;
+            AND anime_history.duration = 0
+          RETURNING id;
         `;
-        return true;
+        return promoted.length > 0;
       })
     );
 
