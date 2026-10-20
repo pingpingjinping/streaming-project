@@ -203,7 +203,7 @@ export default function SubtitleBundleAssignmentSetting({
         </button>
       </form>
 
-      <SubtitleFolderAssignments animeId={animeId} choices={[...folders,...results]} onSaved={setAssignment} />
+      <SubtitleFolderAssignments animeId={animeId} currentEpisode={episode} choices={[...folders,...results]} onSaved={setAssignment} />
       {folders.length > 0 && (
         <div className="mt-3">
           <p className="mb-1 text-[11px] font-semibold text-slate-400">폴더·ZIP 후보</p>
