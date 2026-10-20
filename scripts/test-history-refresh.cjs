@@ -167,7 +167,7 @@ test('Postgres rotation, microsecond timestamps, progress preservation and delet
         id SERIAL PRIMARY KEY,user_id TEXT,anime_id TEXT,anime_title TEXT,anime_poster TEXT,
         episode_number INT,episode_title TEXT,watch_url TEXT,watch_time REAL DEFAULT 0,duration REAL DEFAULT 0,
         is_completed BOOLEAN,updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,UNIQUE(user_id,anime_id,episode_number))`);
-      for (const user of ['normal', 'deleted', 'progress']) await sql`
+      for (const user of ['normal', 'deleted', 'progress', 'updated']) await sql`
         INSERT INTO anime_history(user_id,anime_id,anime_title,episode_number,watch_url,is_completed,updated_at)
         VALUES(${user},'work','Work',1,'/watch/work/1',TRUE,'2026-10-20 00:00:00.123456+00')`;
       await sql`INSERT INTO anime_history(user_id,anime_id,episode_number,watch_time,duration,is_completed,updated_at)
@@ -186,6 +186,11 @@ test('Postgres rotation, microsecond timestamps, progress preservation and delet
       assert.equal(normal.length, 2); assert.equal(normal[1].episode_number, 2); assert.equal(normal[1].watch_time, 0);
       assert.equal(await api.checkAndPromoteNewEpisodes('progress'), false);
       assert.equal((await sql`SELECT watch_time FROM anime_history WHERE user_id='progress' AND episode_number=2`)[0].watch_time, 80);
+      // A change inside the same millisecond must still invalidate the snapshot.
+      onDetail = async () => { await sql`UPDATE anime_history
+        SET updated_at='2026-10-20 00:00:00.123457+00' WHERE user_id='updated'`; };
+      assert.equal(await api.checkAndPromoteNewEpisodes('updated'), false);
+      assert.equal((await sql`SELECT * FROM anime_history WHERE user_id='updated'`).length, 1);
       onDetail = async () => { await sql`DELETE FROM anime_history WHERE user_id='deleted'`; };
       assert.equal(await api.checkAndPromoteNewEpisodes('deleted'), false);
       assert.equal((await sql`SELECT * FROM anime_history WHERE user_id='deleted'`).length, 0);

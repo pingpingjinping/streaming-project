@@ -947,7 +947,7 @@ export default function SubtitleSelectModal({
                   candidate={exceptionCandidate} onCancel={()=>setExceptionCandidate(null)} onSaved={(subtitle,ep)=>{
                     if(ep===(episodeNumber || 1)) {onSelectSubtitle(subtitle);onClose();}
                   }} />
-                <SubtitleFolderAssignments animeId={animeId} choices={localArchiveOptions} onSaved={setBundleAssignment} />
+                <SubtitleFolderAssignments animeId={animeId} currentEpisode={episodeNumber} choices={localArchiveOptions} onSaved={setBundleAssignment} />
                 {visibleLocalArchiveOptions.length ? (
                   <div className="space-y-2">
                     {visibleLocalArchiveOptions.map((subtitle, index) => (
@@ -1245,7 +1245,7 @@ export default function SubtitleSelectModal({
                     <button type="button" onClick={() => { selectedFolderRequestRef.current++; setSelectedLocalFolder(null); setSelectedFolderSubtitles([]); setShowOtherLocalResults(false); }}
                       className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800">선택 해제</button>
                   </div>
-                  <SubtitleFolderAssignments animeId={animeId} choices={[selectedLocalFolder, ...selectedFolderSubtitles]} onSaved={setBundleAssignment} />
+                  <SubtitleFolderAssignments animeId={animeId} currentEpisode={episodeNumber} choices={[selectedLocalFolder, ...selectedFolderSubtitles]} onSaved={setBundleAssignment} />
                   {isLoadingSelectedFolder ? <p className="text-xs text-emerald-200">선택한 항목의 자막 확인 중…</p>
                     : selectedVisibleResults.length === 0 ? <p className="text-xs text-slate-400">선택한 항목에서 표시 가능한 자막을 찾지 못했어.</p>
                     : <>

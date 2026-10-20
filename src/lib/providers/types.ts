@@ -26,6 +26,8 @@ export interface AnimeListResponse {
   page: number;
   has_next: boolean;
   total_pages: number;
+  // False when only a prefix of a merged search has been loaded.
+  total_pages_exact?: boolean;
   error?: string;
 }
 

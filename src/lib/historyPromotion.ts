@@ -132,7 +132,9 @@ async function runCheck(userId: string, state: CheckState): Promise<boolean> {
             ${userId}, ${animeId}, ${row.anime_title || detail.title}, ${row.anime_poster || detail.poster}, ${nextEp.number}, ${nextEp.title}, ${nextEp.watch_url}, 0.0, 0.0, FALSE, CURRENT_TIMESTAMP
           FROM anime_history source
           WHERE source.id = ${row.id} AND source.user_id = ${userId}
-            AND source.updated_at = ${row.history_version}::timestamptz AND source.is_completed = TRUE
+            -- Keep the bind parameter as text: the driver's timestamptz serializer
+            -- converts strings through JS Date and loses PostgreSQL microseconds.
+            AND source.updated_at = ${row.history_version}::text::timestamptz AND source.is_completed = TRUE
             AND NOT EXISTS (
               SELECT 1 FROM anime_history newer
               WHERE newer.user_id = ${userId} AND newer.anime_id = ${animeId}
