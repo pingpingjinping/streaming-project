@@ -402,6 +402,26 @@ async function initializeDb() {
     console.warn("[initDb subtitle_bundle_assignments warning]:", e?.message);
   }
 
+  // Per-user, ordered folder slices. A later start automatically ends the prior slice.
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS subtitle_folder_ranges (
+        user_id VARCHAR(100) NOT NULL,
+        anime_id VARCHAR(100) NOT NULL,
+        start_episode INT NOT NULL CHECK (start_episode BETWEEN 1 AND 10000),
+        subtitle_episode INT NOT NULL CHECK (subtitle_episode BETWEEN 1 AND 10000),
+        season_number INT NOT NULL CHECK (season_number BETWEEN 1 AND 99),
+        provider VARCHAR(16) NOT NULL CHECK (provider IN ('anissia','aniall')),
+        folder_key TEXT NOT NULL,
+        label TEXT NOT NULL DEFAULT '',
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, anime_id, start_episode)
+      )
+    `;
+  } catch (error: any) {
+    if (error?.code !== '23505' && error?.code !== '42P07') throw error;
+  }
+
   try {
     await sql`
       CREATE TABLE IF NOT EXISTS subtitle_creator_preferences (
@@ -2269,3 +2289,91 @@ export async function deleteManualSubtitleLink(userId: string, animeId: string, 
   await sql`DELETE FROM manual_subtitle_links WHERE user_id = ${userId} AND anime_id = ${animeId} AND episode_number = ${episodeNumber}`;
 }
 
+
+/** A piecewise player-episode -> subtitle-season mapping (one row per starting episode). */
+export interface SubtitleFolderRange {
+  startEpisode: number;
+  subtitleEpisode: number;
+  season: number;
+  animeId: string;
+  provider: 'anissia' | 'aniall';
+  folderKey: string;
+  label: string;
+}
+
+export async function getSubtitleFolderRanges(userId: string, animeId: string): Promise<SubtitleFolderRange[]> {
+  const sql = getDb();
+  if (!sql || !userId || !animeId) return [];
+  await initDb();
+  const rows = await sql`
+    SELECT anime_id, start_episode, subtitle_episode, season_number, provider, folder_key, label
+    FROM subtitle_folder_ranges
+    WHERE user_id = ${userId} AND anime_id = ${animeId}
+    ORDER BY start_episode
+  `;
+  return rows.map(row => ({
+    animeId: String(row.anime_id),
+    startEpisode: Number(row.start_episode),
+    subtitleEpisode: Number(row.subtitle_episode),
+    season: Number(row.season_number),
+    provider: String(row.provider) as 'anissia' | 'aniall',
+    folderKey: String(row.folder_key),
+    label: String(row.label || ''),
+  }));
+}
+
+export async function saveSubtitleFolderRange(
+  userId: string, animeId: string, range: Omit<SubtitleFolderRange, 'animeId'>,
+): Promise<boolean> {
+  const sql = getDb();
+  if (!sql || !userId || !animeId || animeId.length > 100
+      || ![range.startEpisode,range.subtitleEpisode].every(n => Number.isInteger(n) && n >= 1 && n <= 10000)
+      || !Number.isInteger(range.season) || range.season < 1 || range.season > 99
+      || !['aniall','anissia'].includes(range.provider)
+      || !range.folderKey || range.folderKey.length > 2000 || range.label.length > 1000) return false;
+  await initDb();
+  try {
+    return await sql.begin(async tx => {
+      await tx`SELECT pg_advisory_xact_lock(hashtext(${userId}),hashtext(${animeId}))`;
+      const count = await tx`SELECT COUNT(*)::int AS count FROM subtitle_folder_ranges
+        WHERE user_id=${userId} AND anime_id=${animeId}`;
+      const exists = await tx`SELECT 1 FROM subtitle_folder_ranges
+        WHERE user_id=${userId} AND anime_id=${animeId} AND start_episode=${range.startEpisode}`;
+      if (Number(count[0]?.count || 0) >= 50 && !exists.length) return false;
+      await tx`
+        INSERT INTO subtitle_folder_ranges
+        (user_id, anime_id, start_episode, subtitle_episode, season_number, provider, folder_key, label)
+        VALUES (${userId}, ${animeId}, ${range.startEpisode}, ${range.subtitleEpisode},
+          ${range.season}, ${range.provider}, ${range.folderKey}, ${range.label})
+        ON CONFLICT (user_id,anime_id,start_episode) DO UPDATE SET
+          subtitle_episode=EXCLUDED.subtitle_episode,
+          season_number=EXCLUDED.season_number,
+          provider=EXCLUDED.provider,
+          folder_key=EXCLUDED.folder_key,
+          label=EXCLUDED.label,
+          updated_at=CURRENT_TIMESTAMP
+      `;
+      return true;
+    });
+  } catch (error) {
+    console.warn('[saveSubtitleFolderRange]', error);
+    return false;
+  }
+}
+
+export async function deleteSubtitleFolderRange(
+  userId: string, animeId: string, startEpisode: number,
+): Promise<boolean> {
+  const sql = getDb();
+  if (!sql || !userId || !animeId || !Number.isInteger(startEpisode)
+      || startEpisode < 1 || startEpisode > 10000) return false;
+  await initDb();
+  try {
+    await sql`DELETE FROM subtitle_folder_ranges
+      WHERE user_id=${userId} AND anime_id=${animeId} AND start_episode=${startEpisode}`;
+    return true;
+  } catch (error) {
+    console.warn('[deleteSubtitleFolderRange]', error);
+    return false;
+  }
+}
