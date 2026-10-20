@@ -181,6 +181,7 @@ if (typeof setInterval === 'function') {
   const cleanupTimer = setInterval(() => {
     pruneCache(detailCache, DETAIL_CACHE_LIMIT);
     pruneCache(streamCache, STREAM_CACHE_LIMIT);
+    pruneMergedSearchCache();
     const now = Date.now();
     for (const [key, entry] of artworkCache) {
       if (entry.expires <= now) artworkCache.delete(key);
@@ -483,14 +484,113 @@ export async function getAnimeListFiltered(params: AnimeListFilterParams): Promi
   });
 }
 
+// Retain overflow from each upstream batch. Rebuild in the same round/term
+// order on a cold page request; never use the UI page as each term's offset.
+interface MergedSearchState {
+  items: AnimeListItem[];
+  seen: Set<string>;
+  cursors: { term: string; offset: number; done: boolean }[];
+  expires: number;
+  pending?: Promise<void>;
+}
+const mergedSearchCache = new Map<string, MergedSearchState>();
+const SEARCH_CACHE_TTL = 60_000;
+const SEARCH_CACHE_LIMIT = 32;
+const SEARCH_CACHE_ITEM_LIMIT = 2000;
+
+function pruneMergedSearchCache() {
+  for (const [key, state] of mergedSearchCache) {
+    if (state.expires <= Date.now() && !state.pending) mergedSearchCache.delete(key);
+  }
+  let count = [...mergedSearchCache.values()].reduce((sum, state) => sum + state.items.length, 0);
+  for (const [key, state] of mergedSearchCache) {
+    if (mergedSearchCache.size <= SEARCH_CACHE_LIMIT && count <= SEARCH_CACHE_ITEM_LIMIT) break;
+    if (state.pending) continue;
+    mergedSearchCache.delete(key);
+    count -= state.items.length;
+  }
+}
+
+async function searchMergedCatalog(
+  baseUrl: string, terms: string[], page: number,
+  options: { year?: string; sort?: string }, headers: Record<string, string>,
+): Promise<AnimeListResponse | null> {
+  const limit = 20;
+  const end = page * limit;
+  const key = JSON.stringify([baseUrl, terms, options.year || "", options.sort || ""]);
+  pruneMergedSearchCache();
+  let state = mergedSearchCache.get(key);
+  if (!state) {
+    state = { items: [], seen: new Set(), cursors: terms.map(term => ({ term, offset: 0, done: false })),
+      expires: Date.now() + SEARCH_CACHE_TTL };
+  }
+  mergedSearchCache.delete(key);
+  mergedSearchCache.set(key, state);
+  const snapshot = state;
+  try {
+    // A real lookahead item makes has_next reliable even when all remaining
+    // upstream pages contain duplicates or items excluded by the year filter.
+    while (snapshot.items.length <= end && snapshot.cursors.some(cursor => !cursor.done)) {
+      if (!snapshot.pending) {
+        snapshot.pending = (async () => {
+          const active = snapshot.cursors.filter(cursor => !cursor.done);
+          const responses = await Promise.all(active.map(async cursor => {
+            const params = new URLSearchParams({ offset: String(cursor.offset), limit: String(limit) });
+            if (options.year && /^\d{4}$/.test(options.year)) params.set("year", options.year);
+            if (options.sort === "year_asc" || options.sort === "year_desc") params.set("sort", options.sort);
+            const result = await fetchReanimeJson<any>(
+              `${baseUrl}/api/v1/search?q=${encodeURIComponent(cursor.term)}&${params}`, headers);
+            if (!result || !Array.isArray(result.results)) throw new Error("ReAnime search batch failed");
+            return result;
+          }));
+          // Commit a complete round only. Failure must not advance a cursor or
+          // append partial results ahead of a term that will be retried later.
+          responses.forEach((response, index) => {
+            const cursor = active[index];
+            const raw = response.results;
+            cursor.offset += raw.length;
+            const total = Number(response.total);
+            cursor.done = raw.length === 0 || (Number.isFinite(total) && total >= 0
+              ? cursor.offset >= total : raw.length < limit);
+            for (const item of raw) {
+              const id = String(item.anime_id || "");
+              if (!id || snapshot.seen.has(id)) continue;
+              if (options.year && String(item.season_year || "") !== options.year) continue;
+              snapshot.seen.add(id);
+              snapshot.items.push(mapRawItemToAnimeListItem(item));
+            }
+          });
+        })().finally(() => { snapshot.pending = undefined; });
+      }
+      await snapshot.pending;
+    }
+    // Preserve the existing title fallback only when the mapped search as a
+    // whole is genuinely empty, never merely because this page is empty.
+    if (!snapshot.items.length) return null;
+    const exact = snapshot.cursors.every(cursor => cursor.done);
+    return {
+      items: snapshot.items.slice((page - 1) * limit, end), page,
+      has_next: snapshot.items.length > end,
+      total_pages: Math.max(1, Math.ceil(snapshot.items.length / limit)),
+      total_pages_exact: exact,
+    };
+  } catch {
+    return { items: [], page, has_next: false, total_pages: Math.max(1, page),
+      total_pages_exact: false, error: "ReAnime 검색 결과를 불러오지 못했습니다. 다시 시도해 주세요." };
+  } finally {
+    pruneMergedSearchCache();
+  }
+}
+
 export async function searchAnime(keyword: string, page = 1, options: { year?: string; sort?: string } = {}): Promise<AnimeListResponse> {
   const trimmed = keyword?.trim();
   if (!trimmed) {
     return { items: [], page: 1, has_next: false, total_pages: 1 };
   }
 
+  page = Number.isSafeInteger(page) && page > 0 ? page : 1;
   const limit = 20;
-  const offset = Math.max(0, (page - 1) * limit);
+  const offset = (page - 1) * limit;
   const filterParams = new URLSearchParams({ offset: String(offset), limit: String(limit) });
   if (options.year && /^\d{4}$/.test(options.year)) filterParams.set("year", options.year);
   if (options.sort === "year_asc" || options.sort === "year_desc") filterParams.set("sort", options.sort);
@@ -544,41 +644,8 @@ export async function searchAnime(keyword: string, page = 1, options: { year?: s
   // original ReAnime titles and merge the hits instead of stopping at the first,
   // often unrelated, result for a broad word such as "슬라임".
   if (catalogSearchTerms.length > 0) {
-    const mappedResponses = await Promise.all(catalogSearchTerms.slice(0, 6).map(async (term) => {
-      try {
-        const json = await fetchReanimeJson<any>(
-          `${baseUrl}/api/v1/search?q=${encodeURIComponent(term)}&${filterParams.toString()}`,
-          headers
-        );
-        return json && Array.isArray(json.results) ? json : null;
-      } catch {
-        return null;
-      }
-    }));
-    const seenIds = new Set<string>();
-    const mergedResults: any[] = [];
-    let total = 0;
-    for (const response of mappedResponses) {
-      if (!response) continue;
-      total = Math.max(total, Number(response.total || 0));
-      for (const result of response.results) {
-        const id = String(result.anime_id || "");
-        if (options.year && String(result.season_year || "") !== options.year) continue;
-        if (!id || seenIds.has(id)) continue;
-        seenIds.add(id);
-        mergedResults.push(result);
-      }
-    }
-    if (mergedResults.length > 0) {
-      return {
-        items: mergedResults.slice(0, limit).map(mapRawItemToAnimeListItem),
-        page,
-        has_next: mergedResults.length > limit || mappedResponses.some((response) =>
-          Boolean(response && offset + (response.results?.length || 0) < Number(response.total || 0))
-        ),
-        total_pages: total > 0 ? Math.ceil(total / limit) : 1,
-      };
-    }
+    const merged = await searchMergedCatalog(baseUrl, catalogSearchTerms.slice(0, 6), page, options, headers);
+    if (merged) return merged;
   }
 
   // 순차 검색 시도 (결과가 발견되면 페이징 메타데이터와 함께 반환)
