@@ -22,14 +22,16 @@ import {
   getSubtitleCreatorPreference,
   saveSubtitleCreatorPreference,
   getSubtitleEpisodeOverrides,
+  getSubtitleFolderRanges,
   type SubtitleCreatorPreference,
 } from "@/lib/db";
-import { getAniAllArchiveSubtitle, getAnissiaArchiveSubtitles, getUploadedSubtitles, getVerifiedSubtitleCache, getAniAllArchiveSubtitles } from "@/lib/subtitleStorage";
+import { getAniAllArchiveSubtitle, getAnissiaArchiveSubtitles, getUploadedSubtitles, getVerifiedSubtitleCache, getAniAllArchiveSubtitles, getSubtitleForFolderRange } from "@/lib/subtitleStorage";
 import { getReviewedSubtitles } from "@/lib/reviewedSubtitleStorage";
 import { getReanimeMatch } from "@/lib/reanimeMatches";
 import { bundleScopeKey, bundleMatchesAssignment, parseBundleScope, bundleScopesOverlap, refineLocalBundleAssignment } from "@/lib/subtitleLocalIdentity";
 import {resolveSubtitleOverride, distinctLocalSubtitles} from "@/lib/subtitleOverrides";
 import { getAdminLinkedSubtitles } from "@/lib/adminSubtitleLinker";
+import { activeSubtitleFolderRange } from "@/lib/subtitleFolderRanges";
 import { pruneVerifiedSubtitleCache } from "@/lib/subtitleCache";
 
 async function pruneLocalCache(animeId: string, episode: number, subtitles: Array<{content: string; format: string}>) {
@@ -213,6 +215,26 @@ export async function GET(request: NextRequest) {
       await pruneLocalCache(animeIdParam, ep, uploaded);
       return NextResponse.json({ success: true, anime_title: title, episode: ep, count: uploaded.length,
         subtitles: uploaded, creators: [] }, { headers: { "Cache-Control": "no-store" } });
+    }
+    // Explicit piecewise folder mapping has priority after per-episode exceptions
+    // and uploads, but before work-wide automatic/reviewed matching.
+    const folderRange = animeIdParam
+      ? activeSubtitleFolderRange(await getSubtitleFolderRanges(user.username,animeIdParam),ep) : null;
+    if(folderRange) {
+      const {subtitle,reason}=await getSubtitleForFolderRange(folderRange,ep);
+      if(subtitle) {
+        await pruneLocalCache(animeIdParam,ep,[subtitle]);
+        return NextResponse.json({success:true,anime_title:title,episode:ep,count:1,
+          subtitles:[{...subtitle,episode:ep}],creators:[],local_archive:true,folder_range:folderRange,
+          needs_manual_subtitle_choice:false},{headers:{'Cache-Control':'no-store'}});
+      }
+      const description=reason==='ambiguous'?'이 회차에 해당하는 파일이 여러 개야. 다른 버전은 구분해서 지정해 줘.'
+        : reason==='missing'?'이 구간의 자막 시즌에서 해당 회차를 찾지 못했어.'
+        :'지정한 자막 폴더나 파일을 읽을 수 없어.';
+      return NextResponse.json({success:true,anime_title:title,episode:ep,count:0,
+        subtitles:[],creators:[],folder_range:folderRange,needs_manual_subtitle_choice:true,
+        assignment_missing:true,subtitle_notice:description+' 구간 설정을 확인하거나 삭제해 줘.'},
+        {headers:{'Cache-Control':'no-store'}});
     }
     // Administrator-managed file-to-work mappings are shared and survive DB release
     // refreshes. Keep personal bundle and creator choices untouched.
