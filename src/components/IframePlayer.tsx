@@ -1,4 +1,5 @@
 "use client";
+import { isSrtSubtitle, parseSrtCues } from "@/lib/subtitleSrt";
 import VideoServerSelect from "./VideoServerSelect";
 
 import { useEffect, useRef, useState, useCallback } from "react";
@@ -470,6 +471,8 @@ export default function IframePlayer({
   // 2. VTT & SAMI Parser
   const parseVttToCues = useCallback((vttText: string): SubtitleCue[] => {
     if (!vttText) return [];
+    // Ordinary iframe HUD directly renders SRT cues, retaining their timing.
+    if (isSrtSubtitle(vttText)) return parseSrtCues(vttText);
 
     const lower = vttText.toLowerCase();
 
