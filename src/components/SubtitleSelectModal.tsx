@@ -62,6 +62,7 @@ export interface SubtitleOption {
 }
 
 type LocalSubtitleFolderChoice = { folderName: string;folderKey?:string;archivePath?:string;entryType?:"folder"|"zip";provider:"aniall"|"anissia"|"naver" };
+type LocalFolderFile = {path:string;member:string;label:string};
 const creatorKey = (creator: CreatorInfo) => `${creator.website}\n${creator.matchedTitle || ""}`;
 type RejectedSource = { provider: string; sourceKey: string };
 type BundleAssignment = {
@@ -133,6 +134,11 @@ export default function SubtitleSelectModal({
   const [localFolders, setLocalFolders] = useState<LocalSubtitleFolderChoice[]>([]);
   const [selectedLocalFolder, setSelectedLocalFolder] = useState<LocalSubtitleFolderChoice | null>(null);
   const [selectedFolderSubtitles, setSelectedFolderSubtitles] = useState<SubtitleOption[]>([]);
+  const [selectedFolderFiles,setSelectedFolderFiles] = useState<LocalFolderFile[]>([]);
+  const [selectedFolderTotal,setSelectedFolderTotal] = useState(0);
+  const [folderFileFilter,setFolderFileFilter] = useState("");
+  const [appliedFolderFilter,setAppliedFolderFilter] = useState("");
+  const [loadingFolderFile,setLoadingFolderFile] = useState("");
   const [isLoadingSelectedFolder, setIsLoadingSelectedFolder] = useState(false);
   const [showOtherLocalResults, setShowOtherLocalResults] = useState(false);
   const selectedFolderRequestRef = useRef(0);
@@ -620,14 +626,68 @@ export default function SubtitleSelectModal({
   };
 
 
+  // Explicit folder browsing lists names first; subtitle bodies are loaded on selection.
+  const loadFolderPage = async (folder:LocalSubtitleFolderChoice,offset:number,filter:string,token:number) => {
+    if (!folder.folderKey) return;
+    setIsLoadingSelectedFolder(true);
+    setSearchError(null);
+    try {
+      const params = new URLSearchParams({
+        mode:"folder-entries",title:folder.folderName,animeId,ep:String(searchEp),
+        folderKey:folder.folderKey,offset:String(offset),filter,
+      });
+      const response = await fetch('/api/anime/subtitles/local?' + params.toString(),{cache:"no-store"});
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.message || "폴더 파일 목록을 읽지 못했어.");
+      if (selectedFolderRequestRef.current !== token) return;
+      setSelectedFolderFiles(previous => offset===0 ? data.files : [...previous,...data.files]);
+      setSelectedFolderTotal(data.total);
+    } catch(error) {
+      if (selectedFolderRequestRef.current===token)
+        setSearchError(error instanceof Error ? error.message : "폴더 파일 목록을 읽지 못했어.");
+    } finally {
+      if (selectedFolderRequestRef.current===token) setIsLoadingSelectedFolder(false);
+    }
+  };
+
+  const selectFolderFile = async (folder:LocalSubtitleFolderChoice,file:LocalFolderFile) => {
+    if (!folder.folderKey || loadingFolderFile || savingBundleKey) return;
+    const id = file.path + '\n' + file.member;
+    setLoadingFolderFile(id);
+    setSearchError(null);
+    try {
+      const params = new URLSearchParams({
+        mode:"folder-file",title:folder.folderName,animeId,ep:String(searchEp),
+        folderKey:folder.folderKey,path:file.path,member:file.member,
+      });
+      const response = await fetch('/api/anime/subtitles/local?' + params.toString(),{cache:"no-store"});
+      const data = await response.json();
+      if (!response.ok || !data.success || !data.subtitle)
+        throw new Error(data.message || "자막 파일을 불러오지 못했어.");
+      await selectLocalSubtitle({...data.subtitle,format:data.subtitle.is_ass ? "ASS" : "VTT",localArchive:true});
+    } catch(error) {
+      setSearchError(error instanceof Error ? error.message : "자막 파일을 불러오지 못했어.");
+    } finally {
+      setLoadingFolderFile("");
+    }
+  };
+
   // Inspect the exact physical folder/ZIP without replacing the broad search.
   const openLocalFolder = async (folder: LocalSubtitleFolderChoice) => {
     const token = ++selectedFolderRequestRef.current;
     setSelectedLocalFolder(folder);
     setSelectedFolderSubtitles([]);
+    setSelectedFolderFiles([]);
+    setSelectedFolderTotal(0);
+    setFolderFileFilter("");
+    setAppliedFolderFilter("");
     setShowOtherLocalResults(false);
-    setIsLoadingSelectedFolder(true);
     setSearchError(null);
+    if (folder.entryType === "folder" && folder.folderKey) {
+      await loadFolderPage(folder,0,"",token);
+      return;
+    }
+    setIsLoadingSelectedFolder(true);
     try {
       const params = new URLSearchParams({
         mode: "search", title: folder.folderName, ep: String(searchEp), animeId,
@@ -1246,7 +1306,43 @@ export default function SubtitleSelectModal({
                       className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800">선택 해제</button>
                   </div>
                   <SubtitleFolderAssignments animeId={animeId} currentEpisode={episodeNumber} choices={[selectedLocalFolder, ...selectedFolderSubtitles]} onSaved={setBundleAssignment} />
-                  {isLoadingSelectedFolder ? <p className="text-xs text-emerald-200">선택한 항목의 자막 확인 중…</p>
+                  {selectedLocalFolder.entryType === "folder" && selectedLocalFolder.folderKey ? (
+                    <div className="space-y-3">
+                      <form className="flex gap-2" onSubmit={event=>{
+                        event.preventDefault();
+                        const token=++selectedFolderRequestRef.current;
+                        setAppliedFolderFilter(folderFileFilter);
+                        setSelectedFolderFiles([]);
+                        void loadFolderPage(selectedLocalFolder,0,folderFileFilter,token);
+                      }}>
+                        <input value={folderFileFilter} onChange={event=>setFolderFileFilter(event.target.value)}
+                          placeholder="하위 폴더 또는 파일명 검색" maxLength={200}
+                          className="min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-xs text-white"/>
+                        <button type="submit" className="rounded-lg bg-slate-700 px-3 py-2 text-xs text-white">검색</button>
+                      </form>
+                      <p className="text-xs text-emerald-200">전체 {selectedFolderTotal}개 중 {selectedFolderFiles.length}개 표시 · 폴더 경로 그대로 (시즌 자동분류 없음)</p>
+                      <div className="max-h-96 space-y-1 overflow-y-auto">
+                        {selectedFolderFiles.map(file=>{
+                          const id=file.path + '\n' + file.member;
+                          return <button type="button" key={id} disabled={!!loadingFolderFile || !!savingBundleKey}
+                            onClick={()=>void selectFolderFile(selectedLocalFolder,file)}
+                            className="flex w-full items-center justify-between gap-2 rounded-lg border border-white/10 bg-slate-900/70 px-3 py-2 text-left text-xs text-white hover:border-emerald-400/50 disabled:opacity-50">
+                            <span className="min-w-0 break-all">{file.label}</span>
+                            <span className="shrink-0 text-emerald-300">{loadingFolderFile===id?"읽는 중…":"선택"}</span>
+                          </button>;
+                        })}
+                      </div>
+                      {isLoadingSelectedFolder && <p className="text-xs text-emerald-200">파일 목록 읽는 중…</p>}
+                      {!isLoadingSelectedFolder && !selectedFolderFiles.length && !searchError &&
+                        <p className="text-xs text-slate-400">표시할 자막 파일이 없어.</p>}
+                      {selectedFolderFiles.length < selectedFolderTotal && !isLoadingSelectedFolder &&
+                        <button type="button" onClick={()=>void loadFolderPage(selectedLocalFolder,selectedFolderFiles.length,appliedFolderFilter,selectedFolderRequestRef.current)}
+                          className="w-full rounded-lg border border-slate-600 px-3 py-2 text-xs text-white">
+                          다음 100개 보기
+                        </button>}
+                      {searchError && <p className="text-xs text-red-300">{searchError}</p>}
+                    </div>
+                  ) : isLoadingSelectedFolder ? <p className="text-xs text-emerald-200">선택한 항목의 자막 확인 중…</p>
                     : selectedVisibleResults.length === 0 ? <p className="text-xs text-slate-400">선택한 항목에서 표시 가능한 자막을 찾지 못했어.</p>
                     : <>
                         <p className="text-xs font-semibold text-emerald-200">선택한 항목의 자막 ({selectedVisibleResults.length}) · 회차순</p>
