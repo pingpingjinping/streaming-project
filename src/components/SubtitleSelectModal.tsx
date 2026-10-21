@@ -134,11 +134,6 @@ export default function SubtitleSelectModal({
   const [localFolders, setLocalFolders] = useState<LocalSubtitleFolderChoice[]>([]);
   const [selectedLocalFolder, setSelectedLocalFolder] = useState<LocalSubtitleFolderChoice | null>(null);
   const [selectedFolderSubtitles, setSelectedFolderSubtitles] = useState<SubtitleOption[]>([]);
-  const [selectedFolderFiles,setSelectedFolderFiles] = useState<LocalFolderFile[]>([]);
-  const [selectedFolderTotal,setSelectedFolderTotal] = useState(0);
-  const [folderFileFilter,setFolderFileFilter] = useState("");
-  const [appliedFolderFilter,setAppliedFolderFilter] = useState("");
-  const [loadingFolderFile,setLoadingFolderFile] = useState("");
   const [isLoadingSelectedFolder, setIsLoadingSelectedFolder] = useState(false);
   const [showOtherLocalResults, setShowOtherLocalResults] = useState(false);
   const selectedFolderRequestRef = useRef(0);
@@ -175,6 +170,12 @@ export default function SubtitleSelectModal({
   const [fileNotice, setFileNotice] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [selectedFolderFiles,setSelectedFolderFiles] = useState<LocalFolderFile[]>([]);
+  const [selectedFolderTotal,setSelectedFolderTotal] = useState(0);
+  const [folderFileFilter,setFolderFileFilter] = useState("");
+  const [appliedFolderFilter,setAppliedFolderFilter] = useState("");
+  const [loadingFolderFile,setLoadingFolderFile] = useState("");
 
   useEffect(() => {
     setMounted(true);
