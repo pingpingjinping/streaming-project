@@ -612,8 +612,9 @@ test('a Pi local SRT with SAMI markers plays through the saved episode exception
   const local=await storage.getLocalSubtitleFolderFile(folderKey,filename);
   assert.ok(local?.localFileId);
   assert.equal(local.format,'VTT');
-  assert.match(local.content,/00:00:05\.001 --> 00:00:07\.123\n정상 재생/);
-  assert.equal((local.content.match(/-->/g)||[]).length,1);
+  assert.match(local.content,/00:00:05,001 --> 00:00:07,123\n<P Class=KRCC>/);
+  assert.ok(!local.content.startsWith('WEBVTT')); // Pi SRT remains original
+  assert.equal((local.content.match(/-->/g)||[]).length,2);
   const saved=await exceptionRoute.PUT(request('subtitle-exceptions','PUT',{
     animeId,episodeNumber:1,provider:'anissia',fileId:local.localFileId,
   }));
