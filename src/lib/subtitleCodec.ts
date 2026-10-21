@@ -1,4 +1,5 @@
 import iconv from "iconv-lite";
+import { srtToVtt } from "./subtitleSrt";
 
 // 5. Decode text buffer with encoding fallback (UTF-8, UTF-16, CP949, EUC-KR)
 export function decodeSubtitleBuffer(buf: Buffer): string {
@@ -152,40 +153,10 @@ export function convertToVtt(rawText: string, origExt: string): { content: strin
     }
   }
 
-  // SRT Parser
+  // Convert only for consumers that explicitly require an HTML5 WebVTT track.
+  // Pi/local playback keeps original SRT and parses its cues directly.
   if (lowerExt === ".srt" || rawText.includes("-->")) {
-    const rawLines = rawText.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
-    const vttLines: string[] = ["WEBVTT", ""];
-    let cueTiming: string | null = null;
-    let cueText: string[] = [];
-
-    // SRT files may have SAMI/HTML-only lines (<P Class=KRCC>,
-    // <font></font>, etc.). Removing those tags must not leave an empty
-    // line after the timing line: WebVTT treats it as the cue end.
-    const flushCue = () => {
-      if (cueTiming && cueText.length) {
-        vttLines.push(cueTiming, cueText.join("\n"), "");
-      }
-      cueTiming = null;
-      cueText = [];
-    };
-
-    for (let i = 0; i < rawLines.length; i++) {
-      const line = rawLines[i];
-      if (line.includes("-->")) {
-        flushCue();
-        cueTiming = line.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2").trim();
-        continue;
-      }
-      // Numeric SRT cue IDs belong to the following cue, not the prior one.
-      if (/^\s*\d+\s*$/.test(line) && rawLines[i + 1]?.includes("-->")) continue;
-      if (!cueTiming) continue;
-
-      const cleaned = cleanSubtitleText(line);
-      if (cleaned) cueText.push(cleaned);
-    }
-    flushCue();
-    return { content: vttLines.join("\n"), ext: ".vtt" };
+    return { content: srtToVtt(rawText), ext: ".vtt" };
   }
 
   return { content: rawText, ext: origExt };
@@ -215,7 +186,9 @@ export function decodeSubtitleFile(buffer: Buffer, urlPath: string): {
 
   if (isAss || isSmi || isSrt || isVtt) {
     const origExt = isAss ? ".ass" : isSmi ? ".smi" : isVtt ? ".vtt" : ".srt";
-    const { content, ext } = isVtt ? { content: rawText.replace(/^\uFEFF/, ""), ext: ".vtt" } : convertToVtt(rawText, origExt);
+    const { content, ext } = isVtt ? { content: rawText.replace(/^\uFEFF/, ""), ext: ".vtt" }
+      : isSrt && !isSmi && !isAss ? { content: rawText.replace(/^\uFEFF/, ""), ext: ".srt" }
+      : convertToVtt(rawText, origExt);
     const isAssResult = ext === ".ass" || ext === ".ssa";
     let displayFn = urlPath.split("/").pop() || `subtitle${origExt}`;
     if (displayFn.includes("?") || displayFn.length > 60) {
