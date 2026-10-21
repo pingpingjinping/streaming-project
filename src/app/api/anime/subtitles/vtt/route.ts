@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isSrtSubtitle, srtToVtt } from "@/lib/subtitleSrt";
 import { searchAllSubtitlesParallel, findKairanSubtitle } from "@/lib/subtitles";
 import { assertSafeProxyUrl, UnsafeProxyUrlError } from "@/lib/proxyGuard";
 import { getReviewedSubtitleById } from "@/lib/reviewedSubtitleStorage";
@@ -196,7 +197,9 @@ export async function GET(request: NextRequest) {
       finalVtt = assToWebVtt(content, offset);
     } else {
       const cleaned = content.replace(/\{[^}]*\}/g, "");
-      finalVtt = vttShiftOffset(cleaned, offset);
+      // Native Safari/HTML5 text tracks require WebVTT; direct playback
+      // paths retain and parse the original SRT without this conversion.
+      finalVtt = vttShiftOffset(isSrtSubtitle(cleaned) ? srtToVtt(cleaned) : cleaned, offset);
     }
 
     return new NextResponse(finalVtt, {

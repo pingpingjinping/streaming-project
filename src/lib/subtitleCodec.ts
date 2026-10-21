@@ -1,4 +1,5 @@
 import iconv from "iconv-lite";
+import { srtToVtt } from "./subtitleSrt";
 
 // 5. Decode text buffer with encoding fallback (UTF-8, UTF-16, CP949, EUC-KR)
 export function decodeSubtitleBuffer(buf: Buffer): string {
@@ -152,29 +153,10 @@ export function convertToVtt(rawText: string, origExt: string): { content: strin
     }
   }
 
-  // SRT Parser
+  // Convert only for consumers that explicitly require an HTML5 WebVTT track.
+  // Pi/local playback keeps original SRT and parses its cues directly.
   if (lowerExt === ".srt" || rawText.includes("-->")) {
-    const rawLines = rawText.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
-    const vttLines: string[] = ["WEBVTT", ""];
-    let isHeader = true;
-
-    for (let i = 0; i < rawLines.length; i++) {
-      const line = rawLines[i];
-      if (/^\s*\d+\s*$/.test(line) && rawLines[i + 1]?.includes("-->")) {
-        continue;
-      }
-      if (line.includes("-->")) {
-        isHeader = false;
-        vttLines.push(line.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2").trim());
-      } else if (!isHeader) {
-        if (line.trim() === "") {
-          vttLines.push("");
-        } else {
-          vttLines.push(cleanSubtitleText(line));
-        }
-      }
-    }
-    return { content: vttLines.join("\n"), ext: ".vtt" };
+    return { content: srtToVtt(rawText), ext: ".vtt" };
   }
 
   return { content: rawText, ext: origExt };
@@ -204,7 +186,9 @@ export function decodeSubtitleFile(buffer: Buffer, urlPath: string): {
 
   if (isAss || isSmi || isSrt || isVtt) {
     const origExt = isAss ? ".ass" : isSmi ? ".smi" : isVtt ? ".vtt" : ".srt";
-    const { content, ext } = isVtt ? { content: rawText.replace(/^\uFEFF/, ""), ext: ".vtt" } : convertToVtt(rawText, origExt);
+    const { content, ext } = isVtt ? { content: rawText.replace(/^\uFEFF/, ""), ext: ".vtt" }
+      : isSrt && !isSmi && !isAss ? { content: rawText.replace(/^\uFEFF/, ""), ext: ".srt" }
+      : convertToVtt(rawText, origExt);
     const isAssResult = ext === ".ass" || ext === ".ssa";
     let displayFn = urlPath.split("/").pop() || `subtitle${origExt}`;
     if (displayFn.includes("?") || displayFn.length > 60) {

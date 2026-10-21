@@ -1,4 +1,5 @@
 "use client";
+import { isSrtSubtitle, parseSrtCues, srtToVtt } from "@/lib/subtitleSrt";
 import { scaleAssFontSizes } from "@/lib/subtitlePresentation";
 import { canCacheSubtitle } from "@/lib/subtitleCachePolicy";
 import { enableWebFullscreenScrollRoom, exitPlayerFullscreen, getPlayerFullscreenElement, requestPlayerFullscreen } from "@/lib/playerFullscreen";
@@ -908,6 +909,7 @@ export default function Player(props: PlayerProps) {
   // 2. WebVTT 텍스트 파싱 (라인 기반 신뢰성 100% 파서)
   const parseVttToCues = useCallback((vttText: string) => {
     if (!vttText) return [];
+    if (isSrtSubtitle(vttText)) return parseSrtCues(vttText);
     const cues: Array<{ start: number; end: number; text: string }> = [];
     const lines = vttText.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
     let currentStart: number | null = null;
@@ -1698,7 +1700,10 @@ export default function Player(props: PlayerProps) {
 
         let vttUrl = sub.url || "";
         if (!vttUrl && sub.content) {
-          const blob = new Blob([sub.content], { type: "text/vtt;charset=utf-8" });
+          // ArtPlayer accepts WebVTT tracks, not raw SRT. Other paths use
+          // the original SRT cues without converting the stored source.
+          const renderedContent = isSrtSubtitle(sub.content) ? srtToVtt(sub.content) : sub.content;
+          const blob = new Blob([renderedContent], { type: "text/vtt;charset=utf-8" });
           vttUrl = URL.createObjectURL(blob);
         }
         if (vttUrl) {

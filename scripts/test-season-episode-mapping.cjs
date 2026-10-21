@@ -17,6 +17,7 @@ function load(file, deps = {}, globals = {}) {
   }).outputText;
   vm.runInNewContext(code, {exports, require: name => {
     if (name in deps) return deps[name];
+    if (name === '@/lib/subtitleSrt') return load('src/lib/subtitleSrt.ts');
     if (name === '@/components/PlaybackPlaylistRetry') return 'PlaybackPlaylistRetry';
     if (name === '@/lib/playbackSubtitlePreload') return load('src/lib/playbackSubtitlePreload.ts', {
       './subtitles': deps['@/lib/subtitles'] || {resolveKoreanTitle:async title=>title,fetchCreatorSubtitle:async()=>null},
