@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { assertSafeProxyUrl, UnsafeProxyUrlError } from "@/lib/proxyGuard";
+import { UnsafeProxyUrlError } from "@/lib/proxyGuard";
+import { fetchProxyStream, TEXT_LIMIT_BYTES, TEXT_TIMEOUT_MS, ProxyTimeoutError } from "@/lib/streamProxy";
 import { getSessionUser } from "@/lib/auth";
 
 export async function GET(request: NextRequest) {
@@ -32,16 +33,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    await assertSafeProxyUrl(targetUrl);
-  } catch (e) {
-    if (e instanceof UnsafeProxyUrlError) {
-      return new NextResponse(`Blocked URL: ${e.message}`, { status: 400 });
-    }
-    throw e;
-  }
-
-  try {
-    let res = await fetch(targetUrl, {
+    let { response: res, finalUrl } = await fetchProxyStream(targetUrl, {
+      signal: request.signal, maxBytes: TEXT_LIMIT_BYTES, timeoutMs: TEXT_TIMEOUT_MS,
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -52,23 +45,24 @@ export async function GET(request: NextRequest) {
     // 403 Forbidden 발생 시 master.m3u8 주소였다면 master.txt 폴백 재시도
     if (!res.ok && res.status === 403 && targetUrl.includes("master.m3u8")) {
       const fallbackUrl = targetUrl.replace(/master\.m3u8(\?.*)?$/, "master.txt");
-      try {
-        await assertSafeProxyUrl(fallbackUrl);
-        const fallbackRes = await fetch(fallbackUrl, {
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            Referer: refUrl,
-          },
-        });
-        if (fallbackRes.ok) {
-          res = fallbackRes;
-          targetUrl = fallbackUrl;
-        }
-      } catch {}
+      await res.body?.cancel();
+      const fallback = await fetchProxyStream(fallbackUrl, {
+        signal: request.signal, maxBytes: TEXT_LIMIT_BYTES, timeoutMs: TEXT_TIMEOUT_MS,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+          Referer: refUrl,
+        },
+      });
+      if (fallback.response.ok) {
+        res = fallback.response;
+        finalUrl = fallback.finalUrl;
+      } else {
+        await fallback.response.body?.cancel();
+      }
     }
 
     if (!res.ok) {
+      await res.body?.cancel();
       return new NextResponse(`Upstream error: ${res.statusText}`, { status: res.status });
     }
 
@@ -84,7 +78,7 @@ export async function GET(request: NextRequest) {
       const stripped = line.trim();
 
       if (stripped && !stripped.startsWith("#")) {
-        const absUrl = new URL(stripped, targetUrl).toString();
+        const absUrl = new URL(stripped, finalUrl).toString();
 
         // 1) 마스터 플레이리스트의 하위 변형 스트림 (EXT-X-STREAM-INF 바로 다음 라인)이거나,
         //    URL 자체에 m3u8, /m3/, /hls/ 등이 포함된 하위 플레이리스트는 m3u8 프록시로 전달
@@ -123,14 +117,14 @@ export async function GET(request: NextRequest) {
         // 태그 라인 내부의 URI 속성 (예: #EXT-X-MEDIA:TYPE=...,URI="...") 변환
         if (stripped.startsWith("#EXT-X-MEDIA:") && stripped.includes('URI="')) {
           const replaced = stripped.replace(/URI="([^"]+)"/, (_, rawUri) => {
-            const abs = new URL(rawUri, targetUrl).toString();
+            const abs = new URL(rawUri, finalUrl).toString();
             return `URI="/api/anime/stream/m3u8?url=${encodeURIComponent(abs)}&ref=${encodeURIComponent(refUrl)}"`;
           });
           newLines.push(replaced);
         } else if (stripped.startsWith("#EXT-X-KEY:") && stripped.includes('URI="')) {
           // 암호화 키 URI 프록시
           const replaced = stripped.replace(/URI="([^"]+)"/, (_, rawUri) => {
-            const abs = new URL(rawUri, targetUrl).toString();
+            const abs = new URL(rawUri, finalUrl).toString();
             return `URI="/api/anime/stream/segment?url=${encodeURIComponent(abs)}&ref=${encodeURIComponent(refUrl)}"`;
           });
           newLines.push(replaced);
@@ -154,6 +148,8 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
+    if (error instanceof UnsafeProxyUrlError) return new NextResponse("Blocked URL", { status: 400 });
+    if (error instanceof ProxyTimeoutError) return new NextResponse("Upstream timeout", { status: 504 });
     console.error("[Proxy m3u8 error]:", error);
     // 보안: 내부/외부 에러 상세를 응답 본문에 노출하지 않음
     return new NextResponse("Proxy error", {

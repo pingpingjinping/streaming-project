@@ -66,6 +66,7 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run test:subtitles
       - run: node --test scripts/test-history-refresh.cjs
+      - run: node --test scripts/test-stream-proxy.cjs
       - run: npm run build
 
 

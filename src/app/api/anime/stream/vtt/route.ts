@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { assertSafeProxyUrl, UnsafeProxyUrlError } from "@/lib/proxyGuard";
+import { UnsafeProxyUrlError } from "@/lib/proxyGuard";
+import { fetchProxyStream, TEXT_LIMIT_BYTES, TEXT_TIMEOUT_MS, ProxyTimeoutError } from "@/lib/streamProxy";
 import { getSessionUser } from "@/lib/auth";
 
 function vttShiftOffset(vttText: string, offset = 0): string {
@@ -60,16 +61,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    await assertSafeProxyUrl(targetUrl);
-  } catch (e) {
-    if (e instanceof UnsafeProxyUrlError) {
-      return new NextResponse(`Blocked URL: ${e.message}`, { status: 400 });
-    }
-    throw e;
-  }
-
-  try {
-    const res = await fetch(targetUrl, {
+    const { response: res } = await fetchProxyStream(targetUrl, {
+      signal: request.signal, maxBytes: TEXT_LIMIT_BYTES, timeoutMs: TEXT_TIMEOUT_MS,
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -77,6 +70,7 @@ export async function GET(request: NextRequest) {
     });
 
     if (!res.ok) {
+      await res.body?.cancel();
       return new NextResponse(`Upstream error: ${res.statusText}`, { status: res.status });
     }
 
@@ -94,6 +88,8 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
+    if (error instanceof UnsafeProxyUrlError) return new NextResponse("Blocked URL", { status: 400 });
+    if (error instanceof ProxyTimeoutError) return new NextResponse("Upstream timeout", { status: 504 });
     console.error("[Proxy vtt error]:", error);
     // 보안: 내부/외부 에러 상세를 응답 본문에 노출하지 않음
     return new NextResponse("VTT proxy error", {

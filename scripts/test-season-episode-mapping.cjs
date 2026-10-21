@@ -342,7 +342,10 @@ test('segment discovery resolves the same local episode and refuses local 14', a
   const calls = [];
   const api = load('src/app/api/anime/stream/segments_info/route.ts', {
     'next/server':{NextResponse:response}, '@/lib/auth':{getSessionUser:async()=>({username:'viewer'})},
-    '@/lib/linkkf':{}, '@/lib/proxyGuard':{assertSafeProxyUrl:async()=>{}},
+    '@/lib/proxyGuard':{UnsafeProxyUrlError:class extends Error {}},
+    '@/lib/streamProxy':{fetchProxyStream:async url=>({finalUrl:url,
+      response:{ok:true,text:async()=> '#EXTM3U\n#EXTINF:10,\nsegment.ts\n'}}),
+      ProxyTimeoutError:class extends Error {}},
     '@/lib/db':{getSubtitleEpisodeStart:async()=>13},
     '@/lib/providers':{getProviderByAnimeId:()=>anissia()},
     '@/lib/resolvers/videoResolver':{resolveAnissiaStream:async (...args)=>{

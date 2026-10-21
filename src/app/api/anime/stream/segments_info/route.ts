@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAnimeDetail, getEpisodeStream } from "@/lib/linkkf";
-import { assertSafeProxyUrl, UnsafeProxyUrlError } from "@/lib/proxyGuard";
+import { UnsafeProxyUrlError } from "@/lib/proxyGuard";
+import { fetchProxyStream, TEXT_LIMIT_BYTES, TEXT_TIMEOUT_MS, ProxyTimeoutError } from "@/lib/streamProxy";
 import { getSessionUser } from "@/lib/auth";
 
 import { getSubtitleEpisodeStart } from "@/lib/db";
@@ -17,11 +17,10 @@ interface SegmentItem {
   offset: number;
 }
 
-async function fetchM3u8(url: string, refUrl = "https://playv2.sub3.top/"): Promise<{ content: string; finalUrl: string }> {
-  // 재귀적으로 따라가는 각 m3u8 URL도 SSRF 가드 통과 필수
-  await assertSafeProxyUrl(url);
+async function fetchM3u8(url: string, refUrl = "https://playv2.sub3.top/", signal?: AbortSignal): Promise<{ content: string; finalUrl: string }> {
   const actualRef = (url.includes("michealcdn") || url.includes("whycdn")) ? "https://michealcdn.com/" : refUrl;
-  const res = await fetch(url, {
+  const { response: res, finalUrl } = await fetchProxyStream(url, {
+    signal, maxBytes: TEXT_LIMIT_BYTES, timeoutMs: TEXT_TIMEOUT_MS,
     headers: {
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -29,14 +28,17 @@ async function fetchM3u8(url: string, refUrl = "https://playv2.sub3.top/"): Prom
     },
   });
   if (!res.ok) {
+    await res.body?.cancel();
     throw new Error(`Failed to fetch m3u8: ${res.status}`);
   }
   const content = await res.text();
-  return { content, finalUrl: url };
+  return { content, finalUrl };
 }
 
-async function parseM3u8Recursive(url: string, refUrl = "https://playv2.sub3.top/"): Promise<SegmentItem[]> {
-  const { content, finalUrl } = await fetchM3u8(url, refUrl);
+async function parseM3u8Recursive(url: string, refUrl = "https://playv2.sub3.top/", signal?: AbortSignal, visited = new Set<string>()): Promise<SegmentItem[]> {
+  if (visited.has(url) || visited.size >= 5) throw new Error("Invalid nested playlist");
+  visited.add(url);
+  const { content, finalUrl } = await fetchM3u8(url, refUrl, signal);
 
   // 마스터 플레이리스트 처리
   if (content.includes("#EXT-X-STREAM-INF")) {
@@ -44,7 +46,7 @@ async function parseM3u8Recursive(url: string, refUrl = "https://playv2.sub3.top
     for (const line of lines) {
       if (!line.startsWith("#")) {
         const nextUrl = new URL(line, finalUrl).toString();
-        return parseM3u8Recursive(nextUrl, refUrl);
+        return parseM3u8Recursive(nextUrl, refUrl, signal, visited);
       }
     }
   }
@@ -126,19 +128,7 @@ export async function GET(request: NextRequest) {
       m3u8Url = m3u8Url.replace(/master\.m3u8(\?.*)?$/, "master.txt");
     }
 
-    try {
-      await assertSafeProxyUrl(m3u8Url);
-    } catch (e) {
-      if (e instanceof UnsafeProxyUrlError) {
-        return NextResponse.json(
-          { success: false, message: `Blocked URL: ${e.message}` },
-          { status: 400 }
-        );
-      }
-      throw e;
-    }
-
-    const segments = await parseM3u8Recursive(m3u8Url);
+    const segments = await parseM3u8Recursive(m3u8Url, undefined, request.signal);
     if (segments.length === 0) {
       return NextResponse.json(
         { success: false, message: "No segments found in m3u8" },
@@ -193,6 +183,8 @@ export async function GET(request: NextRequest) {
       }
     );
   } catch (error) {
+    if (error instanceof UnsafeProxyUrlError) return NextResponse.json({ success: false, message: "Blocked URL" }, { status: 400 });
+    if (error instanceof ProxyTimeoutError) return NextResponse.json({ success: false, message: "Upstream timeout" }, { status: 504 });
     console.error("[segments_info error]:", error);
     // 보안: 내부 에러 상세를 클라이언트에 노출하지 않음
     return NextResponse.json(
