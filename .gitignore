@@ -56,3 +56,8 @@ next-env.d.ts
 
 # Pi-generated Work audit snapshots (contain internal file paths and DB exports)
 /work-audit/
+
+# Pi image deployment state
+/.pi-image/
+!/scripts/deploy-pi-image.sh
+!/scripts/test-arm64-image.sh

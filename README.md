@@ -1,5 +1,57 @@
 # 애니메이션 스트리밍 플레이어 (Anime Streaming Player)
 
+## Pi: GitHub에서 만든 ARM64 이미지로 업데이트
+
+`Docker ARM64 Build and Publish` Actions는 PR에서 ARM64 이미지를 빌드하고,
+Chromium·Node/sharp·앱의 PostgreSQL 연결을 검사합니다. `main`에 머지되면 같은
+검사를 통과한 이미지를 GHCR에 저장합니다. Actions에서 `main`을 선택해 수동 실행할 수도 있습니다.
+
+- 최신 성공 이미지: `ghcr.io/pingpingjinping/streaming-project:main-arm64`
+- 커밋별 이미지: `ghcr.io/pingpingjinping/streaming-project:sha-<전체 40자리 커밋 SHA>`
+- PR 또는 다른 브랜치의 수동 실행은 이미지를 게시하지 않습니다.
+
+첫 게시 직후에는 GHCR 패키지가 **Private**일 수 있습니다. GitHub 프로필의
+Packages → streaming-project → Package settings에서 공개 여부를 확인하세요.
+Public으로 설정하면 Pi에서 로그인 없이 받을 수 있습니다. Private으로 유지하려면
+Pi의 `docker login ghcr.io -u pingpingjinping`에서 `read:packages` 권한의 classic PAT로
+로그인합니다. 토큰은 저장소나 명령 인수에 적지 않습니다.
+
+기존 Pi 설치가 동작 중이고 Docker 서버가 `aarch64`/`arm64`, Compose가 v2.20 이상인
+경우 다음 명령을 사용합니다. 먼저 해당 커밋의 ARM64 Actions가 성공했는지 확인하세요.
+
+```bash
+cd ~/streaming-project
+git pull --ff-only
+bash scripts/deploy-pi-image.sh "ghcr.io/pingpingjinping/streaming-project:sha-$(git rev-parse HEAD)"
+```
+
+Pi에서 빌드하지 않고 이미지를 받은 뒤 기존 Compose 프로젝트의 `anime`만 교체합니다.
+`.env`, 자막·작품 검수 bind mount, DB volume, Caddy 설정을 그대로 사용하며
+DB/Caddy 컨테이너를 재생성하지 않습니다. 앱 교체 중에는 잠깐 접속이 끊깁니다.
+180초 이내에 healthcheck가 성공하지 않으면 이전 앱 이미지로 복구를 시도합니다.
+
+스크립트는 `docker-compose.yml` → 로컬 `docker-compose.override.yml`(또는 `.yaml`)
+→ `docker-compose.image.yml` 순으로 합칩니다. 다른 파일 조합을 사용한다면
+기존과 동일한 `COMPOSE_FILE`/`COMPOSE_PROJECT_NAME`을 지정하세요.
+이미지를 바꾼 뒤에도 업데이트는 위 스크립트로 진행합니다. 일반 `docker compose up --build`는
+기존 로컬 빌드 방식으로 돌아가는 명령이며, 다운로드한 버전을 자동 선택하지 않습니다.
+
+특정 커밋 대신 최신 성공 이미지를 적용하려면 인수 없이 실행할 수 있습니다.
+최신 이미지가 아직 빌드 중이라면 직전 성공 버전을 받게 됩니다.
+
+```bash
+bash scripts/deploy-pi-image.sh
+# 이전 앱 이미지로 되돌리기 (네트워크 다운로드/빌드 없음)
+bash scripts/deploy-pi-image.sh --rollback
+```
+
+다운로드·설정·아키텍처 검사 실패 시 실행 중인 앱은 그대로 둡니다. 실제로 실행 중이던
+이미지는 `streaming-project-rollback` 태그로 보관하고 `.pi-image/`에 복구 상태를 기록합니다.
+같은 이미지의 재적용은 이전 복구 기록을 덮어쓰지 않습니다. 이미지 자동 삭제는 하지 않으므로
+오래된 복구 이미지가 필요 없어지면 직접 정리할 수 있습니다. `docker image prune -a`로
+복구 이미지를 지우면 로컬 롤백이 불가능할 수 있습니다. 롤백은 앱 이미지에만 적용되며
+DB 데이터·스키마를 과거 상태로 돌리는 기능은 아닙니다.
+
 ## 네 곳 제목 DB와 미연결 작품
 
 `/catalog`에서 온나다 5,478건과 애니시아 3,539건, 총 9,017건의 한글 제목을

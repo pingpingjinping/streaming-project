@@ -1,0 +1,7 @@
+# Added last by scripts/deploy-pi-image.sh, after the Pi's local override.
+# --no-build is also mandatory: the base Compose file retains local build support.
+services:
+  anime:
+    image: ${ANIME_IMAGE:?Use scripts/deploy-pi-image.sh to select an image}
+    platform: linux/arm64
+    pull_policy: never
