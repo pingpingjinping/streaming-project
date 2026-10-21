@@ -540,6 +540,76 @@ async function folderSubtitleFiles(directory:string) {
   }
   return files;
 }
+
+/** Explicit folder browsing is independent of playback season/episode matching.
+ * Return only names, not subtitle bodies, and preserve the physical subfolder paths.
+ */
+const validBrowseRelative = (value: string) => Boolean(value) && value.length <= 2500
+  && !value.includes('\\') && !value.includes('\0') && !value.startsWith('/')
+  && value.split('/').every(part => part !== '' && part !== '.' && part !== '..');
+
+export async function listLocalSubtitleFolderFiles(bundleKey: string, offset = 0, filter = '') {
+  const folder = await getLocalSubtitleFolder(bundleKey);
+  if (!folder || !Number.isSafeInteger(offset) || offset < 0 || offset > 100000
+      || filter.length > 200) return null;
+  const scope = parseBundleScope(bundleKey)!;
+  const dir = path.join(root, scope.provider + '_subtitles', scope.work);
+  const filenames = await folderSubtitleFiles(dir);
+  const rows: Array<{path:string;member:string;label:string}> = [];
+  for (const filename of filenames) {
+    if (!validBrowseRelative(filename)) continue;
+    if (!/\.zip$/i.test(filename)) {
+      rows.push({path:filename,member:'',label:filename});
+      continue;
+    }
+    try {
+      const info = await stat(path.join(dir,filename));
+      if (!info.isFile() || !info.size || info.size > 100 * 1024 * 1024) continue;
+      const {entries} = inspectSubtitleArchive(await readFile(path.join(dir,filename)));
+      for (const entry of entries) {
+        if (!validBrowseRelative(entry.filename)) continue;
+        rows.push({path:filename,member:entry.filename,label:filename + ' / ' + entry.filename});
+        if (rows.length > 20000) throw new Error('Selected folder has too many subtitle entries');
+      }
+    } catch (error) {
+      if (rows.length > 20000) throw error;
+      // A corrupt ZIP is not a reason to hide readable sibling subtitle files.
+    }
+  }
+  const needle = filter.normalize('NFKC').toLocaleLowerCase('ko-KR').trim();
+  const matches = (needle ? rows.filter(row => row.label.normalize('NFKC').toLocaleLowerCase('ko-KR').includes(needle)) : rows)
+    .sort((a,b) => a.label.localeCompare(b.label,'ko',{numeric:true}));
+  return {files:matches.slice(offset,offset+100), total:matches.length, nextOffset:offset+100< matches.length ? offset+100:null};
+}
+
+/** Resolve exactly the selected folder member on demand; never trust a client file ID. */
+export async function getLocalSubtitleFolderFile(bundleKey:string, relative:string, member = '') {
+  const folder = await getLocalSubtitleFolder(bundleKey);
+  if (!folder || !validBrowseRelative(relative) || (member && !validBrowseRelative(member))) return null;
+  if (!/\.(?:zip|ass|ssa|smi|srt|vtt)$/i.test(relative) || (member && !/\.zip$/i.test(relative))) return null;
+  const scope = parseBundleScope(bundleKey)!;
+  const dir = path.join(root,scope.provider + '_subtitles',scope.work);
+  try {
+    const file = path.join(dir,...relative.split('/'));
+    const resolved = await realpath(file);
+    if (!resolved.startsWith(dir + path.sep)) return null;
+    const info = await stat(resolved);
+    if (!info.isFile() || !info.size || info.size > (member ? 100 : 2) * 1024 * 1024) return null;
+    let bytes: Buffer;
+    if (member) {
+      const {zip,entries} = inspectSubtitleArchive(await readFile(resolved));
+      const entry = entries.find(item=>item.filename===member);
+      if (!entry) return null;
+      bytes = zip.getEntries()[entry.index].getData();
+    } else {
+      if (/\.zip$/i.test(relative)) return null;
+      bytes = await readFile(resolved);
+    }
+    const sourceRelative = path.relative(root,file).split(path.sep).join('/');
+    return getLocalSubtitleFile(localFileKey(sourceRelative,member,createHash('sha256').update(bytes).digest('hex')));
+  } catch { return null; }
+}
+
 export async function getAniAllArchiveSubtitles(blogTitle: string, episode: number, seasonNumber: number | null = null,
   startEpisodeOverride: number | null = null, postUrl = '', options: {bundleKey?: string; manualSearch?: boolean} = {}) {
   const corpus = path.join(root, 'aniall_subtitles');
