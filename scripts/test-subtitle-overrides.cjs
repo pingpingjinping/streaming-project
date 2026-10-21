@@ -600,6 +600,35 @@ test('reviewed TV and OVA in the same pack stay within current work scopes',asyn
   assert.equal((await play('re_reviewed_ova','검수 OVA')).subtitles[0].reviewedFileId,'reviewed_v6_1109:ova');
   assert.equal(JSON.stringify(rows),before);
 });
+test('a Pi local SRT with SAMI markers plays through the saved episode exception and VTT API', async () => {
+  const work='예외 지정 영화',filename='Movie.srt',animeId='re_srt_exception_movie';
+  const source=Buffer.from(
+    '\uFEFF1\n00:00:05,001 --> 00:00:07,123\n<P Class=KRCC>\n<font color=lightgreen>정상 재생</font>\n\n' +
+    '2\n00:00:08,000 --> 00:00:09,000\n<P Class=KRCC>\n&nbsp;\n',
+    'utf8'
+  );
+  put('anissia_subtitles/'+work+'/'+filename,source);
+  const folderKey=identity.bundleScopeKey({type:'folder',provider:'anissia',work,kind:'main',season:1});
+  const local=await storage.getLocalSubtitleFolderFile(folderKey,filename);
+  assert.ok(local?.localFileId);
+  assert.equal(local.format,'VTT');
+  assert.match(local.content,/00:00:05\.001 --> 00:00:07\.123\n정상 재생/);
+  assert.equal((local.content.match(/-->/g)||[]).length,1);
+  const saved=await exceptionRoute.PUT(request('subtitle-exceptions','PUT',{
+    animeId,episodeNumber:1,provider:'anissia',fileId:local.localFileId,
+  }));
+  assert.equal(saved.status,200);
+  const selected=await play(animeId,work,1);
+  assert.equal(selected.subtitles[0]?.episodeException,true);
+  assert.equal(selected.subtitles[0].content,local.content);
+  const stream=await native.GET(request(
+    'subtitles/vtt?animeId='+animeId+'&ep=1&localFileId='+encodeURIComponent(local.localFileId),'GET'));
+  assert.equal(stream.status,200);
+  const vtt=await stream.text();
+  assert.match(vtt,/WEBVTT\n\n00:00:05\.001 --> 00:00:07\.123\n정상 재생/);
+  assert.doesNotMatch(vtt,/-->[^\n]*\n\n[^\n]/);
+});
+
 test('episode exception overrides the bundle only on its target episode, persists and can be removed',async()=>{
   rows=[];const files=await storage.getAniAllArchiveSubtitles('혼합 작품',1,null,null,'',{manualSearch:true});
   const ova=files.find(s=>s.content.includes('OVA one'));
