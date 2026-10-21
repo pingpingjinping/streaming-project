@@ -552,8 +552,7 @@ export async function listLocalSubtitleFolderFiles(bundleKey: string, offset = 0
   const folder = await getLocalSubtitleFolder(bundleKey);
   if (!folder || !Number.isSafeInteger(offset) || offset < 0 || offset > 100000
       || filter.length > 200) return null;
-  const scope = parseBundleScope(bundleKey)!;
-  const dir = path.join(root, scope.provider + '_subtitles', scope.work);
+  const dir = path.join(root, folder.provider + '_subtitles', folder.folderName);
   const filenames = await folderSubtitleFiles(dir);
   const rows: Array<{path:string;member:string;label:string}> = [];
   for (const filename of filenames) {
@@ -587,8 +586,7 @@ export async function getLocalSubtitleFolderFile(bundleKey:string, relative:stri
   const folder = await getLocalSubtitleFolder(bundleKey);
   if (!folder || !validBrowseRelative(relative) || (member && !validBrowseRelative(member))) return null;
   if (!/\.(?:zip|ass|ssa|smi|srt|vtt)$/i.test(relative) || (member && !/\.zip$/i.test(relative))) return null;
-  const scope = parseBundleScope(bundleKey)!;
-  const dir = path.join(root,scope.provider + '_subtitles',scope.work);
+  const dir = path.join(root,folder.provider + '_subtitles',folder.folderName);
   try {
     const file = path.join(dir,...relative.split('/'));
     const resolved = await realpath(file);
