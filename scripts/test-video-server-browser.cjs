@@ -17,6 +17,7 @@ const modules={
  './VideoServerSelect':compile('src/components/VideoServerSelect.tsx'),
  '@/lib/iframePlayback':compile('src/lib/iframePlayback.ts'),
  '@/lib/subtitlePresentation':compile('src/lib/subtitlePresentation.ts'),
+ '@/lib/subtitleSrt':compile('src/lib/subtitleSrt.ts'),
  '@/lib/sponsorSubtitleSync':compile('src/lib/sponsorSubtitleSync.ts'),
 };
 const requests=[],history=[];
