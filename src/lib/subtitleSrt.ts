@@ -57,7 +57,11 @@ export function parseSrtCues(text: string): SrtCue[] {
     fragments = [];
   };
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // Numbered cue labels precede the next time range; never append them
+    // to the dialogue of the previous cue.
+    if (/^\s*\d+\s*$/.test(line) && timingLine.test(lines[i + 1] || "")) continue;
     const match = timingLine.exec(line);
     if (match) {
       flush();
