@@ -156,24 +156,35 @@ export function convertToVtt(rawText: string, origExt: string): { content: strin
   if (lowerExt === ".srt" || rawText.includes("-->")) {
     const rawLines = rawText.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
     const vttLines: string[] = ["WEBVTT", ""];
-    let isHeader = true;
+    let cueTiming: string | null = null;
+    let cueText: string[] = [];
+
+    // SRT files may have SAMI/HTML-only lines (<P Class=KRCC>,
+    // <font></font>, etc.). Removing those tags must not leave an empty
+    // line after the timing line: WebVTT treats it as the cue end.
+    const flushCue = () => {
+      if (cueTiming && cueText.length) {
+        vttLines.push(cueTiming, cueText.join("\n"), "");
+      }
+      cueTiming = null;
+      cueText = [];
+    };
 
     for (let i = 0; i < rawLines.length; i++) {
       const line = rawLines[i];
-      if (/^\s*\d+\s*$/.test(line) && rawLines[i + 1]?.includes("-->")) {
+      if (line.includes("-->")) {
+        flushCue();
+        cueTiming = line.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2").trim();
         continue;
       }
-      if (line.includes("-->")) {
-        isHeader = false;
-        vttLines.push(line.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2").trim());
-      } else if (!isHeader) {
-        if (line.trim() === "") {
-          vttLines.push("");
-        } else {
-          vttLines.push(cleanSubtitleText(line));
-        }
-      }
+      // Numeric SRT cue IDs belong to the following cue, not the prior one.
+      if (/^\s*\d+\s*$/.test(line) && rawLines[i + 1]?.includes("-->")) continue;
+      if (!cueTiming) continue;
+
+      const cleaned = cleanSubtitleText(line);
+      if (cleaned) cueText.push(cleaned);
     }
+    flushCue();
     return { content: vttLines.join("\n"), ext: ".vtt" };
   }
 
