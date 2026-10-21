@@ -14,7 +14,8 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(),'subtitle-cache-'));
 process.env.SUBTITLE_STORAGE_DIR = root;
 delete process.env.DATABASE_URL;
 const cache = require('../src/lib/subtitleCache.ts');
-const {decodeSubtitleFile} = require('../src/lib/subtitleCodec.ts');
+const {decodeSubtitleFile,convertToVtt} = require('../src/lib/subtitleCodec.ts');
+const {isSrtSubtitle,parseSrtCues,srtToVtt}=require('../src/lib/subtitleSrt.ts');
 const {canCacheSubtitle} = require('../src/lib/subtitleCachePolicy.ts');
 const {cleanupPending} = require('../.subtitle-cache-tools/cleanup.cjs');
 const AdmZip = require('adm-zip');
@@ -32,7 +33,7 @@ function job(item, relative) {
   return put(`.cache-cleanup-pending/${createHash('sha256').update(id).digest('hex')}.json`,JSON.stringify({id,item,files:[relative]}));
 }
 
-test('SRT with SAMI-style HTML cue markers produces playable WebVTT', () => {
+test('SRT is preserved and parsed directly, including SAMI-only and empty cues', () => {
   const mixed = Buffer.from(
     '\uFEFF1\r\n00:00:05,001 --> 00:00:07,123\r\n<P Class=KRCC>\r\n<font color=lightblue>첫 대사</font><br>둘째 줄\r\n\r\n' +
     '2\r\n00:00:08,000 --> 00:00:09,000\r\n<P Class=KRCC>\r\n&nbsp;\r\n\r\n' +
@@ -40,12 +41,28 @@ test('SRT with SAMI-style HTML cue markers produces playable WebVTT', () => {
     'utf8'
   );
   const result = decodeSubtitleFile(mixed, 'Youre Under Arrest the Movie.srt');
-  assert.equal(result?.format, 'VTT');
-  assert.equal((result.content.match(/-->/g) || []).length, 2);
-  assert.match(result.content, /WEBVTT\n\n00:00:05\.001 --> 00:00:07\.123\n첫 대사\n둘째 줄\n\n/);
-  assert.match(result.content, /00:00:10\.000 --> 00:00:12\.000\n마지막 대사/);
-  assert.doesNotMatch(result.content, /-->[^\n]*\n\n[^\n]/);
-  assert.doesNotMatch(result.content, /<P|<font|&nbsp;/i);
+  assert.equal(result?.format, 'VTT'); // legacy storage/rendering category
+  assert.equal(result.filename, 'sub.srt');
+  assert.ok(result.content.startsWith('1\r\n00:00:05,001'));
+  assert.equal(isSrtSubtitle(result.content), true);
+  assert.equal(isSrtSubtitle('WEBVTT\n\n00:00:05.001 --> 00:00:07.123\nHi\n'), false);
+  const cues = parseSrtCues(result.content);
+  assert.equal(cues.length, 2);
+  assert.deepEqual(cues.map(c => c.text), ['첫 대사\n둘째 줄','마지막 대사']);
+  assert.equal(cues[0].start, 5.001);
+  assert.equal(cues[0].end, 7.123);
+  const native = srtToVtt(result.content);
+  assert.equal(native, convertToVtt(result.content, '.srt').content);
+  assert.match(native, /WEBVTT\n\n00:00:05\.001 --> 00:00:07\.123\n첫 대사\n둘째 줄\n\n/);
+  assert.match(native, /00:00:10\.000 --> 00:00:12\.000\n마지막 대사/);
+  assert.doesNotMatch(native, /-->[^\n]*\n\n[^\n]/);
+});
+
+test('SRT with one cue and a UTF-8 BOM survives without losing the last dialogue', () => {
+  const content = '\uFEFF00:00:01,250 --> 00:00:02,500\n<P Class=KRCC>\n한 줄';
+  assert.equal(parseSrtCues(content).length, 1);
+  assert.equal(parseSrtCues(content)[0].text, '한 줄');
+  assert.match(srtToVtt(content), /00:00:01\.250 --> 00:00:02\.500\n한 줄/);
 });
 
 test('viewing cache policy accepts web subtitles and skips cached/local files',()=>{
