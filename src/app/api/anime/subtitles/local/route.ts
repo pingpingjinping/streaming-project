@@ -10,7 +10,7 @@ import {
   getSubtitleBundleAssignment,
   getSubtitleBundleAssignments,
 } from "@/lib/db";
-import { getAniAllArchiveSubtitles, getAnissiaArchiveSubtitles } from "@/lib/subtitleStorage";
+import { getAniAllArchiveSubtitles, getAnissiaArchiveSubtitles, listLocalSubtitleFolderFiles, getLocalSubtitleFolderFile } from "@/lib/subtitleStorage";
 import { findReviewedFiles, getReviewedSubtitles } from "@/lib/reviewedSubtitleStorage";
 import { searchLocalSubtitleEntries, searchLocalZipSubtitles, refreshLocalSubtitleSearchIndex } from "@/lib/localSubtitleSearch";
 import {bundleScopeKey,parseBundleScope,bundleScopesOverlap,bundleSelectionMatches} from "@/lib/subtitleLocalIdentity";
@@ -29,6 +29,24 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    if (params.get("mode") === "folder-entries") {
+      const key = params.get("folderKey") || "";
+      const offsetValue = params.get("offset") || "0";
+      const filter = params.get("filter") || "";
+      if (!/^(0|[1-9]\d{0,5})$/.test(offsetValue) || filter.length > 200)
+        return NextResponse.json({success:false,message:"폴더 목록 요청을 확인해 주세요."},{status:400});
+      const page = await listLocalSubtitleFolderFiles(key,Number(offsetValue),filter);
+      return NextResponse.json(page ? {success:true,...page} : {success:false,message:"선택한 폴더에 접근할 수 없습니다."},
+        {status:page?200:404,headers:{"Cache-Control":"no-store"}});
+    }
+    if (params.get("mode") === "folder-file") {
+      const key = params.get("folderKey") || "";
+      const relative = params.get("path") || "";
+      const member = params.get("member") || "";
+      const subtitle = await getLocalSubtitleFolderFile(key,relative,member);
+      return NextResponse.json(subtitle ? {success:true,subtitle} : {success:false,message:"선택한 자막 파일을 읽을 수 없습니다."},
+        {status:subtitle?200:404,headers:{"Cache-Control":"no-store"}});
+    }
     if (params.get("mode") === "folders") {
       // Explicit refresh also handles files moved manually by File Browser,
       // which does not write the automatic downloader change journal.
