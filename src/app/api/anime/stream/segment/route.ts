@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { assertSafeProxyUrl, UnsafeProxyUrlError } from "@/lib/proxyGuard";
+import { UnsafeProxyUrlError } from "@/lib/proxyGuard";
+import { fetchProxyStream, SEGMENT_LIMIT_BYTES, SEGMENT_TIMEOUT_MS, ProxyTimeoutError, ProxySizeError } from "@/lib/streamProxy";
 import { getSessionUser } from "@/lib/auth";
 import { extractAacFromTs } from "@/lib/tsDemuxer";
 
@@ -29,15 +30,6 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    await assertSafeProxyUrl(targetUrl);
-  } catch (e) {
-    if (e instanceof UnsafeProxyUrlError) {
-      return new NextResponse(`Blocked URL: ${e.message}`, { status: 400 });
-    }
-    throw e;
-  }
-
-  try {
     const fetchHeaders: Record<string, string> = {
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -47,14 +39,37 @@ export async function GET(request: NextRequest) {
       fetchHeaders["Origin"] = "https://michealcdn.com";
     }
 
-    const res = await fetch(targetUrl, {
-      headers: fetchHeaders,
+    if (!isAudioOnly && request.headers.get("range")) {
+      fetchHeaders.Range = request.headers.get("range")!;
+    }
+    const { response: res } = await fetchProxyStream(targetUrl, {
+      headers: fetchHeaders, signal: request.signal,
+      maxBytes: SEGMENT_LIMIT_BYTES, timeoutMs: SEGMENT_TIMEOUT_MS,
     });
-
+    const mediaType = res.headers.get("content-type") || "";
+    const headers = new Headers({
+      "Content-Type": /^(?:video\/|audio\/|application\/octet-stream(?:;|$))/i.test(mediaType) ? mediaType : "video/mp2t",
+      "X-Content-Type-Options": "nosniff",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, OPTIONS",
+      "Cache-Control": "public, max-age=86400, s-maxage=86400, immutable",
+    });
+    for (const name of ["content-range", "accept-ranges", "content-length"]) {
+      const value = res.headers.get(name);
+      if (value) headers.set(name, value);
+    }
     if (!res.ok) {
-      return new NextResponse(`Upstream segment error: ${res.statusText}`, { status: res.status });
+      await res.body?.cancel();
+      const errorHeaders = new Headers();
+      if (res.status === 416 && res.headers.has("content-range")) {
+        errorHeaders.set("Content-Range", res.headers.get("content-range")!);
+      }
+      return new NextResponse("Upstream segment error", { status: res.status, headers: errorHeaders });
     }
 
+    // Ordinary segments and encryption keys are relayed with backpressure.
+    // Only audio extraction needs a complete (bounded) segment in memory.
+    if (!isAudioOnly) return new NextResponse(res.body, { status: res.status, headers });
     const arrayBuffer = await res.arrayBuffer();
 
     if (isAudioOnly) {
@@ -75,16 +90,11 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    return new NextResponse(arrayBuffer, {
-      status: 200,
-      headers: {
-        "Content-Type": "video/mp2t",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, OPTIONS",
-        "Cache-Control": "public, max-age=86400, s-maxage=86400, immutable",
-      },
-    });
+    return new NextResponse(arrayBuffer, { status: res.status, headers });
   } catch (error) {
+    if (error instanceof UnsafeProxyUrlError) return new NextResponse("Blocked URL", { status: 400 });
+    if (error instanceof ProxyTimeoutError) return new NextResponse("Upstream timeout", { status: 504 });
+    if (error instanceof ProxySizeError) return new NextResponse("Upstream segment too large", { status: 502 });
     console.error("[Segment Proxy error]:", error);
     // 보안: 내부/외부 에러 상세를 응답 본문에 노출하지 않음
     return new NextResponse("Proxy error", {
