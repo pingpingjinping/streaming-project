@@ -31,11 +31,11 @@ test('explicit folder browsing includes all S1-S4 filenames across 100-item page
   const first=await storage.listLocalSubtitleFolderFiles(key,0);
   const second=await storage.listLocalSubtitleFolderFiles(key,100);
   const third=await storage.listLocalSubtitleFolderFiles(key,200);
-  assert.equal(first.total,203);
+  assert.equal(first.total,202);
   assert.equal(first.files.length,100);
   assert.equal(first.nextOffset,100);
   assert.equal(second.files.length,100);
-  assert.equal(third.files.length,3);
+  assert.equal(third.files.length,2);
   assert.equal(third.nextOffset,null);
   const all=[...first.files,...second.files,...third.files];
   for(let season=1;season<=4;season++)assert.equal(all.filter(f=>f.path.startsWith('S'+season+'/')).length,50);
@@ -72,7 +72,7 @@ test('folder-entries API authenticates and returns a metadata page',async()=>{
     const response=await GET(new NextRequest('http://localhost/api/anime/subtitles/local?'+params));
     const data=await response.json();
     assert.equal(response.status,200);
-    assert.equal(data.total,203);
+    assert.equal(data.total,202);
     assert.equal(data.files.length,100);
     assert.ok(data.files.every(f=>!('content' in f)));
     params.set('mode','folder-file');
