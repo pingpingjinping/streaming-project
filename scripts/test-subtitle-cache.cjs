@@ -32,6 +32,22 @@ function job(item, relative) {
   return put(`.cache-cleanup-pending/${createHash('sha256').update(id).digest('hex')}.json`,JSON.stringify({id,item,files:[relative]}));
 }
 
+test('SRT with SAMI-style HTML cue markers produces playable WebVTT', () => {
+  const mixed = Buffer.from(
+    '\uFEFF1\r\n00:00:05,001 --> 00:00:07,123\r\n<P Class=KRCC>\r\n<font color=lightblue>첫 대사</font><br>둘째 줄\r\n\r\n' +
+    '2\r\n00:00:08,000 --> 00:00:09,000\r\n<P Class=KRCC>\r\n&nbsp;\r\n\r\n' +
+    '3\r\n00:00:10,000 --> 00:00:12,000\r\n<P Class=KRCC>\r\n마지막 대사\r\n',
+    'utf8'
+  );
+  const result = decodeSubtitleFile(mixed, 'Youre Under Arrest the Movie.srt');
+  assert.equal(result?.format, 'VTT');
+  assert.equal((result.content.match(/-->/g) || []).length, 2);
+  assert.match(result.content, /WEBVTT\n\n00:00:05\.001 --> 00:00:07\.123\n첫 대사\n둘째 줄\n\n/);
+  assert.match(result.content, /00:00:10\.000 --> 00:00:12\.000\n마지막 대사/);
+  assert.doesNotMatch(result.content, /-->[^\n]*\n\n[^\n]/);
+  assert.doesNotMatch(result.content, /<P|<font|&nbsp;/i);
+});
+
 test('viewing cache policy accepts web subtitles and skips cached/local files',()=>{
   const web={sourceProvider:'anissia',sourceCreatorWebsite:'https://example.com/1',content:'subtitle'};
   assert.equal(canCacheSubtitle(web),true);
