@@ -101,7 +101,7 @@ export default function AnissiaDbSearchFallback({
         <nav aria-label="한글 DB 검색 결과 페이지" className="mt-8 flex items-center justify-center gap-4">
           <button type="button" disabled={page <= 1} onClick={() => setPage(n => Math.max(1, n - 1))}
             className="rounded-xl border border-purple-500/30 px-4 py-2 text-sm text-slate-200 disabled:opacity-40">이전</button>
-          <span className="text-sm text-purple-300">{page} / {result.total_pages} 페이지</span>
+          <span className="text-sm text-purple-300">{result.total_pages_exact === false ? `${page} 페이지` : `${page} / ${result.total_pages} 페이지`}</span>
           <button type="button" disabled={!result.has_next} onClick={() => setPage(n => n + 1)}
             className="rounded-xl border border-purple-500/30 px-4 py-2 text-sm text-slate-200 disabled:opacity-40">다음</button>
         </nav>

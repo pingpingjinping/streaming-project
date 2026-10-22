@@ -1,5 +1,7 @@
 import {getLinkedReanimeCatalog} from "@/lib/linkedReanimeCatalog";
 import { applyAdminWorkTitles } from "@/lib/adminWorkTitles";
+import { searchCatalogVideoPage } from "@/lib/catalogSearchPagination";
+import { applyCatalogVideoLinkStatus } from "@/lib/catalogVideoLinkStatus";
 import { searchManualSubtitleLinks, mergeManualSubtitleSearchResults } from "@/lib/manualSubtitleSearch";
 import { getKoreanSubtitleCatalog } from '@/lib/koreanSubtitleCatalog';
 import { NextRequest, NextResponse } from "next/server";
@@ -37,12 +39,20 @@ export async function GET(request: NextRequest) {
   const period = (searchParams.get("period") || "day") as "day" | "week" | "month" | "all";
 
   let result: AnimeListResponse;
+  let catalogVideoPageHandled = false;
   if(source==="reanime" && searchParams.get("linked")==="1") {
     result=await getLinkedReanimeCatalog({q,page,year,sort:searchParams.get("sort") || "year_desc"});
   } else if (source === 'anissia' && (q || tab === 'list')) {
     const captionsOnly = searchParams.has('captions')
       ? searchParams.get('captions') === '1' : await getAnissiaCatalogCaptionsOnly(user.username);
-    result = await getKoreanSubtitleCatalog({ q, page, genre, year, captionsOnly, sort: searchParams.get('sort') || 'year_desc' });
+    const readPage = (selectedPage: number) => getKoreanSubtitleCatalog({ q, page: selectedPage,
+      genre, year, captionsOnly, sort: searchParams.get('sort') || 'year_desc' });
+    if (q) {
+      const combined = await searchCatalogVideoPage({ page, readPage,
+        manual: await searchManualSubtitleLinks(q) });
+      result = combined || await readPage(page);
+      catalogVideoPageHandled = !result.error;
+    } else result = await readPage(page);
     // The staged client fallback must surface genuine DB errors instead of
     // silently calling the upstream API again.
     if (result.error && searchParams.get('db_only') !== '1') {
@@ -87,7 +97,7 @@ export async function GET(request: NextRequest) {
 
   // The client-side Anissia DB fallback must also see Pi-only manual links,
   // including matches absent from the Cloudflare release snapshot.
-  if (source === "anissia" && q && searchParams.get("db_only") === "1" && page === 1) {
+  if (source === "anissia" && q && searchParams.get("db_only") === "1" && page === 1 && !catalogVideoPageHandled) {
     const local = await searchManualSubtitleLinks(q);
     if (local.length) {
       result = { ...result, items: mergeManualSubtitleSearchResults(result.items, local) };
@@ -96,6 +106,9 @@ export async function GET(request: NextRequest) {
 
   const noCache = searchParams.get("nocache") === "1";
   result={...result,items:await applyAdminWorkTitles(result.items)};
+  if (!catalogVideoPageHandled) result={...result,items:await applyCatalogVideoLinkStatus(result.items, {
+    deduplicate: source === "anissia" && Boolean(q),
+  })};
   const cacheControl =
     noCache || q || result.error || searchParams.get("linked")==="1" || (source === "anissia" && tab === "list")
       ? "no-store"
