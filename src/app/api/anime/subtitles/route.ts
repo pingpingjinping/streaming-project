@@ -419,8 +419,9 @@ export async function GET(request: NextRequest) {
         label: bundleAssignment.label,
       }, ep);
       if (direct.subtitle && bundleMatchesAssignment(bundleAssignment.bundleKey, direct.subtitle.sourceBundleKey)) {
-        return localResponse([{...direct.subtitle, episodeConfirmed: true, bundleAssigned: true,
+        const resolved = await localResponse([{...direct.subtitle, episodeConfirmed: true, bundleAssigned: true,
           sourceMatchedTitle: bundleAssignment.label}]);
+        if (resolved) return resolved;
       }
     }
     const findReviewedLocal = async (source: "aniall" | "naver" | "anissia", includeUnknown = true) => {
