@@ -3,6 +3,7 @@ import { getSessionUser } from "@/lib/auth";
 import { resolveKoreanTitle } from "@/lib/subtitles";
 import { getAdminWorkTitles } from "@/lib/adminWorkTitles";
 import { getDb } from "@/lib/db";
+import { getReanimeMatch } from "@/lib/reanimeMatches";
 
 export async function GET(request: NextRequest) {
   const user = await getSessionUser();
@@ -17,6 +18,15 @@ export async function GET(request: NextRequest) {
   let preferred = "";
   if (/^(?:ani_\d+|re_[A-Za-z0-9_-]+|ak_[A-Za-z0-9_-]+|db_(?:AniList|Onnada)_[A-Za-z0-9_-]+)$/.test(animeId)) {
     preferred = (await getAdminWorkTitles([animeId])).get(animeId) || "";
+    if (!preferred && animeId.startsWith("re_")) {
+      try {
+        const linked = await getReanimeMatch(animeId);
+        // A provisional candidate isn't a confirmed work title.
+        if (linked && linked.matchStatus !== "candidate") preferred = linked.koreanTitle || "";
+      } catch (error) {
+        console.warn("[Linked Korean title lookup deferred]", error);
+      }
+    }
     if (!preferred) {
       const match = /^ani_(\d+)$/.exec(animeId)
         ? {source: "Anissia", id: animeId.slice(4)}
