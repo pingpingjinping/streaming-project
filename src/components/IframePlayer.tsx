@@ -282,6 +282,9 @@ export default function IframePlayer({
   const lastCurrentTimeRef = useRef(0);
   const lastDurationRef = useRef(0);
   const resumeHistoryReadyRef = useRef(false);
+  // If a provider ignores the seek, never replace the last saved resume position
+  // with the unintended 0s-based playback progress.
+  const failedResumePositionRef = useRef<{episode:number;seconds:number}|null>(null);
   const playbackPausedRef = useRef(true);
   const playbackStatusKnownRef = useRef(false);
   const lastClockAdvanceRef = useRef(0);
@@ -331,6 +334,7 @@ export default function IframePlayer({
     // Do not leave history writes blocked forever when an upstream iframe
     // ignores the seek bridge or never reports video metadata.
     if (pending.attempts >= 12 || now - pending.startedAt >= 25000) {
+      failedResumePositionRef.current = {episode:pending.episode,seconds:pending.seconds};
       pendingResumeRef.current = null;
       showNotice("이어보기 자동 이동을 확인하지 못했습니다. 플레이어에서 직접 이동해 주세요.", 5000);
       return;
@@ -353,6 +357,8 @@ export default function IframePlayer({
       if (!resumeHistoryReadyRef.current || pendingResumeRef.current) return;
       const curTime = lastCurrentTimeRef.current;
       const dur = lastDurationRef.current;
+      const failedResume = failedResumePositionRef.current;
+      if (!isEnded && failedResume?.episode === episodeNumber && curTime < failedResume.seconds) return;
       if (curTime <= 2 && !isEnded) return;
 
       const isCompleted = isEnded || isPlaybackCompleted(curTime, dur);
@@ -404,7 +410,9 @@ export default function IframePlayer({
       if (controller.signal.aborted) return;
       syncHistory(false);
       const time = lastCurrentTimeRef.current;
-      serverResumePosition.current = pendingResumeRef.current?.seconds ?? (playbackStatusKnownRef.current ? time : null);
+      serverResumePosition.current = pendingResumeRef.current?.seconds
+        ?? failedResumePositionRef.current?.seconds
+        ?? (playbackStatusKnownRef.current ? time : null);
       if (time > 10) { try { localStorage.setItem(`anime_progress_${animeId}_ep${episodeNumber}`, String(time)); } catch {} }
       setActiveEmbedUrl(url); setActiveServerSources(sources); setActiveServerKey(key);
       const current = new URL(window.location.href);
@@ -968,9 +976,14 @@ export default function IframePlayer({
         }
 
         tryResumeIframe(time);
+        // A failed upstream seek must not clobber the higher saved position.
+        // Lift the guard once the viewer genuinely reaches or seeks past it.
+        const failedResume = failedResumePositionRef.current;
+        if (failedResume?.episode === episodeNumber && time >= failedResume.seconds)
+          failedResumePositionRef.current = null;
         const duration = lastDurationRef.current;
         const progressKey = `anime_progress_${animeId}_ep${episodeNumber}`;
-        if (time > 2 && resumeHistoryReadyRef.current && !pendingResumeRef.current) {
+        if (time > 2 && resumeHistoryReadyRef.current && !pendingResumeRef.current && !failedResumePositionRef.current) {
           if (isPlaybackCompleted(time, duration)) {
             localStorage.removeItem(progressKey);
           } else {
@@ -1127,6 +1140,7 @@ export default function IframePlayer({
     const switchedTime = serverResumePosition.current;
     serverResumePosition.current = null;
     pendingResumeRef.current = null;
+    failedResumePositionRef.current = null;
     resumeHistoryReadyRef.current = false;
     lastCurrentTimeRef.current = 0;
     lastDurationRef.current = 0;
