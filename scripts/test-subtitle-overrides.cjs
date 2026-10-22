@@ -1025,7 +1025,7 @@ test('direct folder-file pick on a separate OVA player does not steal a shared T
   assert.ok(ui.button('현재 화 적용'));
   ui.button('현재 화 적용').props.onClick();
   for(let i=0;i<250 && !ui.closes;i++)await new Promise(done=>setTimeout(done,4));
-  assert.equal(ui.closes,1,'the current-episode subtitle choice should close after persistence');
+  assert.equal(ui.closes,1,'the current-episode subtitle choice should close after persistence: '+JSON.stringify({calls:ui.calls,stateWrites:ui.stateWrites}));
   assert.equal(ui.selected.length,1);
   assert.equal(ui.selected[0].episodeException,true);
   assert.deepEqual(ui.calls.map(call=>call.endpoint.split('?')[0]),
@@ -1049,8 +1049,9 @@ test('default manual-file buttons save current episode, leaving future-folder ow
     const animeId='re_default_local_'+tab,ui=renderSubtitleModal(candidate,{animeId,episode:2,tab});
     const label=tab==='creators'?'현재 화 적용':'현재 화 선택';
     assert.ok(ui.button(label),tab+' manual selection is missing');
-    await ui.button(label).props.onClick();
-    assert.equal(ui.calls.length,1);
+    ui.button(label).props.onClick();
+    for(let i=0;i<250 && !ui.closes;i++)await new Promise(done=>setTimeout(done,4));
+    assert.equal(ui.calls.length,1,'wrong manual pick action: '+JSON.stringify({calls:ui.calls,stateWrites:ui.stateWrites}));
     assert.equal(ui.calls[0].endpoint,'/api/anime/subtitle-exceptions');
     assert.equal(ui.calls[0].body.episodeNumber,2);
     assert.equal(ui.closes,1);
