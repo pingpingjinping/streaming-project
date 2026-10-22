@@ -682,7 +682,10 @@ export default function SubtitleSelectModal({
       const data = await response.json();
       if (!response.ok || !data.success || !data.subtitle)
         throw new Error(data.message || "자막 파일을 불러오지 못했어.");
-      await selectLocalSubtitle({...data.subtitle,format:data.subtitle.is_ass ? "ASS" : "VTT",localArchive:true});
+      // A file click must never move ownership of the entire folder/track.
+      // This exact local file belongs only to the current player's episode;
+      // an explicit "이 버전 계속" action still handles cross-episode assignment.
+      await selectThisEpisodeSubtitle({...data.subtitle,format:data.subtitle.is_ass ? "ASS" : "VTT",localArchive:true});
     } catch(error) {
       setSearchError(error instanceof Error ? error.message : "자막 파일을 불러오지 못했어.");
     } finally {
@@ -915,11 +918,14 @@ export default function SubtitleSelectModal({
                     <button
                       disabled={Boolean(savingBundleKey)}
                       onClick={() => {
-                        selectLocalSubtitle(sub);
+                        if (sub.localArchive && sub.sourceProvider && (sub.localFileId || sub.reviewedFileId))
+                          void selectThisEpisodeSubtitle(sub);
+                        else void selectLocalSubtitle(sub);
                       }}
                       className="rounded-xl bg-purple-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-purple-500 active:scale-95"
                     >
-                      {!sub.episodeException && (sub.sourceFolderKey || sub.reviewedFileId) ? "선택 · 다음 화 유지" : "현재 화 선택"}
+                      {sub.localArchive && (sub.localFileId || sub.reviewedFileId) ? "현재 화 선택" :
+                        !sub.episodeException && sub.sourceFolderKey ? "선택 · 다음 화 유지" : "현재 화 선택"}
                     </button>
                     </div>
                   </div>
@@ -1032,10 +1038,14 @@ export default function SubtitleSelectModal({
                       <div key={`${subtitle.name}-${index}`} className="flex min-w-0 flex-col gap-2">
                         <button type="button"
                           disabled={Boolean(savingBundleKey)}
-                          onClick={() => selectLocalSubtitle(subtitle)}
+                          onClick={() => {
+                            if (subtitle.sourceProvider && (subtitle.localFileId || subtitle.reviewedFileId))
+                              void selectThisEpisodeSubtitle(subtitle);
+                            else void selectLocalSubtitle(subtitle);
+                          }}
                           className="flex w-full min-w-0 flex-col items-start gap-2 rounded-xl border border-emerald-500/20 bg-slate-900/70 px-3 py-2 text-left hover:border-emerald-400/50 hover:bg-slate-900">
                           <span className="w-full min-w-0 whitespace-normal break-words [overflow-wrap:anywhere] text-sm font-semibold leading-relaxed text-white">{subtitleDisplayName(subtitle)}</span>
-                          <span className="shrink-0 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-bold text-emerald-300">{!subtitle.episodeException && (subtitle.sourceFolderKey || subtitle.reviewedFileId) ? "현재 화 선택 · 다음 화 유지" : "현재 화 적용"}</span>
+                          <span className="shrink-0 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-bold text-emerald-300">{subtitle.sourceProvider && (subtitle.localFileId || subtitle.reviewedFileId) ? "현재 화 적용" : !subtitle.episodeException && subtitle.sourceFolderKey ? "현재 화 선택 · 다음 화 유지" : "현재 화 적용"}</span>
                         </button>
                         <div className="flex flex-wrap items-center gap-2">
                         {subtitle.sourceProvider && subtitle.sourceBundleKey && (
@@ -1346,7 +1356,7 @@ export default function SubtitleSelectModal({
                             onClick={()=>void selectFolderFile(selectedLocalFolder,file)}
                             className="flex w-full items-center justify-between gap-2 rounded-lg border border-white/10 bg-slate-900/70 px-3 py-2 text-left text-xs text-white hover:border-emerald-400/50 disabled:opacity-50">
                             <span className="min-w-0 break-all">{file.label}</span>
-                            <span className="shrink-0 text-emerald-300">{loadingFolderFile===id?"읽는 중…":"선택"}</span>
+                            <span className="shrink-0 text-emerald-300">{loadingFolderFile===id?"읽는 중…":"현재 화 적용"}</span>
                           </button>;
                         })}
                       </div>
