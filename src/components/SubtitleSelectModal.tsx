@@ -668,7 +668,7 @@ export default function SubtitleSelectModal({
     }
   };
 
-  const selectFolderFile = async (folder:LocalSubtitleFolderChoice,file:LocalFolderFile) => {
+  const selectFolderFile = async (folder:LocalSubtitleFolderChoice,file:LocalFolderFile,mode:'episode'|'set') => {
     if (!folder.folderKey || loadingFolderFile || savingBundleKey) return;
     const id = file.path + '\n' + file.member;
     setLoadingFolderFile(id);
@@ -682,10 +682,16 @@ export default function SubtitleSelectModal({
       const data = await response.json();
       if (!response.ok || !data.success || !data.subtitle)
         throw new Error(data.message || "자막 파일을 불러오지 못했어.");
-      // A file click must never move ownership of the entire folder/track.
-      // This exact local file belongs only to the current player's episode;
-      // an explicit "이 버전 계속" action still handles cross-episode assignment.
-      await selectThisEpisodeSubtitle({...data.subtitle,format:data.subtitle.is_ass ? "ASS" : "VTT",localArchive:true});
+      const subtitle:SubtitleOption={...data.subtitle,format:data.subtitle.is_ass ? "ASS" : "VTT",localArchive:true,
+        name:data.subtitle.orig_filename || data.subtitle.name};
+      if(mode==='set') {
+        // An explicit set choice selects the release track for subsequent episodes.
+        // The API validates the chosen file and refines the folder assignment to
+        // this track; individual current-episode selection never does that.
+        await assignBundle(subtitle);
+      } else {
+        await selectThisEpisodeSubtitle(subtitle);
+      }
     } catch(error) {
       setSearchError(error instanceof Error ? error.message : "자막 파일을 불러오지 못했어.");
     } finally {
@@ -1352,12 +1358,21 @@ export default function SubtitleSelectModal({
                       <div className="max-h-96 space-y-1 overflow-y-auto">
                         {selectedFolderFiles.map(file=>{
                           const id=file.path + '\n' + file.member;
-                          return <button type="button" key={id} disabled={!!loadingFolderFile || !!savingBundleKey}
-                            onClick={()=>void selectFolderFile(selectedLocalFolder,file)}
-                            className="flex w-full items-center justify-between gap-2 rounded-lg border border-white/10 bg-slate-900/70 px-3 py-2 text-left text-xs text-white hover:border-emerald-400/50 disabled:opacity-50">
-                            <span className="min-w-0 break-all">{file.label}</span>
-                            <span className="shrink-0 text-emerald-300">{loadingFolderFile===id?"읽는 중…":"현재 화 적용"}</span>
-                          </button>;
+                          return <div key={id} className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border border-white/10 bg-slate-900/70 px-3 py-2 text-xs text-white">
+                            <span className="min-w-0 flex-1 basis-full break-all">{file.label}</span>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button type="button" disabled={!!loadingFolderFile || !!savingBundleKey}
+                                onClick={()=>void selectFolderFile(selectedLocalFolder,file,'episode')}
+                                className="rounded-lg border border-emerald-500/40 px-3 py-1.5 font-bold text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50">
+                                {loadingFolderFile===id?"읽는 중…":"현재 화 적용"}
+                              </button>
+                              <button type="button" disabled={!!loadingFolderFile || !!savingBundleKey}
+                                onClick={()=>void selectFolderFile(selectedLocalFolder,file,'set')}
+                                className="rounded-lg bg-purple-700 px-3 py-1.5 font-bold text-white hover:bg-purple-600 disabled:opacity-50">
+                                {loadingFolderFile===id?"읽는 중…":"이 세트 적용"}
+                              </button>
+                            </div>
+                          </div>;
                         })}
                       </div>
                       {isLoadingSelectedFolder && <p className="text-xs text-emerald-200">파일 목록 읽는 중…</p>}
