@@ -29,7 +29,7 @@ import SubtitleSelectModal, { CreatorInfo, SubtitleOption } from "./SubtitleSele
 import type { ServerSource } from "@/lib/providers/types";
 import { usePlayerFullscreen } from "./usePlayerFullscreen";
 import { useContainedPlayerFrame } from "./useContainedPlayerFrame";
-import { iframeSeekMessage, iframePausedState, syncIframeSubtitleClock, updateSubtitleHud, aspectFromPlayerMessage, type IframeSubtitleClock } from "@/lib/iframePlayback";
+import { iframeSeekMessage, iframeResumeSeekConfirmed, iframePausedState, syncIframeSubtitleClock, updateSubtitleHud, aspectFromPlayerMessage, type IframeSubtitleClock } from "@/lib/iframePlayback";
 import SponsorSubtitleSyncModal from "./SponsorSubtitleSyncModal";
 import { effectiveSubtitleOffset, formatSyncTime, type SponsorSubtitleSync } from "@/lib/sponsorSubtitleSync";
 import PlayerSettingsModal, {
@@ -291,6 +291,9 @@ export default function IframePlayer({
     seconds: number;
     attempts: number;
     lastAttemptAt: number;
+    startedAt: number;
+    lastObservedTime: number | null;
+    lastObservedAt: number;
   } | null>(null);
 
   // Show temporary toast notice
@@ -308,21 +311,34 @@ export default function IframePlayer({
 
   const tryResumeIframe = useCallback((observedTime?: number, force = false) => {
     const pending = pendingResumeRef.current;
-    if (!pending || pending.episode !== episodeNumber || pending.seconds <= 10) return;
+    if (!pending || pending.episode !== episodeNumber || pending.seconds <= 0) return;
+    const now = Date.now();
 
     if (typeof observedTime === "number" && Number.isFinite(observedTime)) {
-      if (Math.abs(observedTime - pending.seconds) <= 4 || observedTime > pending.seconds + 5) {
+      const confirmed = iframeResumeSeekConfirmed(
+        pending.seconds, pending.lastObservedTime, observedTime,
+        pending.attempts, now - pending.lastObservedAt,
+      );
+      pending.lastObservedTime = observedTime;
+      pending.lastObservedAt = now;
+      if (confirmed) {
         pendingResumeRef.current = null;
         showNotice(`이어보기: ${formatTime(pending.seconds)}부터 재생합니다.`, 5000);
         return;
       }
     }
 
+    // Do not leave history writes blocked forever when an upstream iframe
+    // ignores the seek bridge or never reports video metadata.
+    if (pending.attempts >= 12 || now - pending.startedAt >= 25000) {
+      pendingResumeRef.current = null;
+      showNotice("이어보기 자동 이동을 확인하지 못했습니다. 플레이어에서 직접 이동해 주세요.", 5000);
+      return;
+    }
+
     // Metadata must be loaded before seek attempts consume the retry budget.
     if (!Number.isFinite(lastDurationRef.current) || lastDurationRef.current <= 0) return;
-    const now = Date.now();
     if (!force && now - pending.lastAttemptAt < 650) return;
-    if (pending.attempts >= 12) return;
     const target = iframeRef.current?.contentWindow;
     if (!target) return;
 
@@ -1161,13 +1177,16 @@ export default function IframePlayer({
           seconds: savedTime,
           attempts: 0,
           lastAttemptAt: 0,
+          startedAt: Date.now(),
+          lastObservedTime: lastCurrentTimeRef.current,
+          lastObservedAt: Date.now(),
         };
         showNotice(`이어보기: ${formatTime(savedTime)} 위치로 이동 중…`, 5000);
 
         // Try immediately, after iframe load, and again while getTime replies.
         // Multiple attempts are intentional because FlixCloud may ignore an
         // early seek before its internal player has finished initializing.
-        for (const delay of [0, 400, 1000, 2000, 3500, 5500]) {
+        for (const delay of [0, 400, 1000, 2000, 3500, 5500, 25000]) {
           retryTimers.push(setTimeout(() => {
             if (!isCancelled) tryResumeIframe(undefined, true);
           }, delay));
