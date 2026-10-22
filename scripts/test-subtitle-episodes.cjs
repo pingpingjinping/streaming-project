@@ -45,6 +45,15 @@ test('season directories select S02/01 and never S01/01', () => {
   const result = extractSubtitleFromBuffer(zip({ 'Season 1/01.srt': 'wrong season', 'Season 2/01.srt': 'right season' }), 1, 'all.zip', false, 2);
   assert.ok(result?.content.includes('right season'));
 });
+test('SP2E01 carries exact special season and episode evidence', () => {
+  const filename="You're Under Arrest! SP2E01 Spring Special In USA.srt";
+  const evidence=readEpisodeEvidence(filename,true);
+  assert.equal(evidence.season,2);
+  assert.deepEqual(evidence.episodes,[1]);
+  assert.equal(evidence.conflict,false);
+  assert.ok(extractSubtitleFromBuffer(srt('special 1'),1,filename,true,2));
+  assert.equal(extractSubtitleFromBuffer(srt('wrong 2'),2,filename,true,2),null);
+});
 test('a raw subtitle filename for episode 12 is not episode 1', () => {
   assert.equal(extractSubtitleFromBuffer(srt('wrong episode'), 1, 'Show - 12.srt'), null);
 });
