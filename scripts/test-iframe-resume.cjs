@@ -161,7 +161,8 @@ test('crossing the saved position by ordinary playback never announces a success
     api.run(time);
   }
   assert.equal(api.notices.filter(n=>n.includes('부터 재생합니다')).length,0);
-  assert.equal(api.pendingResumeRef.current?.seconds,600);
+  assert.equal(api.pendingResumeRef.current,null);
+  assert.ok(api.notices.some(n=>n.includes('자동 이동을 확인하지 못했습니다')));
 });
 
 test('a confirmed seek jump announces resume once, including backwards jumps', () => {
