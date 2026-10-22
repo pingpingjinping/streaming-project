@@ -45,7 +45,7 @@ async function restoreProgress(fetchHistory, localTime = 600, cancelled = false,
   const pendingResumeRef = {current: null}, timers = [], removed = [];
   const context = {
     animeId: "ani_1", episodeNumber: 1, isCancelled: cancelled, switchedTime, pendingResumeRef,
-    resumeHistoryReadyRef: {current:false}, AbortSignal,
+    resumeHistoryReadyRef: {current:false}, lastCurrentTimeRef: {current:0}, AbortSignal,
     localStorage: {getItem: () => String(localTime), removeItem: key => removed.push(key)},
     fetch: fetchHistory, console: {warn() {}, error() {}},
     isPlaybackCompleted: (time, duration) => time >= duration - 15 || time / duration >= .95,
@@ -68,7 +68,7 @@ test("network failure, invalid JSON and HTTP errors retain local iframe resume",
   ]) {
     const result = await restoreProgress(fetchHistory);
     assert.equal(result.pending.seconds, 600);
-    assert.deepEqual(result.timers, [0, 400, 1000, 2000, 3500, 5500]);
+    assert.deepEqual(result.timers, [0, 400, 1000, 2000, 3500, 5500, 25000]);
     assert.deepEqual(result.removed, []);
   }
 });
@@ -110,16 +110,21 @@ function playbackHelpers() {
 const playback = playbackHelpers();
 function resumeControl(duration = 0) {
   const messages = [], notices = [];
-  const pendingResumeRef = {current:{episode:1,seconds:600,attempts:0,lastAttemptAt:0}};
+  let now = 100_000;
+  const pendingResumeRef = {current:{episode:1,seconds:600,attempts:0,lastAttemptAt:0,
+    startedAt:now,lastObservedTime:0,lastObservedAt:now}};
   const lastDurationRef = {current:duration};
   const start = source.indexOf('const tryResumeIframe = useCallback(');
   const end = source.indexOf('\n\n  const syncHistory',start);
   const context = {useCallback:fn=>fn,pendingResumeRef,episodeNumber:1,lastDurationRef,
+    Date:{now:()=>now},
     iframeRef:{current:{contentWindow:{postMessage:data=>messages.push(data)}}},
-    iframeSeekMessage:playback.iframeSeekMessage,showNotice:msg=>notices.push(msg),formatTime:String};
+    iframeSeekMessage:playback.iframeSeekMessage,
+    iframeResumeSeekConfirmed:playback.iframeResumeSeekConfirmed,
+    showNotice:msg=>notices.push(msg),formatTime:String};
   const code = ts.transpileModule(source.slice(start,end), {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
   const run = vm.runInNewContext(code+'\ntryResumeIframe',context);
-  return {run,pendingResumeRef,lastDurationRef,messages,notices};
+  return {run,tick:milliseconds=>{now+=milliseconds;},pendingResumeRef,lastDurationRef,messages,notices};
 }
 test('resume sends the value parameter consumed by the actual FlixCloud seek bridge', () => {
   const api = resumeControl(1500);
@@ -146,6 +151,67 @@ test('a delayed player cannot consume resume attempts before metadata is ready',
   assert.equal(api.pendingResumeRef.current,null);
   assert.equal(api.notices.length,1);
 });
+test('crossing the saved position by ordinary playback never announces a successful resume', () => {
+  const api = resumeControl(1500);
+  api.run(590);
+  api.run(590, true);
+  assert.equal(api.messages.length,1);
+  for(let time=591;time<=610;time++) {
+    api.tick(1000);
+    api.run(time);
+  }
+  assert.equal(api.notices.filter(n=>n.includes('부터 재생합니다')).length,0);
+  assert.equal(api.pendingResumeRef.current?.seconds,600);
+});
+
+test('a confirmed seek jump announces resume once, including backwards jumps', () => {
+  for (const [before,after] of [[0,600],[900,600]]) {
+    const api = resumeControl(1500);
+    api.run(before);
+    api.run(before,true);
+    api.tick(100);
+    api.run(after);
+    assert.equal(api.pendingResumeRef.current,null);
+    assert.equal(api.notices.filter(n=>n.includes('부터 재생합니다')).length,1);
+    api.run(after+1);
+    assert.equal(api.notices.length,1);
+  }
+});
+
+test('seek completion is not inferred from an idle bridge or a long background polling gap', () => {
+  assert.equal(playback.iframeResumeSeekConfirmed(600,595,600,1,100),false);
+  assert.equal(playback.iframeResumeSeekConfirmed(600,0,600,0,100),false);
+  assert.equal(playback.iframeResumeSeekConfirmed(600,0,600,1,20000),false);
+  assert.equal(playback.iframeResumeSeekConfirmed(600,100,600,1,100),true);
+  const api=resumeControl(1500);
+  api.run(589);
+  api.run(589,true);
+  api.tick(1600);
+  api.run(600);
+  assert.equal(api.notices.length,0);
+  assert.notEqual(api.pendingResumeRef.current,null);
+});
+
+test('ignored seek bridge gives an explicit failure rather than a late success or stuck resume', () => {
+  const api=resumeControl(1500);
+  for(let attempt=0;attempt<12;attempt++)api.run(1,true);
+  assert.equal(api.messages.length,12);
+  api.run(2,true);
+  assert.equal(api.pendingResumeRef.current,null);
+  assert.ok(api.notices[0].includes('자동 이동을 확인하지 못했습니다'));
+  api.run(600);
+  assert.equal(api.notices.filter(n=>n.includes('부터 재생합니다')).length,0);
+});
+
+test('missing metadata eventually abandons resume without claiming it worked', () => {
+  const api=resumeControl(0);
+  api.tick(25000);
+  api.run(1,true);
+  assert.equal(api.pendingResumeRef.current,null);
+  assert.equal(api.messages.length,0);
+  assert.ok(api.notices[0].includes('자동 이동을 확인하지 못했습니다'));
+});
+
 test('FlixCloud pause/playing/loading/end signals synchronize the ASS animation state', () => {
   for(const status of ['Paused','Loading','Ended','Error'])assert.equal(playback.iframePausedState({playerStatus:status}),true);
   assert.equal(playback.iframePausedState({playerStatus:'Playing'}),false);
