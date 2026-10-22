@@ -183,7 +183,7 @@ function renderSubtitleModal(candidate,{animeId,episode=1,tab='creators',searchE
     {compilerOptions:{...compilerOptions,jsx:ts.JsxEmit.ReactJSX}}).outputText;
   vm.runInNewContext(code,{module,exports:module.exports,require:id=>{
     assert.ok(id in dependencies,`unexpected modal dependency: ${id}`);return dependencies[id];
-  },Error,document:{body:{}},CustomEvent:class{constructor(type,options){this.type=type;this.detail=options.detail;}},
+  },Error,URLSearchParams,document:{body:{}},CustomEvent:class{constructor(type,options){this.type=type;this.detail=options.detail;}},
     window:{dispatchEvent:event=>{events.push(event);order.push('refresh');}},fetch:async(endpoint,options)=>{
       const body=options?.body ? JSON.parse(options.body) : null;
       calls.push({endpoint,method:options?.method || 'GET',body});
