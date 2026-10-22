@@ -1043,6 +1043,8 @@ test('direct folder-file pick on a separate OVA player does not steal a shared T
   const result=await play(ovaId,'OVA 별도 플레이어',1);
   assert.equal(result.needs_manual_subtitle_choice,false);
   assert.match(result.subtitles[0].content,/flat OVA/);
+  assert.equal(result.subtitles[0].name,'01.srt',
+    'episode-only selection must show original filename instead of sub.vtt after reload');
 });
 
 test('SP1E01-SP1E06 share one set, and the manually selected original filename survives reload',async()=>{
