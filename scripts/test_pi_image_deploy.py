@@ -38,7 +38,7 @@ elif args[:2] == ['image','inspect']:
         print('sha256:old' if scenario == 'same-image' else 'sha256:new')
 elif args[:2] == ['image','ls']:
     assert '--no-trunc' in args
-    print('\\n'.join([
+    print('\n'.join([
         'ghcr.io/pingpingjinping/streaming-project:sha-current sha256:new',
         'ghcr.io/pingpingjinping/streaming-project:sha-previous sha256:old',
         'streaming-project-rollback:old sha256:old',
