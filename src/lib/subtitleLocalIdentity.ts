@@ -141,6 +141,7 @@ export function normalizeSubtitleTrackFilename(filename: string, episode: number
   // Completion status does not identify a release variant. Keep the real filename
   // and episode evidence intact; only normalize the name used for track grouping.
   const base = (filenameBase.replace(/(?:\s*\[\s*미완성\s*\]|\s*\(\s*미완성\s*\)|[\s_-]*미완성)\s*$/, "") || filenameBase)
+    .replace(/\b(sp\s*0*\d{1,2}\s*e\s*)0*\d{1,4}(?!\d)/gi,'$1{ep}')
     .replace(/(?:^|[^a-z\d])(s[1-9])\d{2}(?=$|[^a-z\d])/gi,'$1{ep}')
     .replace(/\b(s\s*0*\d{1,2}\s*e\s*)0*\d{1,4}(?!\d)/gi,'$1{ep}');
   const numericSequel = numberedSequelEpisode(base);

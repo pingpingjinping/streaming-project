@@ -25,6 +25,12 @@ put('anissia_subtitles/풀린 작품/04.srt',srt('flat base 4'));
 put('anissia_subtitles/풀린 작품/OVA/01.srt',srt('flat OVA'));
 put('anissia_subtitles/풀린 작품/S02/01.srt',srt('flat season two'));
 put('anissia_subtitles/풀린 작품/unknown.ass',Buffer.from('[Script Info]\nTitle: unknown'));
+for(const ep of [1,2,3,4,5,6]){
+  const filename=`You're Under Arrest! SP1E${String(ep).padStart(2,'0')}.smi`;
+  put(`anissia_subtitles/체포하겠어 Mini Specials/${filename}`,
+    Buffer.from(`<SAMI><BODY><SYNC Start=1000><P Class=KRCC>mini special ${ep}<SYNC Start=3000><P Class=KRCC>&nbsp;</BODY></SAMI>`));
+}
+
 put('anissia_subtitles/특별편 울려라! 유포니엄 앙상블 콘테스트/Hibike! Euphonium - Ensemble Contest-hen (1080P).smi',
   Buffer.from('<SAMI><BODY><SYNC Start=1000><P Class=KRCC>ensemble special<SYNC Start=3000><P Class=KRCC>&nbsp;</BODY></SAMI>'));
 for(const ep of [1,2]) {
@@ -1037,6 +1043,52 @@ test('direct folder-file pick on a separate OVA player does not steal a shared T
   const result=await play(ovaId,'OVA 별도 플레이어',1);
   assert.equal(result.needs_manual_subtitle_choice,false);
   assert.match(result.subtitles[0].content,/flat OVA/);
+  assert.equal(result.subtitles[0].name,'01.srt',
+    'episode-only selection must show original filename instead of sub.vtt after reload');
+});
+
+test('SP1E01-SP1E06 share one set, and the manually selected original filename survives reload',async()=>{
+  rows=[];
+  const folder='체포하겠어 Mini Specials',key=identity.bundleScopeKey({
+    type:'folder',provider:'anissia',work:folder,kind:'special',season:1,
+  }),fileName="You're Under Arrest! SP1E02.smi";
+  const animeId='re_mini_specials_set';
+  const first=await storage.getLocalSubtitleFolderFile(key,fileName);
+  assert.ok(first?.localFileId);
+  assert.equal(first.name,fileName,'manual local file must display the source .smi name, not sub.vtt');
+  assert.deepEqual(identity.parseBundleScope(first.sourceBundleKey).kind,'special');
+  assert.equal(identity.parseBundleScope(first.sourceBundleKey).season,1);
+  for(const ep of [1,3,6]){
+    const next=await storage.getLocalSubtitleFolderFile(key,`You're Under Arrest! SP1E${String(ep).padStart(2,'0')}.smi`);
+    assert.ok(next?.sourceBundleKey);
+    assert.equal(identity.parseBundleScope(next.sourceBundleKey).track,
+      identity.parseBundleScope(first.sourceBundleKey).track,'special filenames split into separate release tracks');
+  }
+  const ui=renderSubtitleModal(first,{animeId,episode:2,tab:'search',searchEp:2,
+    folderRow:{choice:{folderName:folder,folderKey:key,provider:'anissia',entryType:'folder'},
+      file:{path:fileName,member:'',label:fileName}},
+  });
+  assert.ok(ui.button('현재 화 적용'));
+  assert.ok(ui.button('이 세트 적용'));
+  ui.button('이 세트 적용').props.onClick();
+  for(let i=0;i<250 && !ui.closes;i++)await new Promise(done=>setTimeout(done,4));
+  assert.equal(ui.closes,1,'set button did not persist: '+JSON.stringify({calls:ui.calls,stateWrites:ui.stateWrites}));
+  assert.deepEqual(ui.calls.map(call=>call.endpoint.split('?')[0]),[
+    '/api/anime/subtitles/local','/api/anime/subtitle-bundle',
+  ]);
+  const set=assignments.get('alice:'+animeId);
+  assert.ok(set?.bundleKey);
+  assert.equal(identity.parseBundleScope(set.bundleKey).track,
+    identity.parseBundleScope(first.sourceBundleKey).track,'the set button did not retain the selected release');
+  assert.equal(ui.selected[0].name,fileName);
+  for(const ep of [1,2,3,6]){
+    const result=await play(animeId,folder,ep);
+    assert.equal(result.count,1,'missing auto subtitle for episode '+ep);
+    assert.equal(result.needs_manual_subtitle_choice,false);
+    assert.match(result.subtitles[0].content,new RegExp('mini special '+ep));
+    assert.match(result.subtitles[0].name,/You're Under Arrest! SP1E\d{2}\.smi/,
+      'the player lost the original source filename');
+  }
 });
 
 test('default manual-file buttons save current episode, leaving future-folder ownership explicit',async()=>{
