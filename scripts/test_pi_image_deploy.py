@@ -36,6 +36,22 @@ elif args[:2] == ['image','inspect']:
         print('linux/amd64' if scenario == 'wrong-image' else 'linux/arm64')
     else:
         print('sha256:old' if scenario == 'same-image' else 'sha256:new')
+elif args[:2] == ['image','ls']:
+    assert '--no-trunc' in args
+    print('\\n'.join([
+        'ghcr.io/pingpingjinping/streaming-project:sha-current sha256:new',
+        'ghcr.io/pingpingjinping/streaming-project:sha-previous sha256:old',
+        'streaming-project-rollback:old sha256:old',
+        'ghcr.io/pingpingjinping/streaming-project:sha-old-old sha256:old-old',
+        'streaming-project-rollback:old-old sha256:old-old',
+        'streaming-project-anime:latest sha256:locally-built',
+        'streaming-project-anime:before-physical-subtitles-20261016 sha256:ancient',
+        'ghcr.io/pingpingjinping/violet-web:main-arm64 sha256:violet',
+        'walnutpi-dashboard:latest sha256:dashboard',
+    ]))
+elif args[:2] == ['image','rm']:
+    if scenario == 'rm-fails':
+        sys.exit(1)
 elif args[:1] == ['tag']:
     pass
 else:
@@ -72,6 +88,9 @@ class PiDeployTest(unittest.TestCase):
     def updates(self):
         return [c for c in self.calls() if 'up' in c['args'] and '--help' not in c['args']]
 
+    def obsolete_removals(self):
+        return [c for c in self.calls() if c['args'][:2] == ['image', 'rm']]
+
     def test_download_before_replace_and_keep_local_override(self):
         result = self.run_deploy()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -89,6 +108,23 @@ class PiDeployTest(unittest.TestCase):
         self.assertEqual(update['args'][-1], 'anime')
         self.assertEqual((self.root / '.pi-image/previous').read_text().strip(),
                          'streaming-project-rollback:old')
+        removed = [c['args'][-1] for c in self.obsolete_removals()]
+        self.assertCountEqual(removed, [
+            'ghcr.io/pingpingjinping/streaming-project:sha-old-old',
+            'streaming-project-rollback:old-old',
+            'streaming-project-anime:latest',
+            'streaming-project-anime:before-physical-subtitles-20261016',
+        ])
+        self.assertTrue(all(c['args'][-1].startswith(
+            ('ghcr.io/pingpingjinping/streaming-project:',
+             'streaming-project-rollback:', 'streaming-project-anime:')
+        ) for c in self.obsolete_removals()))
+        self.assertTrue(all(c['args'][-1] not in (
+            'ghcr.io/pingpingjinping/streaming-project:sha-current',
+            'ghcr.io/pingpingjinping/streaming-project:sha-previous',
+            'streaming-project-rollback:old',
+        ) for c in self.obsolete_removals()))
+        self.assertLess(calls.index(update), calls.index(self.obsolete_removals()[0]))
 
     def test_failed_preflight_never_replaces_app(self):
         for scenario in ['wrong-host', 'bad-config', 'pull-fails', 'wrong-image']:
@@ -103,6 +139,20 @@ class PiDeployTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual([c['image'] for c in self.updates()], ['sha256:new','sha256:old'])
         self.assertFalse((self.root / '.pi-image/current').exists())
+
+    def test_failed_deployment_does_not_prune_any_old_images(self):
+        result = self.run_deploy('unhealthy')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.obsolete_removals(), [])
+        self.assertFalse(any(c['args'][:2] == ['image', 'ls'] for c in self.calls()))
+
+    def test_image_cleanup_failure_does_not_roll_back_healthy_container(self):
+        result = self.run_deploy('rm-fails')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Warning: could not remove unused streaming image tag', result.stderr)
+        self.assertEqual(len(self.updates()), 1)
+        self.assertEqual(len(self.obsolete_removals()), 4)
+        self.assertEqual((self.root / '.pi-image/current').read_text().strip(), 'sha256:new')
 
     def test_explicit_rollback_uses_local_image_without_pull(self):
         state = self.root / '.pi-image'
