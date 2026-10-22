@@ -37,6 +37,33 @@ fi
 compose_files+=(-f docker-compose.image.yml)
 compose() { docker compose "${compose_files[@]}" "$@"; }
 
+# Retain only the two actual app image IDs (new/current and old/rollback).
+# Removing a tag never removes layers that either retained image still uses.
+# Keep this narrowly scoped: other projects, volumes and containers are untouched.
+prune_obsolete_streaming_image_tags() {
+  local ref image_id repository removed=0
+  local -a obsolete_refs=()
+  while read -r ref image_id; do
+    [[ -n $ref && -n $image_id ]] || continue
+    repository=${ref%:*}
+    case "$repository" in
+      ghcr.io/pingpingjinping/streaming-project|streaming-project-anime|streaming-project-rollback) ;;
+      *) continue ;;
+    esac
+    [[ $image_id == "$new_image" || $image_id == "$old_image" ]] && continue
+    obsolete_refs+=("$ref")
+  done < <(docker image ls --no-trunc --format '{{.Repository}}:{{.Tag}} {{.ID}}')
+
+  for ref in "${obsolete_refs[@]}"; do
+    if docker image rm "$ref"; then
+      ((removed+=1))
+    else
+      echo "Warning: could not remove unused streaming image tag: $ref" >&2
+    fi
+  done
+  echo "Streaming images: current + previous retained; obsolete tags removed: $removed"
+}
+
 rollback=false
 requested=${1:-ghcr.io/pingpingjinping/streaming-project:main-arm64}
 if [[ $requested == --rollback ]]; then
@@ -73,6 +100,7 @@ if compose up -d --no-deps --no-build --pull never --wait --wait-timeout 180 ani
   printf '%s\n' "$new_image" > .pi-image/current.tmp
   mv .pi-image/current.tmp .pi-image/current
   echo "Healthy: $requested ($new_image)"
+  prune_obsolete_streaming_image_tags
 else
   echo 'New image did not become healthy; restoring the previous image.' >&2
   export ANIME_IMAGE=$old_image
