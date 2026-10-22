@@ -339,6 +339,7 @@ test('failed automatic resume protects stored progress until the timeline reache
   api.send({currentTime:599,duration:1500});
   assert.deepEqual(api.saved,[]);
   assert.deepEqual(api.posted,[]);
+  api.context.lastHistorySaveTime.current=0; // simulate next periodic history interval
   api.send({currentTime:601,duration:1500});
   assert.equal(api.context.failedResumePositionRef.current,null);
   assert.deepEqual(api.saved,['601']);
