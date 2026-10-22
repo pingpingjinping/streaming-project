@@ -114,9 +114,10 @@ function resumeControl(duration = 0) {
   const pendingResumeRef = {current:{episode:1,seconds:600,attempts:0,lastAttemptAt:0,
     startedAt:now,lastObservedTime:0,lastObservedAt:now}};
   const lastDurationRef = {current:duration};
+  const failedResumePositionRef={current:null};
   const start = source.indexOf('const tryResumeIframe = useCallback(');
   const end = source.indexOf('\n\n  const syncHistory',start);
-  const context = {useCallback:fn=>fn,pendingResumeRef,episodeNumber:1,lastDurationRef,
+  const context = {useCallback:fn=>fn,pendingResumeRef,failedResumePositionRef,episodeNumber:1,lastDurationRef,
     Date:{now:()=>now},
     iframeRef:{current:{contentWindow:{postMessage:data=>messages.push(data)}}},
     iframeSeekMessage:playback.iframeSeekMessage,
@@ -124,7 +125,7 @@ function resumeControl(duration = 0) {
     showNotice:msg=>notices.push(msg),formatTime:String};
   const code = ts.transpileModule(source.slice(start,end), {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
   const run = vm.runInNewContext(code+'\ntryResumeIframe',context);
-  return {run,tick:milliseconds=>{now+=milliseconds;},pendingResumeRef,lastDurationRef,messages,notices};
+  return {run,tick:milliseconds=>{now+=milliseconds;},pendingResumeRef,failedResumePositionRef,lastDurationRef,messages,notices};
 }
 test('resume sends the value parameter consumed by the actual FlixCloud seek bridge', () => {
   const api = resumeControl(1500);
@@ -200,6 +201,7 @@ test('ignored seek bridge gives an explicit failure rather than a late success o
   api.run(2,true);
   assert.equal(api.pendingResumeRef.current,null);
   assert.ok(api.notices[0].includes('자동 이동을 확인하지 못했습니다'));
+  assert.equal(api.failedResumePositionRef.current.seconds,600);
   api.run(600);
   assert.equal(api.notices.filter(n=>n.includes('부터 재생합니다')).length,0);
 });
@@ -272,7 +274,8 @@ function messageControl() {
     effectiveSubtitleOffset:(base,rule,time)=>rule.startSeconds!==null && time>=rule.startSeconds ? base+rule.delaySeconds : base,
     octopusRef:ref({worker:{},setIsPaused:(paused,time)=>calls.push(['pause',paused,time]),
       setCurrentTime:time=>calls.push(['time',time])}),
-    resumeHistoryReadyRef:ref(false), pendingResumeRef:ref(null), lastHistorySaveTime:ref(0),
+    resumeHistoryReadyRef:ref(false), pendingResumeRef:ref(null),
+    failedResumePositionRef:ref(null), lastHistorySaveTime:ref(0),
     animeId:'ani_1', animeTitle:'Test', episodeNumber:1, animePoster:'', initialEpTitle:'',
     isPlaybackCompleted:()=>false, useCallback:fn=>fn, fetch:(_url,options)=>{posted.push(JSON.parse(options.body));return Promise.resolve();},
     localStorage:{setItem:(_key,value)=>saved.push(value),removeItem:()=>{}},
@@ -323,6 +326,23 @@ test('startup and pending seek do not overwrite saved progress locally or in the
   api.send({currentTime:600,duration:1500});
   assert.deepEqual(api.saved,['600']);
   assert.equal(api.posted[0].watch_time,600);
+});
+
+test('failed automatic resume protects stored progress until the timeline reaches the saved position', () => {
+  const api=messageControl();
+  api.context.resumeHistoryReadyRef.current=true;
+  api.context.failedResumePositionRef.current={episode:1,seconds:600};
+  api.context.lastHistorySaveTime.current=0;
+  api.send({currentTime:20,duration:1500});
+  assert.deepEqual(api.saved,[]);
+  assert.deepEqual(api.posted,[]);
+  api.send({currentTime:599,duration:1500});
+  assert.deepEqual(api.saved,[]);
+  assert.deepEqual(api.posted,[]);
+  api.send({currentTime:601,duration:1500});
+  assert.equal(api.context.failedResumePositionRef.current,null);
+  assert.deepEqual(api.saved,['601']);
+  assert.equal(api.posted[0].watch_time,601);
 });
 
 // Use the shipped libass worker's clock functions, not a duplicate interpolator.
