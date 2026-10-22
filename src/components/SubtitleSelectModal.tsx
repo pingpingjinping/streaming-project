@@ -197,6 +197,23 @@ export default function SubtitleSelectModal({
     }
   }, [isOpen, animeTitle, episodeNumber]);
 
+  // Prefill manual searches with the exact DB-linked Korean work name when
+  // available. Do not overwrite text the user already started editing.
+  useEffect(() => {
+    if (!isOpen || !animeTitle || !/[a-zA-Z]/.test(animeTitle) || /[가-힣]{2}/.test(animeTitle)) return;
+    const controller = new AbortController();
+    const params = new URLSearchParams({ title: animeTitle, animeId });
+    fetch(`/api/anime/korean-title?${params}`, {signal: controller.signal})
+      .then(response => response.ok ? response.json() : null)
+      .then(data => {
+        const translated = typeof data?.title === "string" ? data.title.trim() : "";
+        if (translated && /[가-힣]/.test(translated))
+          setSearchKeyword(current => current === animeTitle ? translated : current);
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [isOpen, animeId, animeTitle, episodeNumber]);
+
   useEffect(() => {
     if (!isOpen || !animeId) return;
     let cancelled = false;
