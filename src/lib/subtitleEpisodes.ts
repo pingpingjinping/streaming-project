@@ -34,11 +34,14 @@ export function readEpisodeEvidence(value: string, filename = false, filePath = 
   // Use the same title/episode interpretation as the release-track matcher.
   const sequelFile = filename && /\.(?:ass|ssa|smi|srt|vtt)$/i.test(value.trim())
     ? numberedSequelEpisode(base) : null;
+  // Specials such as SP2E01 use their own season/episode numbering.
+  const specialPairs = [...base.matchAll(/(?:^|[^a-z\d])sp\s*0*(\d{1,2})\s*e\s*0*(\d{1,4})(?!\d)/gi)];
   const namedSeasonPairs = sequelFile
     ? [{ 1: String(sequelFile.season), 2: String(sequelFile.episode) }]
     : [];
   const seasons = unique([
     ...compact,
+    ...specialPairs,
     ...namedSeasonPairs,
     ...text.matchAll(/(?:^|[^a-z\d])(?:season|시즌|s)\s*0*(\d{1,2})(?=$|[^\d])/gi),
     ...text.matchAll(/(?:제|第)?\s*(\d{1,2})\s*(?:기|期)/g),
@@ -55,14 +58,14 @@ export function readEpisodeEvidence(value: string, filename = false, filePath = 
     : text;
   const multipleSeasons = seasons.length > 1 || /(?:\d+\s*[-~, ]\s*)+\d+\s*기/.test(seasonRangeText)
     || /(?:^|[^a-z\d])(?:season|시즌|s)\s*\d+\s*[-~]\s*\d+/i.test(seasonRangeText);
-  const paired = [...compact, ...namedSeasonPairs, ...base.matchAll(/(?:^|[^a-z\d])s\s*0*(\d{1,2})\s*e\s*0*(\d{1,4})(?!\d)/gi), ...dashedPairs];
+  const paired = [...compact, ...specialPairs, ...namedSeasonPairs, ...base.matchAll(/(?:^|[^a-z\d])s\s*0*(\d{1,2})\s*e\s*0*(\d{1,4})(?!\d)/gi), ...dashedPairs];
   const episodes: number[] = paired.map(m => Number(m[2]));
   // The "2 - 02" token is a season/episode pair, NOT the range 2-2.
   // Remove its episode digits from subsequent generic range detection.
   const withoutNamedSequelEpisode = sequelFile
     ? base.slice(0,sequelFile.episodeStart) + ' ' + base.slice(sequelFile.episodeEnd) : base;
   let clean = (dashedPairs.length ? withoutNamedSequelEpisode.replace(/(?:^|[^a-z\d])s\s*0*\d{1,2}\s*[-–]\s*0*\d{1,3}(?!\d)/gi, ' ') : withoutNamedSequelEpisode)
-    .replace(/(?:season|시즌|s)\s*\d+\s*[-~]\s*(?:season|시즌|s)?\s*\d+/gi, ' ').replace(/(?:\d+\s*[-~, ]\s*)+\d+\s*기/g, ' ').replace(/(?:^|[^a-z\d])s\s*\d{1,2}\s*e\s*\d{1,4}(?!\d)/gi, ' ')
+    .replace(/(?:season|시즌|s)\s*\d+\s*[-~]\s*(?:season|시즌|s)?\s*\d+/gi, ' ').replace(/(?:\d+\s*[-~, ]\s*)+\d+\s*기/g, ' ').replace(/(?:^|[^a-z\d])(?:s|sp)\s*\d{1,2}\s*e\s*\d{1,4}(?!\d)/gi, ' ')
     .replace(/(?:season|part|cour|시즌|파트)\s*\d+|\bS\d+\b|\d+\s*(?:기|期)|\b\d+(?:st|nd|rd|th)\b/gi, ' ');
   let range = false;
   clean = clean.replace(/(?:^|[^\p{L}\d])(\d{1,4})\s*(?:-|~|～|to)\s*(\d{1,4})(?!\d)/giu, (all, a, b) => {
