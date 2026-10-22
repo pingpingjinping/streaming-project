@@ -22,6 +22,22 @@ export function iframeSeekMessage(seconds: number): { command: "seek"; value: nu
   return { command: "seek", value: seconds };
 }
 
+/** A clock reaching the saved timestamp is not proof that an iframe seek worked.
+ * Confirm only a fresh, sizable discontinuity after we sent a seek command.
+ * Natural playback through the target and long background-poll gaps are ignored.
+ */
+export function iframeResumeSeekConfirmed(
+  targetSeconds: number, previousSeconds: number | null, observedSeconds: number,
+  seekAttempts: number, sampleGapMs: number,
+): boolean {
+  return seekAttempts > 0 && previousSeconds !== null
+    && [targetSeconds, previousSeconds, observedSeconds, sampleGapMs].every(Number.isFinite)
+    && sampleGapMs >= 0 && sampleGapMs <= 1500
+    && Math.abs(previousSeconds - targetSeconds) > 8
+    && Math.abs(observedSeconds - previousSeconds) > 8
+    && Math.abs(observedSeconds - targetSeconds) <= 4;
+}
+
 export function iframePausedState(data: Record<string, unknown>): boolean | null {
   if (typeof data.paused === "boolean") return data.paused;
   switch (data.playerStatus) {
