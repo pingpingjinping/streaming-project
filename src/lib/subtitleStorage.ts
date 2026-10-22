@@ -719,7 +719,7 @@ export async function getLocalSubtitleFile(fileId: string) {
     const title=parts[1].replace(/^[1-9]\d*__/, '');
     const creator=provider==='aniall'?'aniall':anissiaSourceCreator(sourceRecord,entry ? recordValue(entry.record,['name','creator','creatorName','captionName']) || parts[3] || '로컬 파일' : parts[3] || '로컬 파일');
     const workTitle=entry ? recordValue(entry.record,['subject','animeTitle','workTitle','title','anime_name','work']) || title : title;
-    return {name:subtitle.filename,orig_filename:subtitle.orig_filename,content:subtitle.content,format:subtitle.format,is_ass:subtitle.is_ass,
+    return {name:subtitle.orig_filename,orig_filename:subtitle.orig_filename,content:subtitle.content,format:subtitle.format,is_ass:subtitle.is_ass,
       localFileId:fileId,sourceProvider:provider,sourceMatchedTitle:workTitle,localArchive:true,
       ...rawBundleIdentity(provider,reference.relative,reference.member,creator,workTitle,sourceRecord,sibling)};
   } catch(error:any) { if(error?.code!=='ENOENT' && error?.code!=='ENOTDIR') console.warn('[Local subtitle override unreadable]',error.message); return null; }
