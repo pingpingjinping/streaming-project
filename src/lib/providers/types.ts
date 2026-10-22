@@ -19,6 +19,8 @@ export interface AnimeListItem {
   caption_url?: string | null;
   status?: string | null;
   source_name?: string;
+  // Omitted when not checked; does not guarantee that a linked stream is online.
+  video_link_status?: "linked" | "unlinked";
 }
 
 export interface AnimeListResponse {

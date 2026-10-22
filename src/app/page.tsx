@@ -2,6 +2,8 @@ import {getLinkedReanimeCatalog} from "@/lib/linkedReanimeCatalog";
 import { getKoreanSubtitleCatalog } from '@/lib/koreanSubtitleCatalog';
 import Navbar from "@/components/Navbar";
 import AnimeCard from "@/components/AnimeCard";
+import { searchCatalogVideoPage } from "@/lib/catalogSearchPagination";
+import { applyCatalogVideoLinkStatus } from "@/lib/catalogVideoLinkStatus";
 import HistoryList, { HistoryItem } from "@/components/HistoryList";
 import ReanimeFeedFallback from "@/components/ReanimeFeedFallback";
 import AnissiaDbSearchFallback from "@/components/AnissiaDbSearchFallback";
@@ -138,6 +140,7 @@ export default async function HomePage({
   let total_pages = 1;
   let totalPagesExact = true;
   let mergedReanimeSearchHandled = false;
+  let catalogVideoPageHandled = false;
   let catalogError: string | undefined;
 
   if(linkedOnly) {
@@ -169,8 +172,11 @@ export default async function HomePage({
           // Cloudflare is the default in current-site DB mode only.
           // "페이지 검색" and other providers never query the D1 index.
           if (searchScope === "current" && shouldQueryCloudflare(searchMode)) {
-            const cloudflare = await searchCloudflareAnimeFirst(normalizedQuery, page, captionsOnly);
-            if (cloudflare) return { source, result: cloudflare };
+            const local = await searchManualSubtitleLinks(normalizedQuery);
+            const cloudflare = await searchCatalogVideoPage({ page, manual: local,
+              readPage: upstreamPage => searchCloudflareAnimeFirst(normalizedQuery, upstreamPage, captionsOnly),
+            });
+            if (cloudflare) { catalogVideoPageHandled = true; return { source, result: cloudflare }; }
           }
           const fast = await getProvider('anissia').searchAnime(normalizedQuery, page);
           return { source, result: prepareAnissiaApiSearch(fast, captionsOnly).result };
@@ -198,10 +204,10 @@ export default async function HomePage({
     }
     items = Array.from(uniqueItems.values());
     // Cloudflare D1 is read-only and cannot know about new Pi PostgreSQL manual
-    // subtitle links. Overlay verified local mappings on the first DB-search
-    // page without changing Cloudflare pagination or triggering a release sync.
+    // subtitle links. The successful DB path includes them before pagination;
+    // preserve the existing first-page overlay for the upstream API fallback.
     if (activeSource === "anissia" && searchScope === "current" &&
-      shouldQueryCloudflare(searchMode) && page === 1) {
+      shouldQueryCloudflare(searchMode) && page === 1 && !catalogVideoPageHandled) {
       const local = await searchManualSubtitleLinks(normalizedQuery);
       items = mergeManualSubtitleSearchResults(items, local);
     }
@@ -491,6 +497,9 @@ export default async function HomePage({
   }
 
   items = await applyAdminWorkTitles(items);
+  if (!catalogVideoPageHandled) items = await applyCatalogVideoLinkStatus(items, {
+    deduplicate: Boolean(q) && activeSource === "anissia" && searchScope === "current" && shouldQueryCloudflare(searchMode),
+  });
   return (
     <div className="min-h-screen bg-[#0b0f19]">
       <Navbar />

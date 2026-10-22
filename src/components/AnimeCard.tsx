@@ -5,6 +5,7 @@ import LocalizedAnimeTitle from "@/components/LocalizedAnimeTitle";
 import DbSearchPoster from "@/components/DbSearchPoster";
 
 export default function AnimeCard({ anime }: { anime: AnimeListItem }) {
+  const noVideoLink = anime.id?.startsWith("db_AniList_") && anime.video_link_status === "unlinked";
   const targetHref = anime.id?.startsWith('db_') &&
     (anime.detail_url.startsWith('/catalog/') ||
       /^\/anime\/(?:ani_[1-9]\d*|re_[A-Za-z0-9_-]+|ak_[A-Za-z0-9_-]+)$/.test(anime.detail_url))
@@ -23,6 +24,11 @@ export default function AnimeCard({ anime }: { anime: AnimeListItem }) {
       {/* 16:9 Landscape Poster Wrapper (가로로 긴 와이드 비율) */}
       <div className="relative aspect-video w-full overflow-hidden bg-slate-950">
         <DbSearchPoster animeId={anime.id} title={anime.title} poster={anime.poster || ""} />
+        {noVideoLink && (
+          <span className="absolute bottom-2 left-2 z-10 rounded-md border border-red-400/50 bg-red-950/95 px-2 py-1 text-[11px] font-bold text-red-100">
+            영상 연결 없음
+          </span>
+        )}
 
         {/* 좌측 상단 뱃지: 랭킹 or 평점 or 방영시각 */}
         {anime.rank ? (
@@ -76,7 +82,7 @@ export default function AnimeCard({ anime }: { anime: AnimeListItem }) {
         <div className="mt-2 flex items-center justify-between text-xs text-slate-400">
           <div className="flex items-center transition group-hover:text-purple-400">
             <PlayCircle className="h-3.5 w-3.5 text-purple-500 mr-1" />
-            <span>보러가기</span>
+            <span>{noVideoLink ? "작품 정보" : "보러가기"}</span>
           </div>
           {anime.time && !anime.rank && anime.rating && (
             <span className="text-[11px] text-slate-500">{anime.time}</span>

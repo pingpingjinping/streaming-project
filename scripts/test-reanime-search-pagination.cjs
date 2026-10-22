@@ -151,7 +151,7 @@ test('search page renders next/previous controls and does not restart title fall
   let result = { items: [{ id: 're_a', title: 'A', poster: '', detail_url: '/anime/re_a' }],
     page: 1, has_next: true, total_pages: 2, total_pages_exact: false };
   const deps = {
-    '@/lib/adminWorkTitles': { applyAdminWorkTitles: async items => items },
+    '@/lib/catalogSearchPagination': { searchCatalogVideoPage: async ({page, readPage}) => readPage(page) }, '@/lib/catalogVideoLinkStatus': { applyCatalogVideoLinkStatus: async items => items }, '@/lib/adminWorkTitles': { applyAdminWorkTitles: async items => items },
     '@/components/ReanimeFeedFallback': { __esModule: true, default: () => React.createElement('div', null, 'UNFILTERED_FALLBACK') },
     '@/lib/linkedReanimeCatalog': {},
     '@/lib/manualSubtitleSearch': {},

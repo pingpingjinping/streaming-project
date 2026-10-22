@@ -216,7 +216,7 @@ test('history SSR returns saved rows without invoking episode discovery', async 
     '@/lib/db': { getEnabledStreamingProviders: async () => ['reanime'], getDb: () => async () => [row()], initDb: async () => {} },
     '@/lib/providers': { getProvider: () => ({}), LINKKF_GENRES: [], LINKKF_YEARS: [], LINKKF_TYPES: [], REANIME_GENRES: [] },
     '@/lib/providers/ohli24': {}, '@/lib/subtitles': {}, '@/lib/linkedReanimeCatalog': {}, '@/lib/koreanSubtitleCatalog': {},
-    '@/lib/adminWorkTitles': { applyAdminWorkTitles: async items => items }, '@/lib/anissiaSearchStages': {},
+    '@/lib/catalogSearchPagination': { searchCatalogVideoPage: async ({page, readPage}) => readPage(page) }, '@/lib/catalogVideoLinkStatus': { applyCatalogVideoLinkStatus: async items => items }, '@/lib/adminWorkTitles': { applyAdminWorkTitles: async items => items }, '@/lib/anissiaSearchStages': {},
     '@/lib/cloudflareAnimeSearch': {}, '@/lib/manualSubtitleSearch': {},
     '@/lib/animeSearchMode': { resolveAnimeSearchMode: () => 'page', shouldUseLocalDbFallback: () => false },
     '@/lib/historyPromotion': { checkAndPromoteNewEpisodes: () => { discoveries++; return new Promise(() => {}); } },
