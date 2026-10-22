@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { resolveKoreanTitle } from "@/lib/subtitles";
+import { getAdminWorkTitles } from "@/lib/adminWorkTitles";
+import { getDb } from "@/lib/db";
+import { getReanimeMatch } from "@/lib/reanimeMatches";
 
 export async function GET(request: NextRequest) {
   const user = await getSessionUser();
@@ -9,6 +12,41 @@ export async function GET(request: NextRequest) {
   if (!original || original.length > 255) {
     return NextResponse.json({ message: "올바른 제목이 아닙니다." }, { status: 400 });
   }
-  const title = await resolveKoreanTitle(original);
+  // The selected work ID is more precise than an English/romanized text
+  // lookup: respect Korean labels explicitly reviewed in the local DB first.
+  const animeId = request.nextUrl.searchParams.get("animeId")?.trim() || "";
+  let preferred = "";
+  if (/^(?:ani_\d+|re_[A-Za-z0-9_-]+|ak_[A-Za-z0-9_-]+|db_(?:AniList|Onnada)_[A-Za-z0-9_-]+)$/.test(animeId)) {
+    preferred = (await getAdminWorkTitles([animeId])).get(animeId) || "";
+    if (!preferred && animeId.startsWith("re_")) {
+      try {
+        const linked = await getReanimeMatch(animeId);
+        // A provisional candidate isn't a confirmed work title.
+        if (linked && linked.matchStatus !== "candidate") preferred = linked.koreanTitle || "";
+      } catch (error) {
+        console.warn("[Linked Korean title lookup deferred]", error);
+      }
+    }
+    if (!preferred) {
+      const match = /^ani_(\d+)$/.exec(animeId)
+        ? {source: "Anissia", id: animeId.slice(4)}
+        : /^re_([A-Za-z0-9_-]+)$/.exec(animeId)
+          ? {source: "ReAnime", id: animeId.slice(3)}
+          : /^db_(AniList|Onnada)_([A-Za-z0-9_-]+)$/.exec(animeId)
+            ? {source: animeId.split("_")[1], id: animeId.split("_").slice(2).join("_")} : null;
+      const sql = getDb();
+      if (match && sql) {
+        try {
+          const rows = await sql`SELECT payload->>'title_ko' AS title FROM anime_catalog_entries
+            WHERE source=${match.source} AND source_record_id=${match.id}
+            AND NULLIF(payload->>'title_ko', '') IS NOT NULL LIMIT 1`;
+          preferred = String(rows[0]?.title || "");
+        } catch (error) {
+          console.warn("[Korean title catalog lookup deferred]", error);
+        }
+      }
+    }
+  }
+  const title = /[가-힣]/.test(preferred) ? preferred : await resolveKoreanTitle(original);
   return NextResponse.json({ title }, { headers: { "Cache-Control": "private, max-age=3600" } });
 }

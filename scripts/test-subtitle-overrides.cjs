@@ -162,13 +162,14 @@ function registryRow(pid,member,title,target,confirmed=[]){return{pid,source:'an
   archive_sha256:digest(registryBytes),work_title_ko:title,reanime_id:null,target_source:'AniList',target_id:target,content_extension:'.srt',confirmed_episodes:confirmed};}
 
 // Render the real modal with inert effects; clicks still call the real persistence API.
-function renderSubtitleModal(candidate,{animeId,episode=1,tab='creators',searchEp=99,fetchOverride,savingKey=''}={}) {
+function renderSubtitleModal(candidate,{animeId,episode=1,tab='creators',searchEp=99,fetchOverride,savingKey='',folderRow}={}) {
   // The local API adds these display/provider fields to raw storage results.
   candidate={name:candidate.orig_filename,localArchive:true,sourceProvider:'anissia',...candidate};
   const vm=require('node:vm'),module={exports:{}},stateWrites=[],calls=[],selected=[],events=[],order=[];
   let hook=0,closes=0;
   // Four selected-folder state slots precede the existing bundle saving state.
   const overrides=new Map([[0,true],[1,tab],[2,[candidate]],[5,searchEp],[6,[candidate]],[28,savingKey]]);
+  if(folderRow){overrides.set(10,folderRow.choice);overrides.set(35,[folderRow.file]);overrides.set(36,1);}
   const react={useEffect(){},useRef:value=>({current:value}),useState:initial=>{
     const index=hook++,value=overrides.has(index)?overrides.get(index):typeof initial==='function'?initial():initial;
     return[value,next=>stateWrites.push({index,next})];
@@ -182,10 +183,13 @@ function renderSubtitleModal(candidate,{animeId,episode=1,tab='creators',searchE
     {compilerOptions:{...compilerOptions,jsx:ts.JsxEmit.ReactJSX}}).outputText;
   vm.runInNewContext(code,{module,exports:module.exports,require:id=>{
     assert.ok(id in dependencies,`unexpected modal dependency: ${id}`);return dependencies[id];
-  },Error,document:{body:{}},CustomEvent:class{constructor(type,options){this.type=type;this.detail=options.detail;}},
+  },Error,URLSearchParams,document:{body:{}},CustomEvent:class{constructor(type,options){this.type=type;this.detail=options.detail;}},
     window:{dispatchEvent:event=>{events.push(event);order.push('refresh');}},fetch:async(endpoint,options)=>{
-      const body=JSON.parse(options.body);calls.push({endpoint,method:options.method,body});
+      const body=options?.body ? JSON.parse(options.body) : null;
+      calls.push({endpoint,method:options?.method || 'GET',body});
       if(fetchOverride)return fetchOverride(endpoint,options);
+      if(endpoint.startsWith('/api/anime/subtitles/local?'))
+        return require('../src/app/api/anime/subtitles/local/route.ts').GET(new NextRequest('http://localhost'+endpoint));
       return (endpoint.endsWith('subtitle-exceptions')?exceptionRoute:bundleRoute).PUT(request(endpoint.split('/').at(-1),options.method,body));
     }});
   const tree=module.exports.default({isOpen:true,animeId,animeTitle:'작품',episodeNumber:episode,creators:[],
@@ -1003,6 +1007,59 @@ test('a newer manual selection wins over an automatic request in flight',async()
     assert.equal(assignments.get(`alice:${id}`).bundleKey,manual.sourceBundleKey);
     assert.ok((await play(id,title,2)).subtitles[0].content.includes('Korean release 2'));
   }finally{db.saveSubtitleBundleAssignment=save;}
+});
+
+test('direct folder-file pick on a separate OVA player does not steal a shared TV folder assignment',async()=>{
+  rows=[];
+  const work='풀린 작품',folderKey=identity.bundleScopeKey({
+    type:'folder',provider:'anissia',work,kind:'ova',season:1,
+  });
+  const oldOwner={animeId:'re_shared_tv',provider:'anissia',bundleKey:folderKey,label:work,exclusive:true};
+  assignments.set('alice:re_shared_tv',oldOwner);
+  const ovaId='re_shared_ova';
+  const ui=renderSubtitleModal({name:'OVA/01.srt'},{
+    animeId:ovaId,episode:1,tab:'search',searchEp:1,
+    folderRow:{choice:{folderName:work,folderKey,provider:'anissia',entryType:'folder'},
+      file:{path:'OVA/01.srt',member:'',label:'OVA/01.srt'}},
+  });
+  assert.ok(ui.button('현재 화 적용'));
+  ui.button('현재 화 적용').props.onClick();
+  for(let i=0;i<250 && !ui.closes;i++)await new Promise(done=>setTimeout(done,4));
+  assert.equal(ui.closes,1,'the current-episode subtitle choice should close after persistence: '+JSON.stringify({calls:ui.calls,stateWrites:ui.stateWrites}));
+  assert.equal(ui.selected.length,1);
+  assert.equal(ui.selected[0].episodeException,true);
+  assert.deepEqual(ui.calls.map(call=>call.endpoint.split('?')[0]),
+    ['/api/anime/subtitles/local','/api/anime/subtitle-exceptions']);
+  assert.equal(ui.calls[1].body.animeId,ovaId);
+  assert.equal(ui.calls[1].body.episodeNumber,1);
+  assert.equal(assignments.get('alice:re_shared_tv'),oldOwner,'another player lost its folder');
+  assert.equal(assignments.has('alice:'+ovaId),false,'individual file pick created a work-wide assignment');
+  const result=await play(ovaId,'OVA 별도 플레이어',1);
+  assert.equal(result.needs_manual_subtitle_choice,false);
+  assert.match(result.subtitles[0].content,/flat OVA/);
+});
+
+test('default manual-file buttons save current episode, leaving future-folder ownership explicit',async()=>{
+  rows=[];
+  const candidate=await storage.getLocalSubtitleFolderFile(identity.bundleScopeKey({
+    type:'folder',provider:'anissia',work:'풀린 작품',kind:'ova',season:1,
+  }),'OVA/01.srt');
+  assert.ok(candidate?.localFileId);
+  for(const tab of ['creators','search']){
+    const animeId='re_default_local_'+tab,ui=renderSubtitleModal(candidate,{animeId,episode:2,tab});
+    const label=tab==='creators'?'현재 화 적용':'현재 화 선택';
+    assert.ok(ui.button(label),tab+' manual selection is missing');
+    ui.button(label).props.onClick();
+    for(let i=0;i<250 && !ui.closes;i++)await new Promise(done=>setTimeout(done,4));
+    assert.equal(ui.calls.length,1,'wrong manual pick action: '+JSON.stringify({calls:ui.calls,stateWrites:ui.stateWrites}));
+    assert.equal(ui.calls[0].endpoint,'/api/anime/subtitle-exceptions');
+    assert.equal(ui.calls[0].body.episodeNumber,2);
+    assert.equal(ui.closes,1);
+    assert.equal(assignments.has('alice:'+animeId),false);
+    const result=await play(animeId,'OVA 별도 플레이어',2);
+    assert.equal(result.count,1);
+    assert.match(result.subtitles[0].content,/flat OVA/);
+  }
 });
 
 test('current-episode button saves an unnumbered Ensemble Contest file and refresh no longer requests manual selection',async()=>{

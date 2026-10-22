@@ -39,7 +39,7 @@ function declaredKinds(name: string): SubtitleKind[] {
   const value = name.normalize('NFKC');
   const found: SubtitleKind[] = [];
   if (/(?:^|[^a-z])(?:ova|oad|oav)(?:$|[^a-z])|オリジナルビデオ/i.test(value)) found.push('ova');
-  if (/(?:^|[^a-z])(?:sp|special|bonus)(?:$|[^a-z])|특전|특별편|번외편|特典|特別|페스/i.test(value)) found.push('special');
+  if (/(?:^|[^a-z])(?:sp|special|bonus)(?:$|[^a-z])|(?:^|[^a-z\d])sp\s*0*\d{1,2}\s*e\s*0*\d{1,4}(?!\d)|특전|특별편|번외편|特典|特別|페스/i.test(value)) found.push('special');
   if (/(?:^|[^a-z])(?:movie|film)(?:$|[^a-z])|극장판|劇場版/i.test(value)) found.push('movie');
   if (/(?:^|[^a-z])(?:pv|cm|trailer|preview)(?:$|[^a-z])|예고|予告/i.test(value)) found.push('preview');
   if (/음성드라마|드라마\s*cd|ドラマ\s*cd|audio\s*drama/i.test(value)) found.push('drama');

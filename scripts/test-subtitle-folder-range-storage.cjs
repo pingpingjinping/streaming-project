@@ -31,6 +31,24 @@ test('loaded range returns physical season files at 50 and 99',async()=>{
   const next=await getSubtitleForFolderRange(range(3),100);
   assert.equal(next.reason,null);assert.match(next.subtitle.orig_filename,/S03E01 \(100\)/);
 });
+test('SP2E01 is auto-resolved from a single assigned special folder without finish.txt',async()=>{
+  const folder='체포하겠어 SPECIAL 2';
+  const filename="You're Under Arrest! SP2E01 Spring Special In USA.srt";
+  const full=path.join(dir,'anissia_subtitles',folder,filename);
+  fs.mkdirSync(path.dirname(full),{recursive:true});
+  fs.writeFileSync(full,'1\n00:00:01,000 --> 00:00:03,000\nspecial episode one\n');
+  const key=bundleScopeKey({type:'folder',provider:'anissia',work:folder,kind:'special',season:2});
+  const mapping={animeId:'re_special',startEpisode:1,subtitleEpisode:1,season:2,
+    provider:'anissia',folderKey:key,label:folder};
+  const first=await getSubtitleForFolderRange(mapping,1);
+  assert.equal(first.reason,null);
+  assert.match(first.subtitle.content,/special episode one/);
+  assert.equal(first.subtitle.sourceProvider,'anissia');
+  assert.equal(first.subtitle.episodeConfirmed,true);
+  const second=await getSubtitleForFolderRange(mapping,2);
+  assert.equal(second.subtitle,null);
+  assert.equal(second.reason,'missing');
+});
 test('range rejects nonmatching episode and duplicated variants',async()=>{
   const missing=await getSubtitleForFolderRange(range(2),100);
   assert.equal(missing.subtitle,null);assert.equal(missing.reason,'missing');

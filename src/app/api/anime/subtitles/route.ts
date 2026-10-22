@@ -406,6 +406,24 @@ export async function GET(request: NextRequest) {
         subtitles:distinct,creators,local_archive:true,bundle_assignment:effectiveAssignment,
         needs_manual_subtitle_choice:distinct.length>1 || distinct.some(s=>!s.episodeConfirmed)}, {headers:{'Cache-Control':'no-store'}});
     };
+    // A manually assigned folder can contain a lone loose SP2E01/S02E01 file
+    // without an Anissia finish.txt index. Resolve that exact season/episode
+    // from the physical folder before falling back to the indexed search.
+    // Ambiguous or mismatched episodes still require manual selection.
+    const assignedFolder = bundleAssignment ? parseBundleScope(bundleAssignment.bundleKey) : null;
+    if (assignedFolder?.type === "folder" && assignedFolder.provider === bundleAssignment?.provider) {
+      const direct = await getSubtitleForFolderRange({
+        animeId: animeIdParam, provider: assignedFolder.provider,
+        folderKey: bundleScopeKey({...assignedFolder, track: undefined}),
+        season: assignedFolder.season, startEpisode: 1, subtitleEpisode: 1,
+        label: bundleAssignment.label,
+      }, ep);
+      if (direct.subtitle && bundleMatchesAssignment(bundleAssignment.bundleKey, direct.subtitle.sourceBundleKey)) {
+        const resolved = await localResponse([{...direct.subtitle, episodeConfirmed: true, bundleAssigned: true,
+          sourceMatchedTitle: bundleAssignment.label}]);
+        if (resolved) return resolved;
+      }
+    }
     const findReviewedLocal = async (source: "aniall" | "naver" | "anissia", includeUnknown = true) => {
       if (bundleAssignment && bundleAssignment.provider !== source) return null;
       const reviewed = await getReviewedSubtitles({ animeId: animeIdParam, episode: ep, sourceEpisode,
