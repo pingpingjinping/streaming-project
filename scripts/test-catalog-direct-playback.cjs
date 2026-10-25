@@ -107,6 +107,12 @@ test("Only exact ReAnime video-unavailable flags unlock a catalog redirect",asyn
   assert.ok(valid.lookups[0].query.includes("f.work_confirmed"));
   assert.ok(valid.lookups[0].query.includes("w.automatic_eligible"));
   assert.ok(valid.lookups[0].query.includes("k.payload->>'status'"));
+  // ReAnime source_metadata_json is often JSON-encoded text on Pi.
+  // Looking up ->>'anilist_id' directly on a JSON string returns NULL,
+  // which previously skipped the fast AniList/1372 redirect altogether.
+  assert.ok(valid.lookups[0].query.includes("jsonb_typeof(r.payload->'source_metadata_json')"));
+  assert.ok(valid.lookups[0].query.includes("(r.payload->>'source_metadata_json')::jsonb->>'anilist_id'"));
+  assert.ok(valid.lookups[0].query.includes("WHEN 'object'"),"native JSON object metadata must still match");
   assert.equal(valid.lookups[0].params.includes("1372"),true);
   const stringMeta=availabilityFixture([{reanime_id:"a",payload:JSON.stringify({
     source_metadata_json:JSON.stringify({can_watch:false}),
