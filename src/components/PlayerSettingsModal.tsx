@@ -43,8 +43,7 @@ export interface PlayerSettings {
   mobileGesture: boolean;       // 모바일 화면 스와이프 탐색
 
   // 💬 자막 & 외부 데이터
-  subtitleOffsetY: number;      // 화면 기준 이동량, 양수는 아래쪽 (px)
-  subtitleBottom: number;       // 일반 자막 최저 하단 여백 (15 / 25 / 35 px)
+  subtitleOffsetPercent: number; // 플레이어 하단 8% 기준, 양수는 아래쪽 (%p)
   subtitleSharpness: 1 | 1.25 | 1.5 | 2 | 2.5 | 3; // ASS/SSA libass 렌더 선명도 배율
   localSubBtn: boolean;         // 로컬 자막 파일 열기 버튼 표시
   anissiaCard: boolean;         // 애니시아 등록 제작자 현황 카드 표시
@@ -71,8 +70,7 @@ export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
   mobileGesture: false, // ⭐ 기본 OFF
 
   // 💬 자막 & 외부 데이터
-  subtitleOffsetY: 0,
-  subtitleBottom: 15,
+  subtitleOffsetPercent: 0,
   subtitleSharpness: 1,
   localSubBtn: true,
   anissiaCard: true,
@@ -84,9 +82,24 @@ export function getFullscreenExitOpacity(value: unknown): PlayerSettings["fullsc
   return value === 0 || value === 33 || value === 66 || value === 100 ? value : 100;
 }
 
-export function getSubtitleOffsetY(value: unknown): number {
+export function getSubtitleOffsetPercent(value: unknown): number {
   const offset = Number(value);
-  return [-20, -10, 0, 10, 20, 30].includes(offset) ? offset : 0;
+  return [-6, -4, -2, 0, 2, 4, 6].includes(offset) ? offset : 0;
+}
+
+// Upgrade previously saved pixel positions to percentage-point steps.
+// An explicitly stored percent value (including zero) always wins.
+function restoredSubtitleOffsetPercent(settings: { subtitleOffsetPercent?: unknown; subtitleOffsetY?: unknown }): number {
+  if (settings.subtitleOffsetPercent !== undefined) {
+    return getSubtitleOffsetPercent(settings.subtitleOffsetPercent);
+  }
+  const legacy = Number(settings.subtitleOffsetY);
+  const migration: Record<number, number> = { [-20]: -4, [-10]: -2, 0: 0, 10: 2, 20: 4, 30: 6 };
+  return migration[legacy] ?? 0;
+}
+
+export function getSubtitleBottomPercent(settings: Pick<PlayerSettings, "subtitleOffsetPercent">): number {
+  return 8 - getSubtitleOffsetPercent(settings.subtitleOffsetPercent);
 }
 
 export function getSubtitleSharpness(value: unknown): PlayerSettings["subtitleSharpness"] {
@@ -131,7 +144,7 @@ export async function fetchUserSettingsFromDb(): Promise<{
       settings: data.settings ? {
         ...data.settings,
         subtitleSharpness: getSubtitleSharpness(data.settings.subtitleSharpness),
-        subtitleOffsetY: getSubtitleOffsetY(data.settings.subtitleOffsetY),
+        subtitleOffsetPercent: restoredSubtitleOffsetPercent(data.settings),
         fullscreenExitOpacity: getFullscreenExitOpacity(data.settings.fullscreenExitOpacity),
       } : null,
       authenticated: Boolean(data.authenticated),
@@ -169,10 +182,6 @@ export function loadPlayerSettings(): PlayerSettings {
       } catch {}
     }
 
-    const subBottomVal = [15, 25, 35].includes(Number(parsed.subtitleBottom))
-      ? Number(parsed.subtitleBottom)
-      : DEFAULT_PLAYER_SETTINGS.subtitleBottom;
-
     return {
       ...DEFAULT_PLAYER_SETTINGS,
       ...parsed,
@@ -180,8 +189,7 @@ export function loadPlayerSettings(): PlayerSettings {
       doubleTouchSeek: parsed.doubleTouchSeek !== undefined ? !!parsed.doubleTouchSeek : true,
       doubleTouchDuration: parsed.doubleTouchDuration === 5 ? 5 : 10,
       mobileGesture: parsed.mobileGesture !== undefined ? !!parsed.mobileGesture : false,
-      subtitleBottom: subBottomVal,
-      subtitleOffsetY: getSubtitleOffsetY(parsed.subtitleOffsetY),
+      subtitleOffsetPercent: restoredSubtitleOffsetPercent(parsed),
       subtitleSharpness: getSubtitleSharpness(parsed.subtitleSharpness),
       fullscreenExitOpacity: getFullscreenExitOpacity(parsed.fullscreenExitOpacity),
     };
@@ -215,21 +223,17 @@ export function applyPlayerSettingsStyles(settings: PlayerSettings) {
     document.head.appendChild(styleEl);
   }
 
-  const subBottom = [15, 25, 35].includes(Number(settings?.subtitleBottom))
-    ? Number(settings.subtitleBottom)
-    : 15;
-
   styleEl.innerHTML = `
     .player-web-fullscreen-exit {
       opacity: ${getFullscreenExitOpacity(settings.fullscreenExitOpacity) / 100} !important;
     }
-    .art-video-player .art-subtitle,
-    .art-video-player canvas.libassjs-canvas {
-      translate: 0 ${getSubtitleOffsetY(settings.subtitleOffsetY)}px !important;
-    }
-    .art-video-player,
+    /* ArtPlayer VTT/SRT: bottom percentage is relative to the player height. */
     .art-video-player .art-subtitle {
-      --art-subtitle-bottom: ${subBottom}px !important;
+      --art-subtitle-bottom: ${getSubtitleBottomPercent(settings)}% !important;
+    }
+    /* libass fills the player frame: percentage translation follows its height. */
+    .art-video-player canvas.libassjs-canvas {
+      translate: 0 ${getSubtitleOffsetPercent(settings.subtitleOffsetPercent)}% !important;
     }
     ${!settings.fullscreenBtn ? ".art-video-player .art-control-fullscreen { display: none !important; }" : ""}
     ${!settings.fullscreenWebBtn ? ".art-video-player .art-control-fullscreenWeb { display: none !important; }" : ""}
@@ -449,19 +453,19 @@ export default function PlayerSettingsModal({
           <div className="space-y-3 rounded-2xl border border-white/5 bg-slate-900/60 p-3.5">
             <div>
               <div className="text-sm font-semibold text-white">자막 위치</div>
-              <p className="mt-1 text-xs text-slate-400">일반·ASS/SSA 자막을 함께 이동합니다. + 값은 아래쪽입니다.</p>
+              <p className="mt-1 text-xs text-slate-400">일반 자막은 플레이어 하단 8% 기준, ASS/SSA는 원래 위치 기준입니다. 2%p씩 보정하며 +는 아래쪽입니다.</p>
             </div>
-            <div className="grid grid-cols-3 gap-2" role="group" aria-label="자막 위치">
-              {([-20, -10, 0, 10, 20, 30] as const).map((value) => (
-                <button key={value} type="button" aria-pressed={getSubtitleOffsetY(settings.subtitleOffsetY) === value}
+            <div className="grid grid-cols-4 gap-2 sm:grid-cols-7" role="group" aria-label="자막 위치">
+              {([-6, -4, -2, 0, 2, 4, 6] as const).map((value) => (
+                <button key={value} type="button" aria-pressed={getSubtitleOffsetPercent(settings.subtitleOffsetPercent) === value}
                   onClick={() => {
-                    const next = { ...settings, subtitleOffsetY: value };
+                    const next = { ...settings, subtitleOffsetPercent: value };
                     savePlayerSettings(next);
                     applyPlayerSettingsStyles(next);
                     onUpdateSettings(next);
                   }}
-                  className={`rounded-xl border px-2 py-2 text-sm font-semibold transition ${getSubtitleOffsetY(settings.subtitleOffsetY) === value ? "border-pink-400 bg-pink-600 text-white" : "border-white/10 bg-slate-800 text-slate-300 hover:bg-slate-700"}`}
-                >{value === 0 ? "기본" : `${value > 0 ? "+" : ""}${value}px`}</button>
+                  className={`rounded-xl border px-1 py-2 text-xs font-semibold transition ${getSubtitleOffsetPercent(settings.subtitleOffsetPercent) === value ? "border-pink-400 bg-pink-600 text-white" : "border-white/10 bg-slate-800 text-slate-300 hover:bg-slate-700"}`}
+                >{value === 0 ? "기본 8%" : `${value > 0 ? "+" : ""}${value}%p`}</button>
               ))}
             </div>
           </div>
@@ -763,47 +767,6 @@ export default function PlayerSettingsModal({
             </div>
 
             <div className="space-y-2.5">
-              {/* 일반 자막 최저 높이 */}
-              <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/5 bg-slate-900/60 p-3.5 hover:border-purple-500/20 transition">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-purple-500/10 text-purple-400">
-                    <MoveVertical className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <div className="text-sm font-semibold text-white">일반 자막 최저 높이</div>
-                    <div className="text-xs text-slate-400">일반 자막(VTT/SRT)의 화면 하단 여백을 설정합니다</div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <div className="inline-flex rounded-xl bg-slate-800/90 p-0.5 border border-white/10 text-xs font-semibold">
-                    {([15, 25, 35] as const).map((val) => {
-                      const isSelected = (settings.subtitleBottom || 15) === val;
-                      return (
-                        <button
-                          key={val}
-                          type="button"
-                          onClick={() => {
-                            const next = { ...settings, subtitleBottom: val };
-                            savePlayerSettings(next);
-                            applyPlayerSettingsStyles(next);
-                            onUpdateSettings(next);
-                          }}
-                          className={`rounded-lg px-3 py-1 transition cursor-pointer ${
-                            isSelected
-                              ? "bg-purple-600 text-white shadow-sm font-bold"
-                              : "text-slate-400 hover:text-white"
-                          }`}
-                        >
-                          {val}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <span className="text-xs font-medium text-slate-400">px</span>
-                </div>
-              </div>
-
               {/* 로컬 자막 파일 열기 버튼 */}
               <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/5 bg-slate-900/60 p-3.5 hover:border-purple-500/20 transition">
                 <div className="flex items-center gap-3">

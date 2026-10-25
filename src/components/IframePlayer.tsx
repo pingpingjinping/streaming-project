@@ -37,7 +37,8 @@ import PlayerSettingsModal, {
   loadPlayerSettings,
   fetchUserSettingsFromDb,
   applyPlayerSettingsStyles,
-  getSubtitleOffsetY,
+  getSubtitleOffsetPercent,
+  getSubtitleBottomPercent,
   type PlayerSettings,
 } from "./PlayerSettingsModal";
 
@@ -1438,14 +1439,14 @@ export default function IframePlayer({
           {/* Layer 2a: SubtitlesOctopus ASS Canvas (WASM libass) */}
           <canvas
             ref={canvasRef}
-            style={{ translate: `0 ${getSubtitleOffsetY(playerSettings.subtitleOffsetY)}px` }}
+            style={{ translate: `0 ${getSubtitleOffsetPercent(playerSettings.subtitleOffsetPercent)}%` }}
             className={`absolute inset-0 h-full w-full pointer-events-none z-10 ${
               isSubEnabled && isOctopusActive ? "block" : "hidden"
             }`}
           />
 
           {/* Layer 2b-Top: Top Subtitle HUD Overlay (상단 설명/가사 자막) */}
-          <div style={{ translate: `0 ${getSubtitleOffsetY(playerSettings.subtitleOffsetY)}px` }} className="absolute inset-0 pointer-events-none z-20 flex flex-col justify-start items-center pt-[5%] overflow-hidden">
+          <div style={{ translate: `0 ${getSubtitleOffsetPercent(playerSettings.subtitleOffsetPercent)}%` }} className="absolute inset-0 pointer-events-none z-20 flex flex-col justify-start items-center pt-[5%] overflow-hidden">
             <div
               ref={topHudTextRef}
               className={`font-black text-amber-300 text-center max-w-[88%] px-4 py-1.5 rounded-xl transition-all duration-75 select-none whitespace-pre-line ${subSizeClasses[subSize]}`}
@@ -1458,11 +1459,13 @@ export default function IframePlayer({
           </div>
 
           {/* Layer 2b: Text / VTT Subtitle HUD Overlay (하단 대사) */}
-          <div style={{ translate: `0 ${getSubtitleOffsetY(playerSettings.subtitleOffsetY)}px` }} className="absolute inset-0 pointer-events-none z-20 flex flex-col justify-end items-center pb-[7.5%] overflow-hidden">
+          <div className="absolute inset-0 pointer-events-none z-20 overflow-hidden">
             <div
               ref={hudTextRef}
-              className={`font-black text-white text-center max-w-[88%] px-4 py-1.5 rounded-xl transition-all duration-75 select-none whitespace-pre-line ${subSizeClasses[subSize]}`}
+              className={`absolute left-1/2 w-max font-black text-white text-center max-w-[88%] px-4 py-1.5 rounded-xl transition-all duration-75 select-none whitespace-pre-line ${subSizeClasses[subSize]}`}
               style={{
+                bottom: `${getSubtitleBottomPercent(playerSettings)}%`,
+                transform: "translateX(-50%)",
                 textShadow:
                   "-2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, -3px 0 0 #000, 3px 0 0 #000, 0 -3px 0 #000, 0 3px 0 #000, 0 4px 14px rgba(0, 0, 0, 0.95)",
                 display: "none",
