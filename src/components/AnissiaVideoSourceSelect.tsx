@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 const SOURCES = [
   { id: "rean", label: "ReAnime", hint: "고화질" },
@@ -24,6 +25,24 @@ export default function AnissiaVideoSourceSelect({
   subUrl?: string;
   isDub?: boolean;
 }) {
+  const router = useRouter();
+  const chooseSource = async (source: string, href: string) => {
+    try {
+      // This is an explicit user choice, not an automatic provider fallback.
+      // Await a short account save before client-side navigation; the query
+      // itself still works even if the preference endpoint is unavailable.
+      await fetch("/api/settings/work-video-source", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ animeId, source }),
+        signal: AbortSignal.timeout(1800),
+      });
+    } catch (error) {
+      console.warn("[Work video source preference] Could not sync", error);
+    } finally {
+      router.push(href);
+    }
+  };
   return (
     <section className="mb-4 rounded-2xl border border-slate-700/70 bg-slate-900/70 p-4">
       <div className="mb-3">
@@ -37,11 +56,17 @@ export default function AnissiaVideoSourceSelect({
           if (subUrl) query.set("sub_url", subUrl);
           if (isDub) query.set("dub", "1");
           const active = selectedSource === source.id;
+          const href = `/watch/${animeId}/${episodeNumber}?${query.toString()}`;
           return (
             <Link
               prefetch={false}
               key={source.id}
-              href={`/watch/${animeId}/${episodeNumber}?${query.toString()}`}
+              href={href}
+              onClick={event => {
+                if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+                event.preventDefault();
+                void chooseSource(source.id, href);
+              }}
               aria-current={active ? "page" : undefined}
               className={`rounded-xl border px-3.5 py-2 text-sm font-semibold transition ${
                 active
