@@ -52,6 +52,12 @@ test('Work and episode routing always consult preference before any provider det
     assert.match(s,/resolveWorkVideoSource\(user.username, id\)/);
     assert.ok(s.indexOf('resolveWorkVideoSource(user.username, id)')<s.indexOf('provider.getAnimeDetail(id,'),
       'explicit/account preferred source must reach provider on its first detail query');
+    if (file.includes('/anime/')) {
+      assert.match(s,/reviewedProviderPlayback\(anime, videoSource\)/,
+        'account-selected Anikoto must be respected even if ReAnime claims a playable source');
+      assert.doesNotMatch(s,/reviewedProviderPlayback\(anime, video_source\)/,
+        'raw URL query is undefined when preference came from the account');
+    }
   }
   const source=fs.readFileSync(path.join(root,'src/components/AnissiaVideoSourceSelect.tsx'),'utf8');
   assert.match(source,/\/api\/settings\/work-video-source/);
