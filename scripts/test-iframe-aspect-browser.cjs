@@ -31,14 +31,14 @@ const app=http.createServer((req,res)=>{
     if(!account){res.statusCode=401;return res.end(JSON.stringify({success:false}));}
     if(req.method==='GET'){
       const key=account+'|'+url.searchParams.get('animeId');
-      return res.end(JSON.stringify({success:true,choice:savedAspectByAccount.get(key)??null}));
+      return res.end(JSON.stringify({success:true,choice:savedAspectByAccount.get(key)??null,userId:account}));
     }
     if(req.method==='PUT'){
       let payload='';req.on('data',chunk=>payload+=chunk);
       req.on('end',()=>{
         const body=JSON.parse(payload);const key=account+'|'+body.animeId;
         if(!body.onlyIfAbsent||!savedAspectByAccount.has(key))savedAspectByAccount.set(key,body.choice);
-        res.end(JSON.stringify({success:true,choice:savedAspectByAccount.get(key)}));
+        res.end(JSON.stringify({success:true,choice:savedAspectByAccount.get(key),userId:account}));
       });
       return;
     }
@@ -246,6 +246,15 @@ const app=http.createServer((req,res)=>{
     const stranger=await otherAccount.newPage();stranger.on('pageerror',error=>errors.push(error.message));
     await ready(stranger,'?source=anikoto&work=ak_grisaia&ep=25');
     await stranger.getByRole('button',{name:'화면 비율 변경'}).filter({hasText:'비율 자동'}).waitFor();
+    // Switch accounts in the SAME browser. Its old localStorage must not be
+    // imported into the other account's previously empty server preference.
+    await accountDesktop.addCookies([{name:'fixture_aspect_account',value:'accountB',url:appUrl}]);
+    await ready(desktop,'?source=anikoto&work=ak_grisaia&ep=4');
+    await desktop.waitForFunction(()=>localStorage.getItem('anime_player_aspect:owner:ak_grisaia')==='accountB');
+    await desktopRatio().filter({hasText:'비율 자동'}).waitFor();
+    await accountDesktop.addCookies([{name:'fixture_aspect_account',value:'accountA',url:appUrl}]);
+    await ready(desktop,'?source=anikoto&work=ak_grisaia&ep=4');
+    await desktopRatio().filter({hasText:'비율 21:9'}).waitFor();
     // Explicit reset to Auto must propagate, not revive a stale local choice.
     await ready(desktop,'?source=anikoto&work=ak_grisaia&ep=9');
     await desktopRatio().filter({hasText:'비율 21:9'}).waitFor();
