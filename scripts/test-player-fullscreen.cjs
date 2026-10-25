@@ -26,7 +26,7 @@ test('Anissia auto-matched Anikoto iframe has the same sandbox policy as direct 
   };
   const {default: Player} = load('src/components/IframePlayer.tsx', {
     react, 'next/link': {}, 'lucide-react': {}, './SubtitleSelectModal': {},
-    './PlayerSettingsModal': {DEFAULT_PLAYER_SETTINGS: {}, getSubtitleOffsetY:()=>0},
+    './PlayerSettingsModal': {DEFAULT_PLAYER_SETTINGS: {}, getSubtitleOffsetPercent:()=>0,getSubtitleBottomPercent:()=>8},
     './SponsorSubtitleSyncModal': {default:()=>null},
     '@/lib/sponsorSubtitleSync': {effectiveSubtitleOffset:(v)=>v, formatSyncTime:()=>''},
     './usePlayerFullscreen': {usePlayerFullscreen: () => ({mode: 'inline', isFullscreen: false, toggleFullscreen() {}})},
