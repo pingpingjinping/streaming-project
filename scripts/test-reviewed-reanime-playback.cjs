@@ -10,7 +10,8 @@ const ak = 'ak_you-re-under-arrest-1996-4cefz';
 const range = n => Array.from({length:n}, (_,i)=>i+1);
 const plain = x => JSON.parse(JSON.stringify(x));
 function load(file, deps={}, globals={}) {
-  deps={'@/lib/adminWorkTitles':{applyAdminWorkTitles:async items=>items,applyAdminWorkTitle:async item=>item},...deps};
+  deps={'@/lib/adminWorkTitles':{applyAdminWorkTitles:async items=>items,applyAdminWorkTitle:async item=>item},
+    '@/lib/workVideoSourcePreference':{resolveWorkVideoSource:async()=>undefined},...deps};
   const exports = {};
   const code = ts.transpileModule(fs.readFileSync(path.join(root,file),'utf8'), {
     compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true},
