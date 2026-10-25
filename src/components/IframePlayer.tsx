@@ -152,6 +152,7 @@ export default function IframePlayer({
   // Use the catalog work ID so all episodes/provider switches share one choice.
   // Local storage is a fast fallback; the signed-in account is authoritative.
   const aspectStorageKey = `anime_player_aspect:work:${animeId}`;
+  const aspectOwnerKey = `anime_player_aspect:owner:${animeId}`;
   const legacyAspectStorageKey = `anime_player_aspect:${sourceAnimeId || animeId}:${sourceEpisodeNumber ?? episodeNumber}:${activeServerKey || "default"}`;
   useEffect(() => {
     const token = ++aspectLoadTokenRef.current;
@@ -170,14 +171,19 @@ export default function IframePlayer({
       }
     } catch {}
     const localChoice = isAspectChoice(saved) ? saved : null;
+    let localOwner: string | null = null;
+    try { localOwner = localStorage.getItem(aspectOwnerKey); } catch {}
     setAspectChoice(localChoice ?? "auto");
     setDetectedAspect(null);
     const current = () => !cancelled && aspectLoadTokenRef.current === token
       && aspectEditVersionRef.current === editedAtStart;
-    const store = (choice: AspectChoice) => {
+    const store = (choice: AspectChoice, owner?: string) => {
       if (!current()) return;
       setAspectChoice(choice);
-      try { localStorage.setItem(aspectStorageKey, choice); } catch {}
+      try {
+        localStorage.setItem(aspectStorageKey, choice);
+        if (owner) localStorage.setItem(aspectOwnerKey, owner);
+      } catch {}
     };
     // Server preference wins, including an explicit "auto" reset. If an
     // older browser only has local data, migrate once without overwriting
@@ -191,8 +197,13 @@ export default function IframePlayer({
         if (!res.ok || !current()) return;
         const data = await res.json();
         if (!data.success || !current()) return;
+        const owner = typeof data.userId === "string" ? data.userId : "";
         if (isAspectChoice(data.choice)) {
-          store(data.choice);
+          store(data.choice, owner);
+        } else if (data.choice === null && localOwner && owner && localOwner !== owner) {
+          // A different account used this browser earlier; never import its
+          // cached preference into the currently signed-in account.
+          store("auto", owner);
         } else if (data.choice === null && localChoice !== null) {
           const migrated = await fetch("/api/settings/work-aspect", {
             method: "PUT",
@@ -201,18 +212,21 @@ export default function IframePlayer({
           });
           if (migrated.ok) {
             const result = await migrated.json();
-            if (isAspectChoice(result.choice)) store(result.choice);
+            if (isAspectChoice(result.choice)) store(result.choice, owner);
           }
+        } else if (owner) {
+          try { localStorage.setItem(aspectOwnerKey, owner); } catch {}
         }
       } catch (error) {
         console.warn("[Aspect preference sync]", error);
       }
     })();
     return () => { cancelled = true; };
-  }, [aspectStorageKey, legacyAspectStorageKey, activeEmbedUrl, hasAspectControl]);
+  }, [aspectStorageKey, aspectOwnerKey, legacyAspectStorageKey, activeEmbedUrl, hasAspectControl]);
   const cycleAspectChoice = () => {
     const next = aspectChoice === "auto" ? "4:3" : aspectChoice === "4:3" ? "16:9" : aspectChoice === "16:9" ? "21:9" : "auto";
     aspectEditVersionRef.current += 1;
+    const editVersion = aspectEditVersionRef.current;
     setAspectChoice(next);
     try { localStorage.setItem(aspectStorageKey, next); } catch {}
     // A user may click through 4:3 → 16:9 → 21:9 quickly. Serialize writes
@@ -224,7 +238,16 @@ export default function IframePlayer({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ animeId, choice: next }),
         });
-        if (!response.ok) console.warn("[Aspect preference sync] Account save failed");
+        if (!response.ok) {
+          console.warn("[Aspect preference sync] Account save failed");
+        } else {
+          const saved = await response.json();
+          // Track the owner of this browser cache to avoid leaking preferences
+          // when another account signs in on the same device.
+          if (aspectEditVersionRef.current === editVersion && typeof saved.userId === "string") {
+            try { localStorage.setItem(aspectOwnerKey, saved.userId); } catch {}
+          }
+        }
       } catch (error) {
         console.warn("[Aspect preference sync]", error);
       }
