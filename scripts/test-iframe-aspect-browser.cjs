@@ -219,6 +219,51 @@ const app=http.createServer((req,res)=>{
     assert.equal(embedLoads,beforeReanime);
     await page.evaluate(()=>document.exitFullscreen());
 
+    // ReAnime 4:3 now fits the complete height, without touching/reloading the
+    // embedded player, including when Anikoto is an INACTIVE server option.
+    await reanimeButton().click();
+    await reanimeButton().filter({hasText:'비율 4:3'}).waitFor();
+    assert.equal(await page.evaluate(()=>localStorage.getItem('anime_player_aspect:work:reanime_work')),'4:3');
+    await page.getByRole('button',{name:'전체화면',exact:true}).click();
+    await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
+    await page.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-625)<2);
+    const reanimeFrame=await page.locator('iframe').boundingBox();
+    assert.ok(Math.abs(reanimeFrame.width-625*4/3)<2, 'ReAnime manual 4:3 fills the height');
+    assert.equal(await page.locator(':fullscreen').getByRole('button',{name:'화면 비율 변경'}).count(),0,
+      'manual ReAnime ratio must not display the redundant fullscreen badge');
+    assert.ok(await page.getByText('Pi caption',{exact:true}).isVisible());
+    assert.equal(embedLoads,beforeReanime, 'ReAnime ratio change keeps iframe playback alive');
+    await page.evaluate(()=>document.exitFullscreen());
+
+    // The preference is shared across the work's ReAnime episodes and
+    // Anikoto playback; unrelated works do not inherit it.
+    await ready(page,'?source=rean&ratio=4%3A3&work=reanime_work&ep=2&server=HD-2');
+    await reanimeButton().filter({hasText:'비율 4:3'}).waitFor();
+    await page.getByRole('button',{name:'전체화면',exact:true}).click();
+    await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
+    await page.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-625)<2);
+    await page.evaluate(()=>document.exitFullscreen());
+    await ready(page,'?source=anikoto&ratio=4%3A3&work=reanime_work&ep=3');
+    await reanimeButton().filter({hasText:'비율 4:3'}).waitFor();
+    await ready(page,'?source=rean&ratio=4%3A3&work=reanime_other&hint=sd');
+    await reanimeButton().filter({hasText:'비율 자동'}).waitFor();
+    await ready(page,'?source=rean&ratio=4%3A3&work=reanime_work&ep=4&hint=sd');
+    await reanimeButton().filter({hasText:'비율 4:3'}).waitFor();
+    await reanimeButton().click();
+    await reanimeButton().filter({hasText:'비율 16:9'}).waitFor();
+    await page.getByRole('button',{name:'전체화면',exact:true}).click();
+    await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
+    await page.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-562.5)<2);
+    await page.evaluate(()=>document.exitFullscreen());
+    await reanimeButton().click(); // 21:9
+    await reanimeButton().filter({hasText:'비율 21:9'}).waitFor();
+    await reanimeButton().click(); // Auto
+    await reanimeButton().filter({hasText:'비율 자동'}).waitFor();
+    await page.getByRole('button',{name:'전체화면',exact:true}).click();
+    await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
+    await page.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-562.5)<2);
+    await page.evaluate(()=>document.exitFullscreen());
+
     // Account preference follows the work ID (not episode, device or provider).
     // It does not affect other works or another signed-in account.
     const accountDesktop=await browser.newContext({viewport:{width:1000,height:625}});
@@ -264,51 +309,6 @@ const app=http.createServer((req,res)=>{
     await mobileRatio().filter({hasText:'비율 자동'}).waitFor();
     assert.equal(await mobile.evaluate(()=>localStorage.getItem('anime_player_aspect:work:ak_grisaia')),'auto');
     await accountDesktop.close();await accountMobile.close();await otherAccount.close();
-
-    // ReAnime 4:3 now fits the complete height, without touching/reloading the
-    // embedded player, including when Anikoto is an INACTIVE server option.
-    await reanimeButton().click();
-    await reanimeButton().filter({hasText:'비율 4:3'}).waitFor();
-    assert.equal(await page.evaluate(()=>localStorage.getItem('anime_player_aspect:work:reanime_work')),'4:3');
-    await page.getByRole('button',{name:'전체화면',exact:true}).click();
-    await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
-    await page.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-625)<2);
-    const reanimeFrame=await page.locator('iframe').boundingBox();
-    assert.ok(Math.abs(reanimeFrame.width-625*4/3)<2, 'ReAnime manual 4:3 fills the height');
-    assert.equal(await page.locator(':fullscreen').getByRole('button',{name:'화면 비율 변경'}).count(),0,
-      'manual ReAnime ratio must not display the redundant fullscreen badge');
-    assert.ok(await page.getByText('Pi caption',{exact:true}).isVisible());
-    assert.equal(embedLoads,beforeReanime, 'ReAnime ratio change keeps iframe playback alive');
-    await page.evaluate(()=>document.exitFullscreen());
-
-    // The preference is shared across the work's ReAnime episodes and
-    // Anikoto playback; unrelated works do not inherit it.
-    await ready(page,'?source=rean&ratio=4%3A3&work=reanime_work&ep=2&server=HD-2');
-    await reanimeButton().filter({hasText:'비율 4:3'}).waitFor();
-    await page.getByRole('button',{name:'전체화면',exact:true}).click();
-    await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
-    await page.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-625)<2);
-    await page.evaluate(()=>document.exitFullscreen());
-    await ready(page,'?source=anikoto&ratio=4%3A3&work=reanime_work&ep=3');
-    await reanimeButton().filter({hasText:'비율 4:3'}).waitFor();
-    await ready(page,'?source=rean&ratio=4%3A3&work=reanime_other&hint=sd');
-    await reanimeButton().filter({hasText:'비율 자동'}).waitFor();
-    await ready(page,'?source=rean&ratio=4%3A3&work=reanime_work&ep=4&hint=sd');
-    await reanimeButton().filter({hasText:'비율 4:3'}).waitFor();
-    await reanimeButton().click();
-    await reanimeButton().filter({hasText:'비율 16:9'}).waitFor();
-    await page.getByRole('button',{name:'전체화면',exact:true}).click();
-    await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
-    await page.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-562.5)<2);
-    await page.evaluate(()=>document.exitFullscreen());
-    await reanimeButton().click(); // 21:9
-    await reanimeButton().filter({hasText:'비율 21:9'}).waitFor();
-    await reanimeButton().click(); // Auto
-    await reanimeButton().filter({hasText:'비율 자동'}).waitFor();
-    await page.getByRole('button',{name:'전체화면',exact:true}).click();
-    await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
-    await page.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-562.5)<2);
-    await page.evaluate(()=>document.exitFullscreen());
 
     // Anikoto's own fullscreen uses the whole iframe, but the site's
     // subtitle-inclusive button originally constrained all media to 16:9.
