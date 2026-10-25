@@ -55,7 +55,7 @@ const server=http.createServer((req,res)=>{
  cache['next/link']={exports:({children,prefetch,...props})=>React.createElement('a',props,children)};
  cache['./SubtitleSelectModal']={exports:{__esModule:true,default:empty}};
  cache['./SponsorSubtitleSyncModal']={exports:{__esModule:true,default:empty}};
- cache['./PlayerSettingsModal']={exports:{__esModule:true,default:empty,DEFAULT_PLAYER_SETTINGS:${JSON.stringify(settingsExports.DEFAULT_PLAYER_SETTINGS)},loadPlayerSettings:()=>(${JSON.stringify(settingsExports.DEFAULT_PLAYER_SETTINGS)}),fetchUserSettingsFromDb:async()=>({authenticated:false,settings:null}),applyPlayerSettingsStyles(){},getSubtitleOffsetY:()=>0}};
+ cache['./PlayerSettingsModal']={exports:{__esModule:true,default:empty,DEFAULT_PLAYER_SETTINGS:${JSON.stringify(settingsExports.DEFAULT_PLAYER_SETTINGS)},loadPlayerSettings:()=>(${JSON.stringify(settingsExports.DEFAULT_PLAYER_SETTINGS)}),fetchUserSettingsFromDb:async()=>({authenticated:false,settings:null}),applyPlayerSettingsStyles(){},getSubtitleOffsetPercent:()=>0,getSubtitleBottomPercent:()=>8}};
  cache['./usePlayerFullscreen']={exports:{usePlayerFullscreen:()=>({mode:'inline',isFullscreen:false,toggleFullscreen(){}})}};
  cache['./useContainedPlayerFrame']={exports:{useContainedPlayerFrame(){}}};
  const query=new URL(location.href).searchParams,mode=query.get('mode')||'rean',ep=Number(query.get('ep')||1);

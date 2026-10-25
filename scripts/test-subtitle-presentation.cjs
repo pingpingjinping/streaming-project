@@ -59,7 +59,7 @@ test('all quality levels increase real backing resolution on desktop and high DP
   assert.equal(size(640,360,3,2).width,3840);
   assert.equal(size(640,360,3,2).height,2160);
 });
-test('2.5x/3x and downward position persist locally and through account settings including reset to zero', async () => {
+test('2.5x/3x and percentage subtitle positions persist locally and through account settings', async () => {
   const saved = new Map(), style = {innerHTML:''};
   let posted;
   const api = load('src/components/PlayerSettingsModal.tsx', {
@@ -68,23 +68,37 @@ test('2.5x/3x and downward position persist locally and through account settings
     setTimeout:()=>1,clearTimeout(){},
     fetch:async (url,opts) => {
       if(opts?.method === 'POST') posted=JSON.parse(opts.body);
-      return {ok:true,json:async()=>({success:true,authenticated:true,settings:posted?.settings??{subtitleOffsetY:20,subtitleSharpness:3}})};
+      return {ok:true,json:async()=>({success:true,authenticated:true,settings:posted?.settings??{subtitleOffsetPercent:4,subtitleSharpness:3}})};
     },
   });
-  for (const q of [2.5,3]) for (const offset of [-20,-10,0,10,20,30]) {
-    const settings={...api.DEFAULT_PLAYER_SETTINGS,subtitleSharpness:q,subtitleOffsetY:offset};
+  for (const q of [2.5,3]) for (const offset of [-6,-4,-2,0,2,4,6]) {
+    const settings={...api.DEFAULT_PLAYER_SETTINGS,subtitleSharpness:q,subtitleOffsetPercent:offset};
     api.savePlayerSettings(settings);
     const restored=api.loadPlayerSettings();
     assert.equal(restored.subtitleSharpness,q);
-    assert.equal(restored.subtitleOffsetY,offset);
+    assert.equal(restored.subtitleOffsetPercent,offset);
+    assert.equal(api.getSubtitleBottomPercent(restored),8-offset);
     api.applyPlayerSettingsStyles(restored);
-    assert.match(style.innerHTML,new RegExp(`translate: 0 ${offset}px !important`));
+    assert.ok(style.innerHTML.includes(`--art-subtitle-bottom: ${8-offset}% !important`));
+    assert.ok(style.innerHTML.includes(`translate: 0 ${offset}% !important`));
     await api.saveUserSettingsToDb(settings);
     assert.equal(posted.settings.subtitleSharpness,q);
-    assert.equal((await api.fetchUserSettingsFromDb()).settings.subtitleOffsetY,offset);
+    assert.equal((await api.fetchUserSettingsFromDb()).settings.subtitleOffsetPercent,offset);
   }
   assert.equal(api.getSubtitleSharpness(4),1);
-  assert.equal(api.getSubtitleOffsetY(999),0);
+  assert.equal(api.getSubtitleOffsetPercent(999),0);
+  // Migrate old pixel values; explicit new zero must override the legacy key.
+  saved.set('anime_player_settings',JSON.stringify({subtitleOffsetY:30,subtitleSharpness:3}));
+  assert.equal(api.loadPlayerSettings().subtitleOffsetPercent,6);
+  saved.set('anime_player_settings',JSON.stringify({subtitleOffsetY:30,subtitleOffsetPercent:0}));
+  assert.equal(api.loadPlayerSettings().subtitleOffsetPercent,0);
+  posted=undefined;
+  assert.equal((await api.fetchUserSettingsFromDb()).settings.subtitleOffsetPercent,4);
+});
+test('iframe HUD anchors using frame-height percentage, not vertical padding', () => {
+  const source=fs.readFileSync(path.join(root,'src/components/IframePlayer.tsx'),'utf8');
+  assert.ok(source.includes('bottom: `${getSubtitleBottomPercent(playerSettings)}%`'));
+  assert.ok(!source.includes('pb-[7.5%]'));
 });
 test('regular player size controller updates active libass from original text and retains 28px after reload', () => {
   const source=fs.readFileSync(path.join(root,'src/components/Player.tsx'),'utf8');

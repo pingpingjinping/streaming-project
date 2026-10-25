@@ -166,7 +166,7 @@ body {
 :root {
   --user-sub-size: 22px;
   --user-sub-scale: 1;
-  --art-subtitle-bottom: 15px;
+  --art-subtitle-bottom: 8%;
 }
 
 /* WebVTT 브라우저 내장 자막 (PIP 모드 & 일반 큐) */

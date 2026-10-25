@@ -81,7 +81,7 @@ test('ReAnime to Anikoto changes iframe identity as well as sandbox before the n
  const jsx={jsx:(type,props,key)=>({type,props,key}),jsxs:(type,props,key)=>({type,props,key})};
  const component=load('src/components/IframePlayer.tsx',{
   react,'react/jsx-runtime':jsx,'next/link':{default:'Link'},'lucide-react':{},
-  './PlayerSettingsModal':{DEFAULT_PLAYER_SETTINGS:{},getSubtitleOffsetY:()=>0},
+  './PlayerSettingsModal':{DEFAULT_PLAYER_SETTINGS:{},getSubtitleOffsetPercent:()=>0,getSubtitleBottomPercent:()=>8},
   './usePlayerFullscreen':{usePlayerFullscreen:()=>({mode:'inline',isFullscreen:false,toggleFullscreen(){}})},
   './useContainedPlayerFrame':{useContainedPlayerFrame(){}},
  }).default;
