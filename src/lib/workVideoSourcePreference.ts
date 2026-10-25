@@ -1,7 +1,7 @@
 import { getWorkVideoSourceChoice, type WorkVideoSource } from "./db";
 import { getLocalReanimeDetail } from "./localReanimeDetail";
 import { getAnikotoPlaybackCandidates } from "./anikotoLinks";
-import { getEffectiveReanimeIdsForAnissia } from "./reanimeMatches";
+import { getConfirmedReanimeIdsForAnissia } from "./reanimeMatches";
 
 /** Use only locally stored, explicitly confirmed unplayable ReAnime metadata.
  * Never assume that missing / slow upstream means an unavailable video.
@@ -13,7 +13,7 @@ export async function getDbBackedWorkVideoSource(animeId: string): Promise<"anik
     let reanimeId = animeId;
     if (animeId.startsWith("ani_")) {
       const no = Number(animeId.slice(4));
-      const linked = (await getEffectiveReanimeIdsForAnissia([no])).get(no);
+      const linked = (await getConfirmedReanimeIdsForAnissia([no])).get(no);
       if (!linked || !/^[A-Za-z0-9_-]+$/.test(linked)) return null;
       reanimeId = "re_" + linked;
     }
