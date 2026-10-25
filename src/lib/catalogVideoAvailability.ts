@@ -41,7 +41,16 @@ export async function catalogHasConfirmedNoReanimeVideo(source: string, id: stri
         SELECT r.source_record_id AS reanime_id
         FROM anime_catalog_entries r
         WHERE ${source}='AniList' AND r.source='ReAnime'
-          AND r.payload->'source_metadata_json'->>'anilist_id'=${id}
+          -- On Pi the metadata is stored either as a JSON object or as a
+          -- JSON-encoded string. ->>'anilist_id' on a string always returns
+          -- NULL, silently breaking exact AniList -> ReAnime discovery.
+          AND (
+            CASE jsonb_typeof(r.payload->'source_metadata_json')
+              WHEN 'object' THEN r.payload->'source_metadata_json'->>'anilist_id'
+              WHEN 'string' THEN (r.payload->>'source_metadata_json')::jsonb->>'anilist_id'
+              ELSE NULL
+            END
+          )=${id}
         UNION
         SELECT ${id}::text AS reanime_id WHERE ${source}='ReAnime'
       )
