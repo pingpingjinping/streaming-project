@@ -19,7 +19,6 @@ import {
   ArrowRight,
   Cloud,
   Touchpad,
-  MoveVertical,
 } from "lucide-react";
 
 export interface PlayerSettings {
