@@ -143,8 +143,11 @@ test('Anikoto 4:3 fullscreen consumes height instead of adding black bars; defau
   cleanup();assert.deepEqual(frame.style,{width:'',height:''});
   const jsx=fs.readFileSync(path.join(root,'src/components/IframePlayer.tsx'),'utf8');
   assert.match(jsx,/const reanimeManualAspect = isReAnimeEmbed && aspectChoice !== "auto"/);
-  assert.match(jsx,/const frameAspect = reanimeManualAspect \|\| \(isAnikotoEmbed && !appleWebFullscreen\)/);
+  assert.match(jsx,/const frameAspect = reanimeManualAspect \|\| \(isAnikotoEmbed && \(!appleWebFullscreen \|\| ultrawideAspect\)\)/);
   assert.match(jsx,/iframeRef.*useRef|const iframeRef/);
+  assert.match(jsx,/const ultrawideAspect = resolvedAspect > 2\.05/);
+  assert.match(jsx,/const inlineAspectStyle = ultrawideAspect/);
+  assert.match(jsx,/aspectChoice === "21:9" \? 21 \/ 9/);
   assert.match(jsx,/title="영상 비율 변경/);
   assert.match(jsx,/\{hasAspectControl && \(/);
   assert.match(jsx,/const hasAspectControl = isAnikotoEmbed \|\| isReAnimeEmbed/);
