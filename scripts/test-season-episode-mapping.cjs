@@ -510,7 +510,7 @@ test('iframe previous/next and dropdown navigation retain the actual video sourc
     'next/link':'Link','lucide-react':{},'./SubtitleSelectModal':'SubtitleSelectModal',
     './usePlayerFullscreen':{usePlayerFullscreen:()=>({mode:'native',isFullscreen:false,toggleFullscreen:()=>{}})},
     './useContainedPlayerFrame':{useContainedPlayerFrame:()=>{}},'@/lib/iframePlayback':{},
-    './PlayerSettingsModal':{default:'PlayerSettingsModal',DEFAULT_PLAYER_SETTINGS:{},getSubtitleOffsetY:()=>0},
+    './PlayerSettingsModal':{default:'PlayerSettingsModal',DEFAULT_PLAYER_SETTINGS:{},getSubtitleOffsetPercent:()=>0,getSubtitleBottomPercent:()=>8},
     '@/lib/subtitlePresentation':load('src/lib/subtitlePresentation.ts'),
     './SponsorSubtitleSyncModal':{default:'SponsorSubtitleSyncModal'},
     '@/lib/sponsorSubtitleSync':{effectiveSubtitleOffset:(base)=>base,formatSyncTime:()=>''},
