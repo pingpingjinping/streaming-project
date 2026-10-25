@@ -130,5 +130,8 @@ test("Catalog page checks unavailable ReAnime only for ambiguous multi-reviewed 
   assert.match(page,/streams\.some\(row => row\.link_status === 'multi_reviewed'\)/);
   assert.match(page,/catalogHasConfirmedNoReanimeVideo\(source, id\)/);
   assert.match(page,/\{ reanimeConfirmedUnavailable \}/);
-  assert.match(page,/view !== 'catalog'/);
+  assert.match(page,/const catalogView = \(await searchParams\)\.view === 'catalog'/);
+  assert.ok(page.indexOf('SELECT DISTINCT anikoto_id,link_status') < page.indexOf('await loadSubtitleCatalog()'),
+    'exact reviewed video must redirect without waiting for full subtitle catalog');
+  assert.match(page,/if \(!catalogView && streams.length\)/);
 });

@@ -8,7 +8,8 @@ const root = path.join(__dirname, '..');
 const matchOverrides = {getWorkMatchOverrides:async()=>[], importedLinkIsOverridden:()=>false};
 const plain = value => JSON.parse(JSON.stringify(value));
 function load(file, deps = {}, globals = {}) {
-  deps={'@/lib/adminWorkTitles':{applyAdminWorkTitles:async items=>items,applyAdminWorkTitle:async item=>item},...deps};
+  deps={'@/lib/workVideoSourcePreference':{resolveWorkVideoSource:async()=>undefined},
+    '@/lib/adminWorkTitles':{applyAdminWorkTitles:async items=>items,applyAdminWorkTitle:async item=>item},...deps};
   deps={'@/lib/reviewedProviderPlayback':{reviewedProviderPlayback:async anime=>anime},'../anikotoWorkOverrides':{getAnikotoWorkOverride:async()=>null},'./anikotoWorkOverrides':{getAnikotoWorkOverride:async()=>null},'../provisionalWorkMatches':{getReservedReanimeIdsForOtherWorks:async()=>new Set(),hasWorkMatchCandidates:async()=>false},'../workMatchOverrides':matchOverrides,'./workMatchOverrides':matchOverrides,'../reanimeMatches':{getConfirmedReanimeIdsForAnissia:async()=>new Map(),getEffectiveReanimeIdsForAnissia:async()=>new Map()},...deps};
   const exports = {};
   const code = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {

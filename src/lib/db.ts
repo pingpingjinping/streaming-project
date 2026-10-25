@@ -1866,6 +1866,13 @@ export async function saveUserSettings(
               user_settings.settings::jsonb -> 'workAspectRatios'
             )
             ELSE '{}'::jsonb
+          END ||
+          CASE WHEN user_settings.settings::jsonb ? 'workVideoSources'
+            THEN jsonb_build_object(
+              'workVideoSources',
+              user_settings.settings::jsonb -> 'workVideoSources'
+            )
+            ELSE '{}'::jsonb
           END
         )::text,
         updated_at = CURRENT_TIMESTAMP;
@@ -1963,6 +1970,59 @@ export async function saveWorkAspectChoice(
   } catch (error) {
     console.error("[db.saveWorkAspectChoice error]:", error);
     return { success: false, choice: null };
+  }
+}
+
+/** The default ReAnime source is implicit. Only explicit non-default
+ * choices (and ReAnime exceptions to known unavailable-video mappings) are
+ * persisted for a whole work, not separately for each episode or device.
+ */
+export type WorkVideoSource = "rean" | "anikoto" | "linkkf" | "ohli24";
+export function validWorkVideoSource(value: unknown): value is WorkVideoSource {
+  return value === "rean" || value === "anikoto" || value === "linkkf" || value === "ohli24";
+}
+export function validWorkVideoSourceId(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 160 &&
+    /^(?:ani_[1-9]\d*|(?:re_|ak_)[A-Za-z0-9_-]+)$/.test(value);
+}
+
+export async function getWorkVideoSourceChoice(userId: string, animeId: string): Promise<WorkVideoSource | null> {
+  if (!userId || !validWorkVideoSourceId(animeId)) return null;
+  const settings = await getUserSettings(userId);
+  const value = settings?.workVideoSources?.[animeId];
+  return validWorkVideoSource(value) ? value : null;
+}
+
+/** Atomic merge/delete of exactly one work's key, preserving aspect ratios,
+ * player preferences, and concurrent edits on different works/devices.
+ * Pass null to restore the normal default instead of storing redundant "rean".
+ */
+export async function saveWorkVideoSourceChoice(
+  userId: string, animeId: string, source: WorkVideoSource | null,
+): Promise<boolean> {
+  const sql = getDb();
+  if (!sql || !userId || !validWorkVideoSourceId(animeId) || (source !== null && !validWorkVideoSource(source)))
+    return false;
+  await initDb();
+  try {
+    const patch = JSON.stringify({ workVideoSources: source ? { [animeId]: source } : {} });
+    const sourcePatch = JSON.stringify(source ? { [animeId]: source } : {});
+    await sql`
+      INSERT INTO user_settings (user_id, settings, updated_at)
+      VALUES (${userId}, ${patch}, CURRENT_TIMESTAMP)
+      ON CONFLICT (user_id) DO UPDATE SET
+        settings = jsonb_set(
+          user_settings.settings::jsonb,
+          '{workVideoSources}',
+          (COALESCE(user_settings.settings::jsonb -> 'workVideoSources', '{}'::jsonb) - ${animeId})
+            || ${sourcePatch}::jsonb
+        )::text,
+        updated_at = CURRENT_TIMESTAMP
+    `;
+    return true;
+  } catch (error) {
+    console.error("[db.saveWorkVideoSourceChoice error]:", error);
+    return false;
   }
 }
 

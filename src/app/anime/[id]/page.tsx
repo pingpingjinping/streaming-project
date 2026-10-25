@@ -31,11 +31,15 @@ export default async function AnimeDetailPage({
 
   const provider = getProviderByAnimeId(id);
   const subtitleEpisodeStart = await getSubtitleEpisodeStart(user.username, id);
-  const videoSource = ['rean', 'anikoto', 'linkkf', 'ohli24'].includes(video_source || '')
+  let videoSource = ['rean', 'anikoto', 'linkkf', 'ohli24'].includes(video_source || '')
     ? video_source as 'rean' | 'anikoto' | 'linkkf' | 'ohli24' : undefined;
+  if (!isDub && !videoSource) {
+    const { resolveWorkVideoSource } = await import('@/lib/workVideoSourcePreference');
+    videoSource = await resolveWorkVideoSource(user.username, id);
+  }
   let anime = await provider.getAnimeDetail(id, { subtitleEpisodeStart, videoSource: isDub ? undefined : videoSource });
   if (anime && (id.startsWith('re_') || id.startsWith('ani_')) && !isDub &&
-      (anime.video_available === false || video_source === 'anikoto')) {
+      (anime.video_available === false || videoSource === 'anikoto')) {
     const { reviewedProviderPlayback } = await import('@/lib/reviewedProviderPlayback');
     anime = await reviewedProviderPlayback(anime, video_source);
   }

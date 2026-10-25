@@ -92,6 +92,10 @@ export default async function WatchPage({
   let requestedVideoSource = ["rean", "anikoto", "linkkf", "ohli24"].includes(video_source || "")
     ? video_source as "rean" | "anikoto" | "linkkf" | "ohli24"
     : undefined;
+  if (!isDub && !requestedVideoSource) {
+    const { resolveWorkVideoSource } = await import("@/lib/workVideoSourcePreference");
+    requestedVideoSource = await resolveWorkVideoSource(user.username, id);
+  }
 
   const manualSourceId = parseInt(manual_source || "0", 10);
   const manualCandidate =
