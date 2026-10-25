@@ -146,6 +146,7 @@ export default function IframePlayer({
   const [detectedAspect, setDetectedAspect] = useState<number | null>(null);
   const aspectLoadTokenRef = useRef(0);
   const aspectEditVersionRef = useRef(0);
+  const aspectSaveChainRef = useRef<Promise<void>>(Promise.resolve());
   const isAspectChoice = (value: unknown): value is AspectChoice =>
     value === "auto" || value === "4:3" || value === "16:9" || value === "21:9";
   // Use the catalog work ID so all episodes/provider switches share one choice.
@@ -214,13 +215,20 @@ export default function IframePlayer({
     aspectEditVersionRef.current += 1;
     setAspectChoice(next);
     try { localStorage.setItem(aspectStorageKey, next); } catch {}
-    void fetch("/api/settings/work-aspect", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ animeId, choice: next }),
-    }).then(response => {
-      if (!response.ok) console.warn("[Aspect preference sync] Account save failed");
-    }).catch(error => console.warn("[Aspect preference sync]", error));
+    // A user may click through 4:3 → 16:9 → 21:9 quickly. Serialize writes
+    // so a slow older request cannot overwrite the final account preference.
+    aspectSaveChainRef.current = aspectSaveChainRef.current.catch(() => {}).then(async () => {
+      try {
+        const response = await fetch("/api/settings/work-aspect", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ animeId, choice: next }),
+        });
+        if (!response.ok) console.warn("[Aspect preference sync] Account save failed");
+      } catch (error) {
+        console.warn("[Aspect preference sync]", error);
+      }
+    });
   };
   // Do not mix aspect hints into the existing playback/status message handler:
   // a separate listener keeps clock and subtitle timing behavior unchanged.
