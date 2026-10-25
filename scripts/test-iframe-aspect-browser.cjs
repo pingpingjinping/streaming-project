@@ -11,19 +11,38 @@ for(const file of ['IframePlayer','VideoServerSelect','usePlayerFullscreen','use
 for(const file of ['playerFullscreen','iframePlayback','subtitlePresentation','subtitleSrt','sponsorSubtitleSync'])modules['@/lib/'+file]=compile('src/lib/'+file+'.ts');
 const subtitle={name:'Pi track',is_ass:false,content:'WEBVTT\n\n00:01:59.000 --> 00:02:05.000\nPi caption\n'};
 let providerUrl,appUrl,embedLoads=0;
+const savedAspectByAccount=new Map();
 const provider=http.createServer((req,res)=>{
   embedLoads++;const params=new URL(req.url,providerUrl).searchParams;
-  const wide=params.get('ratio')==='16:9';
+  const wide=params.get('ratio')==='16:9',ultrawide=params.get('ratio')==='21:9';
   const aspectHint=params.get('hint')==='sd' ? {videoWidth:720,videoHeight:480} : {};
   res.setHeader('Content-Type','text/html');res.end(`<!doctype html><style>html,body,#media{margin:0;width:100%;height:100%;background:black}video{width:100%;height:100%;object-fit:contain}button{position:absolute;top:4px;right:4px}#parent{left:4px;right:auto}</style>
   <div id="media"><video autoplay muted playsinline></video><button id="native" onclick="document.querySelector('#media').requestFullscreen()">Provider native fullscreen</button><button id="parent" onclick="parent.postMessage({zenCommand:'toggleFullscreen'},'*')">Provider parent fullscreen</button></div>
-  <script>const c=document.createElement('canvas');c.width=320;c.height=${wide?180:240};const ctx=c.getContext('2d');function draw(){ctx.fillStyle='rgb(24,180,90)';ctx.fillRect(0,0,c.width,c.height);}draw();setInterval(draw,50);document.querySelector('video').srcObject=c.captureStream(10);
+  <script>const c=document.createElement('canvas');c.width=320;c.height=${ultrawide?137:wide?180:240};const ctx=c.getContext('2d');function draw(){ctx.fillStyle='rgb(24,180,90)';ctx.fillRect(0,0,c.width,c.height);}draw();setInterval(draw,50);document.querySelector('video').srcObject=c.captureStream(10);
   addEventListener('message',e=>{if(['getStatus','getTime','seek'].includes(e.data.command))parent.postMessage({currentTime:120,duration:600,paused:false,...${JSON.stringify(aspectHint)}},'*');});</script>`);
 });
 const cssDir=path.join(root,'.next/static/css'),styles=fs.readdirSync(cssDir).filter(name=>name.endsWith('.css'));
 const app=http.createServer((req,res)=>{
   const url=new URL(req.url,appUrl);
   if(url.pathname.startsWith('/styles/')){res.setHeader('Content-Type','text/css');return res.end(fs.readFileSync(path.join(cssDir,path.basename(url.pathname))));}
+  if(url.pathname==='/api/settings/work-aspect'){
+    res.setHeader('Content-Type','application/json');res.setHeader('Cache-Control','private, no-store');
+    const account=/(?:^|;\\s*)fixture_aspect_account=([^;]+)/.exec(req.headers.cookie||'')?.[1];
+    if(!account){res.statusCode=401;return res.end(JSON.stringify({success:false}));}
+    if(req.method==='GET'){
+      const key=account+'|'+url.searchParams.get('animeId');
+      return res.end(JSON.stringify({success:true,choice:savedAspectByAccount.get(key)??null,userId:account}));
+    }
+    if(req.method==='PUT'){
+      let payload='';req.on('data',chunk=>payload+=chunk);
+      req.on('end',()=>{
+        const body=JSON.parse(payload);const key=account+'|'+body.animeId;
+        if(!body.onlyIfAbsent||!savedAspectByAccount.has(key))savedAspectByAccount.set(key,body.choice);
+        res.end(JSON.stringify({success:true,choice:savedAspectByAccount.get(key),userId:account}));
+      });
+      return;
+    }
+  }
   if(url.pathname.startsWith('/api/')){res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(url.pathname.includes('/subtitles')?{success:true,creators:[],subtitles:[subtitle]}:{success:true,items:[]}));}
   if(url.pathname.startsWith('/libass/')){res.statusCode=404;return res.end();}
   const source=JSON.stringify(modules).replace(/</g,'\\u003c');
@@ -155,6 +174,18 @@ const app=http.createServer((req,res)=>{
       await ready(workPage,'?work=catalog_work&ep=4&hint=sd');
       await ratioButton().filter({hasText:'비율 16:9'}).waitFor();
       await workPage.evaluate(()=>localStorage.setItem('anime_player_aspect:catalog_work:5:sub:HD-1','4:3'));
+      await ratioButton().click(); // Manual 21:9 follows 16:9.
+      await ratioButton().filter({hasText:'비율 21:9'}).waitFor();
+      assert.equal(await workPage.evaluate(()=>localStorage.getItem('anime_player_aspect:work:catalog_work')),'21:9');
+      await ready(workPage,'?work=catalog_work&ep=4&ratio=21%3A9');
+      await ratioButton().filter({hasText:'비율 21:9'}).waitFor();
+      await workPage.waitForFunction(()=>{const b=document.querySelector('iframe').getBoundingClientRect();return Math.abs(b.width/b.height-21/9)<.03;});
+      const beforeWide=embedLoads;
+      await workPage.getByRole('button',{name:'전체화면',exact:true}).click();
+      await workPage.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
+      await workPage.waitForFunction(()=>{const b=document.querySelector('iframe').getBoundingClientRect();return Math.abs(b.width/b.height-21/9)<.03;});
+      assert.equal(embedLoads,beforeWide,'manual 21:9 fullscreen does not reload the iframe');
+      await workPage.evaluate(()=>document.exitFullscreen());
       await ratioButton().click(); // Explicit auto must not resurrect old per-episode choices.
       await ready(workPage,'?work=catalog_work&ep=5&hint=sd');
       await ratioButton().filter({hasText:'비율 자동 (4:3)'}).waitFor();
@@ -224,12 +255,60 @@ const app=http.createServer((req,res)=>{
     await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
     await page.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-562.5)<2);
     await page.evaluate(()=>document.exitFullscreen());
-    await reanimeButton().click();
+    await reanimeButton().click(); // 21:9
+    await reanimeButton().filter({hasText:'비율 21:9'}).waitFor();
+    await reanimeButton().click(); // Auto
     await reanimeButton().filter({hasText:'비율 자동'}).waitFor();
     await page.getByRole('button',{name:'전체화면',exact:true}).click();
     await page.waitForFunction(()=>document.fullscreenElement?.querySelector('iframe'));
     await page.waitForFunction(()=>Math.abs(document.querySelector('iframe').getBoundingClientRect().height-562.5)<2);
     await page.evaluate(()=>document.exitFullscreen());
+
+    // Account preference follows the work ID (not episode, device or provider).
+    // It does not affect other works or another signed-in account.
+    const accountDesktop=await browser.newContext({viewport:{width:1000,height:625}});
+    await accountDesktop.addCookies([{name:'fixture_aspect_account',value:'accountA',url:appUrl}]);
+    const desktop=await accountDesktop.newPage();desktop.on('pageerror',error=>errors.push(error.message));
+    await ready(desktop,'?source=anikoto&work=ak_grisaia&ratio=21%3A9');
+    const desktopRatio=()=>desktop.getByRole('button',{name:'화면 비율 변경'});
+    await desktopRatio().filter({hasText:'비율 자동'}).waitFor();
+    await desktopRatio().click();await desktopRatio().click();await desktopRatio().click();
+    await desktopRatio().filter({hasText:'비율 21:9'}).waitFor();
+    await desktop.waitForFunction(async()=>{const x=await(await fetch('/api/settings/work-aspect?animeId=ak_grisaia')).json();return x.choice==='21:9';});
+    await ready(desktop,'?source=rean&work=ak_grisaia&ep=8&ratio=21%3A9');
+    await desktopRatio().filter({hasText:'비율 21:9'}).waitFor();
+    const accountMobile=await browser.newContext({viewport:{width:390,height:844},userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1',hasTouch:true});
+    await accountMobile.addCookies([{name:'fixture_aspect_account',value:'accountA',url:appUrl}]);
+    const mobile=await accountMobile.newPage();mobile.on('pageerror',error=>errors.push(error.message));
+    await ready(mobile,'?source=anikoto&work=ak_grisaia&ep=25&ratio=21%3A9');
+    const mobileRatio=()=>mobile.getByRole('button',{name:'화면 비율 변경'});
+    await mobileRatio().filter({hasText:'비율 21:9'}).waitFor();
+    await mobile.waitForFunction(()=>{const b=document.querySelector('iframe').getBoundingClientRect();return Math.abs(b.width/b.height-21/9)<.03;});
+    await ready(mobile,'?source=anikoto&work=ak_grisaia_special&ep=1');
+    await mobileRatio().filter({hasText:'비율 자동'}).waitFor();
+    const otherAccount=await browser.newContext({viewport:{width:1000,height:625}});
+    await otherAccount.addCookies([{name:'fixture_aspect_account',value:'accountB',url:appUrl}]);
+    const stranger=await otherAccount.newPage();stranger.on('pageerror',error=>errors.push(error.message));
+    await ready(stranger,'?source=anikoto&work=ak_grisaia&ep=25');
+    await stranger.getByRole('button',{name:'화면 비율 변경'}).filter({hasText:'비율 자동'}).waitFor();
+    // Switch accounts in the SAME browser. Its old localStorage must not be
+    // imported into the other account's previously empty server preference.
+    await accountDesktop.addCookies([{name:'fixture_aspect_account',value:'accountB',url:appUrl}]);
+    await ready(desktop,'?source=anikoto&work=ak_grisaia&ep=4');
+    await desktop.waitForFunction(()=>localStorage.getItem('anime_player_aspect:owner:ak_grisaia')==='accountB');
+    await desktopRatio().filter({hasText:'비율 자동'}).waitFor();
+    await accountDesktop.addCookies([{name:'fixture_aspect_account',value:'accountA',url:appUrl}]);
+    await ready(desktop,'?source=anikoto&work=ak_grisaia&ep=4');
+    await desktopRatio().filter({hasText:'비율 21:9'}).waitFor();
+    // Explicit reset to Auto must propagate, not revive a stale local choice.
+    await ready(desktop,'?source=anikoto&work=ak_grisaia&ep=9');
+    await desktopRatio().filter({hasText:'비율 21:9'}).waitFor();
+    await desktopRatio().click(); // Auto
+    await desktop.waitForFunction(async()=>{const x=await(await fetch('/api/settings/work-aspect?animeId=ak_grisaia')).json();return x.choice==='auto';});
+    await ready(mobile,'?source=anikoto&work=ak_grisaia&ep=26');
+    await mobileRatio().filter({hasText:'비율 자동'}).waitFor();
+    assert.equal(await mobile.evaluate(()=>localStorage.getItem('anime_player_aspect:work:ak_grisaia')),'auto');
+    await accountDesktop.close();await accountMobile.close();await otherAccount.close();
 
     // Anikoto's own fullscreen uses the whole iframe, but the site's
     // subtitle-inclusive button originally constrained all media to 16:9.
@@ -387,6 +466,17 @@ const app=http.createServer((req,res)=>{
       'ReAnime aspect control remains outside iPhone fullscreen');
     await iphone.getByRole('button',{name:'전체화면 종료',exact:true}).click();
 
+    // The same manual 21:9 preference must work in iPhone web fullscreen.
+    await iphoneRatio().click(); // 21:9
+    await iphoneRatio().filter({hasText:'비율 21:9'}).waitFor();
+    await iphone.waitForFunction(()=>{const b=document.querySelector('iframe').getBoundingClientRect();return Math.abs(b.width/b.height-21/9)<.03;});
+    const beforeIphoneWide=embedLoads;
+    await iphone.getByRole('button',{name:'전체화면',exact:true}).click();
+    await iphone.getByRole('button',{name:'전체화면 종료',exact:true}).waitFor();
+    await iphone.waitForFunction(()=>{const b=document.querySelector('iframe').getBoundingClientRect();return Math.abs(b.width-390)<2&&Math.abs(b.height-390*9/21)<2;});
+    assert.equal(embedLoads,beforeIphoneWide,'iPhone manual 21:9 fullscreen must not reload the iframe');
+    await iphone.getByRole('button',{name:'전체화면 종료',exact:true}).click();
+
     const ipad=await browser.newContext({viewport:{width:768,height:1024},userAgent:'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15',hasTouch:true});
     const tablet=await ipad.newPage();tablet.on('pageerror',error=>errors.push(error.message));
     // Chromium's hasTouch emulates only one touch point; desktop-mode iPad
@@ -399,6 +489,6 @@ const app=http.createServer((req,res)=>{
     assert.ok(Math.abs(tabletFrame.height-tabletFrame.width*9/16)<2,'iPad retains its existing portrait framing');
     await tablet.getByRole('button',{name:'전체화면 종료',exact:true}).click();
     assert.deepEqual(errors,[]);
-    console.log('PASS: ReAnime default unchanged, ReAnime manual 4:3/16:9 work persistence with mixed server options, Anikoto SD auto and existing fullscreen/browser paths without reload');
+    console.log('PASS: manual 21:9 per-work persistence, inline/desktop/iPhone fullscreen; 4:3/16:9 auto and existing browser paths unchanged');
   }finally{await browser?.close();await Promise.all([new Promise(resolve=>provider.close(resolve)),new Promise(resolve=>app.close(resolve))]);}
 })().catch(error=>{console.error(error);process.exitCode=1;});

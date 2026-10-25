@@ -141,32 +141,117 @@ export default function IframePlayer({
   const isAnikotoEmbed = activeProvider === "anikoto";
   const isReAnimeEmbed = activeProvider === "rean";
   const hasAspectControl = isAnikotoEmbed || isReAnimeEmbed;
-  const [aspectChoice, setAspectChoice] = useState<"auto" | "4:3" | "16:9">("auto");
+  type AspectChoice = "auto" | "4:3" | "16:9" | "21:9";
+  const [aspectChoice, setAspectChoice] = useState<AspectChoice>("auto");
   const [detectedAspect, setDetectedAspect] = useState<number | null>(null);
-  // Use the catalog work ID so episodes and provider/server changes share one
-  // preference, without sharing it with separately listed seasons or specials.
+  const aspectLoadTokenRef = useRef(0);
+  const aspectEditVersionRef = useRef(0);
+  const aspectSaveChainRef = useRef<Promise<void>>(Promise.resolve());
+  const isAspectChoice = (value: unknown): value is AspectChoice =>
+    value === "auto" || value === "4:3" || value === "16:9" || value === "21:9";
+  // Use the catalog work ID so all episodes/provider switches share one choice.
+  // Local storage is a fast fallback; the signed-in account is authoritative.
   const aspectStorageKey = `anime_player_aspect:work:${animeId}`;
+  const aspectOwnerKey = `anime_player_aspect:owner:${animeId}`;
   const legacyAspectStorageKey = `anime_player_aspect:${sourceAnimeId || animeId}:${sourceEpisodeNumber ?? episodeNumber}:${activeServerKey || "default"}`;
   useEffect(() => {
+    const token = ++aspectLoadTokenRef.current;
     if (!hasAspectControl) { setAspectChoice("auto"); setDetectedAspect(null); return; }
+    let cancelled = false;
+    const editedAtStart = aspectEditVersionRef.current;
     let saved: string | null = null;
     try {
       saved = localStorage.getItem(aspectStorageKey);
       if (saved === null) {
         const legacy = localStorage.getItem(legacyAspectStorageKey);
-        if (legacy === "4:3" || legacy === "16:9") {
+        if (isAspectChoice(legacy) && legacy !== "auto") {
           saved = legacy;
           localStorage.setItem(aspectStorageKey, legacy);
         }
       }
     } catch {}
-    setAspectChoice(saved === "4:3" || saved === "16:9" ? saved : "auto");
+    const localChoice = isAspectChoice(saved) ? saved : null;
+    let localOwner: string | null = null;
+    try { localOwner = localStorage.getItem(aspectOwnerKey); } catch {}
+    setAspectChoice(localChoice ?? "auto");
     setDetectedAspect(null);
-  }, [aspectStorageKey, legacyAspectStorageKey, activeEmbedUrl, hasAspectControl]);
+    const current = () => !cancelled && aspectLoadTokenRef.current === token
+      && aspectEditVersionRef.current === editedAtStart;
+    const store = (choice: AspectChoice, owner?: string) => {
+      if (!current()) return;
+      setAspectChoice(choice);
+      try {
+        localStorage.setItem(aspectStorageKey, choice);
+        if (owner) localStorage.setItem(aspectOwnerKey, owner);
+      } catch {}
+    };
+    // Server preference wins, including an explicit "auto" reset. If an
+    // older browser only has local data, migrate once without overwriting
+    // an account value another device might have written concurrently.
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/settings/work-aspect?animeId=${encodeURIComponent(animeId)}`,
+          { cache: "no-store" },
+        );
+        if (!res.ok || !current()) return;
+        const data = await res.json();
+        if (!data.success || !current()) return;
+        const owner = typeof data.userId === "string" ? data.userId : "";
+        if (isAspectChoice(data.choice)) {
+          store(data.choice, owner);
+        } else if (data.choice === null && localOwner && owner && localOwner !== owner) {
+          // A different account used this browser earlier; never import its
+          // cached preference into the currently signed-in account.
+          store("auto", owner);
+        } else if (data.choice === null && localChoice !== null) {
+          const migrated = await fetch("/api/settings/work-aspect", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ animeId, choice: localChoice, onlyIfAbsent: true }),
+          });
+          if (migrated.ok) {
+            const result = await migrated.json();
+            if (isAspectChoice(result.choice)) store(result.choice, owner);
+          }
+        } else if (owner) {
+          try { localStorage.setItem(aspectOwnerKey, owner); } catch {}
+        }
+      } catch (error) {
+        console.warn("[Aspect preference sync]", error);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [aspectStorageKey, aspectOwnerKey, legacyAspectStorageKey, activeEmbedUrl, hasAspectControl]);
   const cycleAspectChoice = () => {
-    const next = aspectChoice === "auto" ? "4:3" : aspectChoice === "4:3" ? "16:9" : "auto";
+    const next = aspectChoice === "auto" ? "4:3" : aspectChoice === "4:3" ? "16:9" : aspectChoice === "16:9" ? "21:9" : "auto";
+    aspectEditVersionRef.current += 1;
+    const editVersion = aspectEditVersionRef.current;
     setAspectChoice(next);
     try { localStorage.setItem(aspectStorageKey, next); } catch {}
+    // A user may click through 4:3 → 16:9 → 21:9 quickly. Serialize writes
+    // so a slow older request cannot overwrite the final account preference.
+    aspectSaveChainRef.current = aspectSaveChainRef.current.catch(() => {}).then(async () => {
+      try {
+        const response = await fetch("/api/settings/work-aspect", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ animeId, choice: next }),
+        });
+        if (!response.ok) {
+          console.warn("[Aspect preference sync] Account save failed");
+        } else {
+          const saved = await response.json();
+          // Track the owner of this browser cache to avoid leaking preferences
+          // when another account signs in on the same device.
+          if (aspectEditVersionRef.current === editVersion && typeof saved.userId === "string") {
+            try { localStorage.setItem(aspectOwnerKey, saved.userId); } catch {}
+          }
+        }
+      } catch (error) {
+        console.warn("[Aspect preference sync]", error);
+      }
+    });
   };
   // Do not mix aspect hints into the existing playback/status message handler:
   // a separate listener keeps clock and subtitle timing behavior unchanged.
@@ -184,7 +269,13 @@ export default function IframePlayer({
   const aspectLabel = aspectChoice === "auto"
     ? `자동${detectedAspect === 4 / 3 ? " (4:3)" : ""}`
     : aspectChoice;
-  const resolvedAspect = aspectChoice === "4:3" ? 4 / 3 : aspectChoice === "16:9" ? 16 / 9 : detectedAspect ?? 16 / 9;
+  // Leave automatic detection and existing inline 16:9 sizing unchanged.
+  // Only an explicit 21:9 selection widens the inline video/subtitle frame.
+  const manualUltrawide = aspectChoice === "21:9";
+  const resolvedAspect = aspectChoice === "4:3" ? 4 / 3
+    : aspectChoice === "16:9" ? 16 / 9
+    : manualUltrawide ? 21 / 9 : detectedAspect ?? 16 / 9;
+  const inlineAspectStyle = manualUltrawide ? { aspectRatio: "21 / 9" } : undefined;
 
   // States
   const { mode: fullscreenMode, isFullscreen, toggleFullscreen, retryNativeFullscreen, appleWebFullscreen } = usePlayerFullscreen(containerRef);
@@ -194,10 +285,10 @@ export default function IframePlayer({
   // A manual ReAnime choice resizes only our frame (including on Apple), not
   // the provider's video node or its own internal black padding.
   const reanimeManualAspect = isReAnimeEmbed && aspectChoice !== "auto";
-  const frameAspect = reanimeManualAspect || (isAnikotoEmbed && !appleWebFullscreen)
+  const frameAspect = reanimeManualAspect || (isAnikotoEmbed && (!appleWebFullscreen || manualUltrawide))
     ? resolvedAspect : 16 / 9;
   useContainedPlayerFrame(containerRef, mediaFrameRef, isFullscreen, fullscreenMode === "web", false,
-    iphoneWebFullscreen && !reanimeManualAspect ? 4 / 3 : frameAspect, frameAspect);
+    iphoneWebFullscreen && !reanimeManualAspect && !manualUltrawide ? 4 / 3 : frameAspect, frameAspect);
   const showNativeRetry = fullscreenMode === "web" && typeof navigator !== "undefined" && !appleWebFullscreen;
   const nativeRetryLabel = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent)
     ? "상태바 숨기기" : "전체화면 재시도";
@@ -1398,6 +1489,7 @@ export default function IframePlayer({
       {/* Main Video Box with Subtitle HUD Overlay */}
       <div
         ref={containerRef}
+        style={inlineAspectStyle}
         className={`overflow-hidden bg-black ${
           fullscreenMode === "web"
             ? "player-fullscreen-viewport fixed inset-0 z-50 w-screen"
@@ -1678,7 +1770,7 @@ export default function IframePlayer({
 
             {hasAspectControl && (
               <button type="button" onClick={cycleAspectChoice}
-                title="영상 비율 변경: 자동 → 4:3 → 16:9 (이 작품 모든 회차에 저장)"
+                title="영상 비율 변경: 자동 → 4:3 → 16:9 → 21:9 (이 작품 모든 회차에 저장)"
                 aria-label="화면 비율 변경"
                 className="flex items-center gap-1 rounded-lg border border-white/10 bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-purple-500 hover:text-white cursor-pointer">
                 비율 {aspectLabel}

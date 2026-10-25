@@ -1849,14 +1849,21 @@ export async function saveUserSettings(
       INSERT INTO user_settings (user_id, settings, updated_at)
       VALUES (${userId}, ${jsonStr}, CURRENT_TIMESTAMP)
       ON CONFLICT (user_id) DO UPDATE SET
-        -- Keep the Anissia catalog preference when player settings are saved.
-        -- This avoids a settings-panel save accidentally resetting the toggle.
+        -- Separate account-scoped preferences must survive generic player
+        -- settings saves (including stale data sent from another device).
         settings = (
           EXCLUDED.settings::jsonb ||
           CASE WHEN user_settings.settings::jsonb ? 'anissiaCatalogCaptionsOnly'
             THEN jsonb_build_object(
               'anissiaCatalogCaptionsOnly',
               user_settings.settings::jsonb -> 'anissiaCatalogCaptionsOnly'
+            )
+            ELSE '{}'::jsonb
+          END ||
+          CASE WHEN user_settings.settings::jsonb ? 'workAspectRatios'
+            THEN jsonb_build_object(
+              'workAspectRatios',
+              user_settings.settings::jsonb -> 'workAspectRatios'
             )
             ELSE '{}'::jsonb
           END
@@ -1896,6 +1903,66 @@ export async function setAnissiaCatalogCaptionsOnly(userId: string, enabled: boo
   } catch (e) {
     console.error("[db.setAnissiaCatalogCaptionsOnly error]:", e);
     return false;
+  }
+}
+
+// Aspect ratio overrides belong to the signed-in account and the full work,
+// never a video server or episode. Store them inside existing user_settings JSON,
+// without creating an independent schema/table.
+export type WorkAspectChoice = "auto" | "4:3" | "16:9" | "21:9";
+export function validWorkAspectChoice(value: unknown): value is WorkAspectChoice {
+  return value === "auto" || value === "4:3" || value === "16:9" || value === "21:9";
+}
+export function validWorkAspectId(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 100 &&
+    /^(?:ani_[1-9]\\d*|(?:re_|ak_|db_AniList_|db_Onnada_)[A-Za-z0-9_-]+)$/.test(value);
+}
+
+export async function getWorkAspectChoice(userId: string, animeId: string): Promise<WorkAspectChoice | null> {
+  if (!userId || !validWorkAspectId(animeId)) return null;
+  const settings = await getUserSettings(userId);
+  const choice = settings?.workAspectRatios?.[animeId];
+  return validWorkAspectChoice(choice) ? choice : null;
+}
+
+/** Atomic JSON patch: concurrent devices cannot overwrite unrelated works or
+ * other player preferences. A migration writes only when the account lacks
+ * a value, so a stale browser cannot undo another device's explicit Auto.
+ */
+export async function saveWorkAspectChoice(
+  userId: string, animeId: string, choice: WorkAspectChoice,
+  onlyIfAbsent = false,
+): Promise<{ success: boolean; choice: WorkAspectChoice | null }> {
+  const sql = getDb();
+  if (!sql || !userId || !validWorkAspectId(animeId) || !validWorkAspectChoice(choice))
+    return { success: false, choice: null };
+  await initDb();
+  try {
+    const patch = JSON.stringify({ workAspectRatios: { [animeId]: choice } });
+    const workPatch = JSON.stringify({ [animeId]: choice });
+    const rows = await sql`
+      INSERT INTO user_settings (user_id, settings, updated_at)
+      VALUES (${userId}, ${patch}, CURRENT_TIMESTAMP)
+      ON CONFLICT (user_id) DO UPDATE SET
+        settings = jsonb_set(
+          user_settings.settings::jsonb,
+          '{workAspectRatios}',
+          COALESCE(user_settings.settings::jsonb -> 'workAspectRatios', '{}'::jsonb)
+            || ${workPatch}::jsonb
+        )::text,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE NOT ${onlyIfAbsent} OR NOT (
+        COALESCE(user_settings.settings::jsonb -> 'workAspectRatios', '{}'::jsonb) ? ${animeId}
+      )
+      RETURNING settings
+    `;
+    if (!rows.length) return { success: true, choice: await getWorkAspectChoice(userId, animeId) };
+    const updated = typeof rows[0].settings === "string" ? JSON.parse(rows[0].settings) : rows[0].settings;
+    const saved = updated?.workAspectRatios?.[animeId];
+    return { success: true, choice: validWorkAspectChoice(saved) ? saved : null };
+  } catch (error) {
+    console.error("[db.saveWorkAspectChoice error]:", error);
+    return { success: false, choice: null };
   }
 }
 
