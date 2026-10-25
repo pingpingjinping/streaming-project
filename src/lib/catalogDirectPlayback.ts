@@ -13,12 +13,16 @@ const valid = (id: string) => /^[A-Za-z0-9_-]+$/.test(id);
 export function directCatalogPlaybackHref(
   members: string[],
   streams: CatalogStreamLink[],
+  options: { reanimeConfirmedUnavailable?: boolean } = {},
 ): string | null {
-  // A unique explicit Anikoto link is the destination advertised on this
-  // catalog page. Prefer it, but never auto-enter a multi-season listing.
-  if (streams.some(row => row.link_status === "multi_reviewed")) return null;
+  // Multi-reviewed Anikoto links may represent several subtitle works sharing
+  // a single video. Only bypass the intermediary when the CURRENT catalog work
+  // has no playable ReAnime source according to exact, reviewed DB links.
+  // Never choose arbitrarily between different Anikoto releases.
+  const multi = streams.some(row => row.link_status === "multi_reviewed");
+  if (multi && !options.reanimeConfirmedUnavailable) return null;
   const streamIds = [...new Set(streams
-    .filter(row => ["reviewed", "automatic"].includes(row.link_status))
+    .filter(row => ["reviewed", "automatic", ...(multi ? ["multi_reviewed"] : [])].includes(row.link_status))
     .map(row => row.anikoto_id)
     .filter(valid))];
   if (streamIds.length > 1) return null;

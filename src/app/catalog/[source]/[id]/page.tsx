@@ -6,6 +6,7 @@ import { getDb } from '@/lib/db';
 import { loadSubtitleCatalog } from '@/lib/koreanSubtitleCatalog';
 import { notFound, redirect } from 'next/navigation';
 import { directCatalogPlaybackHref } from '@/lib/catalogDirectPlayback';
+import { catalogHasConfirmedNoReanimeVideo } from '@/lib/catalogVideoAvailability';
 
 export default async function CatalogWorkPage({ params, searchParams }: {
   params: Promise<{ source: string; id: string }>;
@@ -63,8 +64,11 @@ export default async function CatalogWorkPage({ params, searchParams }: {
         FROM anime_admin_subtitle_link_members
         WHERE relative_path=ANY(${paths}::text[])`;
     }
+    const reanimeConfirmedUnavailable = streams.some(row => row.link_status === 'multi_reviewed')
+      ? await catalogHasConfirmedNoReanimeVideo(source, id) : false;
     const target = directCatalogPlaybackHref(
       manualMembers.map(row => row.anime_id), streams,
+      { reanimeConfirmedUnavailable },
     );
     if (target) redirect(target);
   }
