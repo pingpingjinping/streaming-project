@@ -41,7 +41,7 @@ export default async function AnimeDetailPage({
   if (anime && (id.startsWith('re_') || id.startsWith('ani_')) && !isDub &&
       (anime.video_available === false || videoSource === 'anikoto')) {
     const { reviewedProviderPlayback } = await import('@/lib/reviewedProviderPlayback');
-    anime = await reviewedProviderPlayback(anime, video_source);
+    anime = await reviewedProviderPlayback(anime, videoSource);
   }
   if (anime?.video_available === false && id.startsWith('re_')) {
     anime = { ...anime, sub_episodes: [], dub_episodes: [] };
