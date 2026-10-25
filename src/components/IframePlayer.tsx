@@ -141,32 +141,86 @@ export default function IframePlayer({
   const isAnikotoEmbed = activeProvider === "anikoto";
   const isReAnimeEmbed = activeProvider === "rean";
   const hasAspectControl = isAnikotoEmbed || isReAnimeEmbed;
-  const [aspectChoice, setAspectChoice] = useState<"auto" | "4:3" | "16:9" | "21:9">("auto");
+  type AspectChoice = "auto" | "4:3" | "16:9" | "21:9";
+  const [aspectChoice, setAspectChoice] = useState<AspectChoice>("auto");
   const [detectedAspect, setDetectedAspect] = useState<number | null>(null);
-  // Use the catalog work ID so episodes and provider/server changes share one
-  // preference, without sharing it with separately listed seasons or specials.
+  const aspectLoadTokenRef = useRef(0);
+  const aspectEditVersionRef = useRef(0);
+  const isAspectChoice = (value: unknown): value is AspectChoice =>
+    value === "auto" || value === "4:3" || value === "16:9" || value === "21:9";
+  // Use the catalog work ID so all episodes/provider switches share one choice.
+  // Local storage is a fast fallback; the signed-in account is authoritative.
   const aspectStorageKey = `anime_player_aspect:work:${animeId}`;
   const legacyAspectStorageKey = `anime_player_aspect:${sourceAnimeId || animeId}:${sourceEpisodeNumber ?? episodeNumber}:${activeServerKey || "default"}`;
   useEffect(() => {
+    const token = ++aspectLoadTokenRef.current;
     if (!hasAspectControl) { setAspectChoice("auto"); setDetectedAspect(null); return; }
+    let cancelled = false;
+    const editedAtStart = aspectEditVersionRef.current;
     let saved: string | null = null;
     try {
       saved = localStorage.getItem(aspectStorageKey);
       if (saved === null) {
         const legacy = localStorage.getItem(legacyAspectStorageKey);
-        if (legacy === "4:3" || legacy === "16:9" || legacy === "21:9") {
+        if (isAspectChoice(legacy) && legacy !== "auto") {
           saved = legacy;
           localStorage.setItem(aspectStorageKey, legacy);
         }
       }
     } catch {}
-    setAspectChoice(saved === "4:3" || saved === "16:9" || saved === "21:9" ? saved : "auto");
+    const localChoice = isAspectChoice(saved) ? saved : null;
+    setAspectChoice(localChoice ?? "auto");
     setDetectedAspect(null);
+    const current = () => !cancelled && aspectLoadTokenRef.current === token
+      && aspectEditVersionRef.current === editedAtStart;
+    const store = (choice: AspectChoice) => {
+      if (!current()) return;
+      setAspectChoice(choice);
+      try { localStorage.setItem(aspectStorageKey, choice); } catch {}
+    };
+    // Server preference wins, including an explicit "auto" reset. If an
+    // older browser only has local data, migrate once without overwriting
+    // an account value another device might have written concurrently.
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/settings/work-aspect?animeId=${encodeURIComponent(animeId)}`,
+          { cache: "no-store" },
+        );
+        if (!res.ok || !current()) return;
+        const data = await res.json();
+        if (!data.success || !current()) return;
+        if (isAspectChoice(data.choice)) {
+          store(data.choice);
+        } else if (data.choice === null && localChoice !== null) {
+          const migrated = await fetch("/api/settings/work-aspect", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ animeId, choice: localChoice, onlyIfAbsent: true }),
+          });
+          if (migrated.ok) {
+            const result = await migrated.json();
+            if (isAspectChoice(result.choice)) store(result.choice);
+          }
+        }
+      } catch (error) {
+        console.warn("[Aspect preference sync]", error);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [aspectStorageKey, legacyAspectStorageKey, activeEmbedUrl, hasAspectControl]);
   const cycleAspectChoice = () => {
     const next = aspectChoice === "auto" ? "4:3" : aspectChoice === "4:3" ? "16:9" : aspectChoice === "16:9" ? "21:9" : "auto";
+    aspectEditVersionRef.current += 1;
     setAspectChoice(next);
     try { localStorage.setItem(aspectStorageKey, next); } catch {}
+    void fetch("/api/settings/work-aspect", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ animeId, choice: next }),
+    }).then(response => {
+      if (!response.ok) console.warn("[Aspect preference sync] Account save failed");
+    }).catch(error => console.warn("[Aspect preference sync]", error));
   };
   // Do not mix aspect hints into the existing playback/status message handler:
   // a separate listener keeps clock and subtitle timing behavior unchanged.
