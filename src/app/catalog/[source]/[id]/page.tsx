@@ -18,6 +18,22 @@ export default async function CatalogWorkPage({ params, searchParams }: {
   const sql = getDb();
   if (!sql) notFound();
   const workId = 'db_' + source + '_' + id;
+  const catalogView = (await searchParams).view === 'catalog';
+  // This exact DB lookup is far cheaper than loading the full subtitle
+  // catalog, subtitle files and blog posts. A reviewed, unambiguous Anikoto
+  // target should never wait on the catalog just to redirect.
+  let streams: Array<{anikoto_id:string;link_status:string}> = [];
+  try { streams = await sql`SELECT DISTINCT anikoto_id,link_status FROM anime_anikoto_work_lookup
+    WHERE source=${source} AND source_record_id=${id}
+      AND link_status IN ('automatic','reviewed','multi_reviewed') ORDER BY anikoto_id`; }
+  catch (error: any) { if (error?.code !== '42P01') throw error; }
+  let reanimeConfirmedUnavailable = false;
+  if (!catalogView && streams.length) {
+    reanimeConfirmedUnavailable = streams.some(row => row.link_status === 'multi_reviewed')
+      ? await catalogHasConfirmedNoReanimeVideo(source, id) : false;
+    const target = directCatalogPlaybackHref([], streams, { reanimeConfirmedUnavailable });
+    if (target) redirect(target);
+  }
   const knownWork = (await loadSubtitleCatalog()).find(row => row.id === workId);
   // A newly connected Pi folder is not part of the frozen reviewed registry.
   // Keep its catalog detail route usable even when it has no packaged subtitle
@@ -47,16 +63,10 @@ export default async function CatalogWorkPage({ params, searchParams }: {
   try { posts = await sql`SELECT DISTINCT post_id,blog_title FROM anime_aniall_matches
     WHERE ref_source=${source} AND ref_source_id=${id} ORDER BY post_id`; }
   catch (error: any) { if (error?.code !== '42P01') throw error; }
-  let streams: Array<{anikoto_id:string;link_status:string}> = [];
-  try { streams = await sql`SELECT DISTINCT anikoto_id,link_status FROM anime_anikoto_work_lookup
-    WHERE source=${source} AND source_record_id=${id}
-      AND link_status IN ('automatic','reviewed','multi_reviewed') ORDER BY anikoto_id`; }
-  catch (error: any) { if (error?.code !== '42P01') throw error; }
-
   // Catalog-only pages are informational. A known, single playable source
   // should open the ordinary work page immediately, preserving a manual
   // ?view=catalog escape hatch for subtitle/file inspection.
-  if ((await searchParams).view !== 'catalog') {
+  if (!catalogView) {
     let manualMembers: Array<{anime_id:string}> = [];
     if (manualLinks.length) {
       const paths = manualLinks.map(row => row.relative_path);
@@ -64,8 +74,6 @@ export default async function CatalogWorkPage({ params, searchParams }: {
         FROM anime_admin_subtitle_link_members
         WHERE relative_path=ANY(${paths}::text[])`;
     }
-    const reanimeConfirmedUnavailable = streams.some(row => row.link_status === 'multi_reviewed')
-      ? await catalogHasConfirmedNoReanimeVideo(source, id) : false;
     const target = directCatalogPlaybackHref(
       manualMembers.map(row => row.anime_id), streams,
       { reanimeConfirmedUnavailable },
