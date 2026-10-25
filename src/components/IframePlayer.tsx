@@ -141,7 +141,7 @@ export default function IframePlayer({
   const isAnikotoEmbed = activeProvider === "anikoto";
   const isReAnimeEmbed = activeProvider === "rean";
   const hasAspectControl = isAnikotoEmbed || isReAnimeEmbed;
-  const [aspectChoice, setAspectChoice] = useState<"auto" | "4:3" | "16:9">("auto");
+  const [aspectChoice, setAspectChoice] = useState<"auto" | "4:3" | "16:9" | "21:9">("auto");
   const [detectedAspect, setDetectedAspect] = useState<number | null>(null);
   // Use the catalog work ID so episodes and provider/server changes share one
   // preference, without sharing it with separately listed seasons or specials.
@@ -154,17 +154,17 @@ export default function IframePlayer({
       saved = localStorage.getItem(aspectStorageKey);
       if (saved === null) {
         const legacy = localStorage.getItem(legacyAspectStorageKey);
-        if (legacy === "4:3" || legacy === "16:9") {
+        if (legacy === "4:3" || legacy === "16:9" || legacy === "21:9") {
           saved = legacy;
           localStorage.setItem(aspectStorageKey, legacy);
         }
       }
     } catch {}
-    setAspectChoice(saved === "4:3" || saved === "16:9" ? saved : "auto");
+    setAspectChoice(saved === "4:3" || saved === "16:9" || saved === "21:9" ? saved : "auto");
     setDetectedAspect(null);
   }, [aspectStorageKey, legacyAspectStorageKey, activeEmbedUrl, hasAspectControl]);
   const cycleAspectChoice = () => {
-    const next = aspectChoice === "auto" ? "4:3" : aspectChoice === "4:3" ? "16:9" : "auto";
+    const next = aspectChoice === "auto" ? "4:3" : aspectChoice === "4:3" ? "16:9" : aspectChoice === "16:9" ? "21:9" : "auto";
     setAspectChoice(next);
     try { localStorage.setItem(aspectStorageKey, next); } catch {}
   };
@@ -182,9 +182,16 @@ export default function IframePlayer({
   }, [isAnikotoEmbed, activeEmbedUrl]);
 
   const aspectLabel = aspectChoice === "auto"
-    ? `자동${detectedAspect === 4 / 3 ? " (4:3)" : ""}`
+    ? `자동${detectedAspect === 4 / 3 ? " (4:3)" : detectedAspect !== null && detectedAspect > 2.05 ? " (초광폭)" : ""}`
     : aspectChoice;
-  const resolvedAspect = aspectChoice === "4:3" ? 4 / 3 : aspectChoice === "16:9" ? 16 / 9 : detectedAspect ?? 16 / 9;
+  const resolvedAspect = aspectChoice === "4:3" ? 4 / 3
+    : aspectChoice === "16:9" ? 16 / 9
+    : aspectChoice === "21:9" ? 21 / 9
+    : isAnikotoEmbed ? detectedAspect ?? 16 / 9 : 16 / 9;
+  // Match the frame to genuine ultrawide video even outside fullscreen. Keep
+  // legacy 16:9 geometry for ordinary videos and unknown ReAnime embeds.
+  const ultrawideAspect = resolvedAspect > 2.05;
+  const inlineAspectStyle = ultrawideAspect ? { aspectRatio: String(resolvedAspect) } : undefined;
 
   // States
   const { mode: fullscreenMode, isFullscreen, toggleFullscreen, retryNativeFullscreen, appleWebFullscreen } = usePlayerFullscreen(containerRef);
@@ -194,10 +201,10 @@ export default function IframePlayer({
   // A manual ReAnime choice resizes only our frame (including on Apple), not
   // the provider's video node or its own internal black padding.
   const reanimeManualAspect = isReAnimeEmbed && aspectChoice !== "auto";
-  const frameAspect = reanimeManualAspect || (isAnikotoEmbed && !appleWebFullscreen)
+  const frameAspect = reanimeManualAspect || (isAnikotoEmbed && (!appleWebFullscreen || ultrawideAspect))
     ? resolvedAspect : 16 / 9;
   useContainedPlayerFrame(containerRef, mediaFrameRef, isFullscreen, fullscreenMode === "web", false,
-    iphoneWebFullscreen && !reanimeManualAspect ? 4 / 3 : frameAspect, frameAspect);
+    iphoneWebFullscreen && !reanimeManualAspect && !ultrawideAspect ? 4 / 3 : frameAspect, frameAspect);
   const showNativeRetry = fullscreenMode === "web" && typeof navigator !== "undefined" && !appleWebFullscreen;
   const nativeRetryLabel = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent)
     ? "상태바 숨기기" : "전체화면 재시도";
@@ -1398,6 +1405,7 @@ export default function IframePlayer({
       {/* Main Video Box with Subtitle HUD Overlay */}
       <div
         ref={containerRef}
+        style={inlineAspectStyle}
         className={`overflow-hidden bg-black ${
           fullscreenMode === "web"
             ? "player-fullscreen-viewport fixed inset-0 z-50 w-screen"
@@ -1678,7 +1686,7 @@ export default function IframePlayer({
 
             {hasAspectControl && (
               <button type="button" onClick={cycleAspectChoice}
-                title="영상 비율 변경: 자동 → 4:3 → 16:9 (이 작품 모든 회차에 저장)"
+                title="영상 비율 변경: 자동 → 4:3 → 16:9 → 21:9 (이 작품 모든 회차에 저장)"
                 aria-label="화면 비율 변경"
                 className="flex items-center gap-1 rounded-lg border border-white/10 bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-purple-500 hover:text-white cursor-pointer">
                 비율 {aspectLabel}
