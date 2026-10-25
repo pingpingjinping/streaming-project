@@ -16,7 +16,7 @@ function pref({selected=null,unavailable=true,candidates=[{animeId:ak,linkStatus
     './db':{getWorkVideoSourceChoice:async(...args)=>{calls.push(['user',...args]);return selected;}},
     './localReanimeDetail':{getLocalReanimeDetail:async(...args)=>{calls.push(['local',...args]);return unavailable?{video_available:false}:null;}},
     './anikotoLinks':{getAnikotoPlaybackCandidates:async(...args)=>{calls.push(['candidates',...args]);return candidates;}},
-    './reanimeMatches':{getEffectiveReanimeIdsForAnissia:async()=>new Map([[42,linked]])},
+    './reanimeMatches':{getConfirmedReanimeIdsForAnissia:async()=>new Map([[42,linked]])},
   });
   return {...choice,calls};
 }
