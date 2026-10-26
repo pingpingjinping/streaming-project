@@ -44,6 +44,7 @@ import IframePlayer from "./IframePlayer";
 import SponsorSubtitleSyncModal from "./SponsorSubtitleSyncModal";
 import { effectiveSubtitleOffset, formatSyncTime, type SponsorSubtitleSync } from "@/lib/sponsorSubtitleSync";
 import { isReanimeId } from "@/lib/providers/ids";
+import { blockPeerConnections } from "@/lib/blockP2P";
 import type { ServerSource } from "@/lib/providers/types";
 
 export interface EpisodeItem {
@@ -2408,6 +2409,7 @@ export default function Player(props: PlayerProps) {
 
     async function init() {
       try {
+        if (props.videoSource === "linkkf") blockPeerConnections(window);
         await Promise.all([
           loadScript("/js/hls.min.js"),
           loadScript("/js/artplayer.js"),
@@ -3686,6 +3688,7 @@ export default function Player(props: PlayerProps) {
   }, [
     animeId,
     isDub,
+    props.videoSource,
     applySubtitle,
     toggleHybridPip,
     toggleVideoFullscreen,

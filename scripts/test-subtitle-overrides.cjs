@@ -680,7 +680,7 @@ test('assignments and exceptions belong to the signed-in user',async()=>{
 function loadSettingsDb(sql) {
   const exports={},vm=require('node:vm');
   const code=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../src/lib/db.ts'),'utf8'),{compilerOptions}).outputText;
-  vm.runInNewContext(code,{exports,require:id=>id==='postgres'?()=>sql:id==='./subtitleLocalIdentity'?identity:id==='./episodeMapping'?require('../src/lib/episodeMapping.ts'):require(id),
+  vm.runInNewContext(code,{exports,require:id=>id==='postgres'?()=>sql:id==='./subtitleLocalIdentity'?identity:id==='./episodeMapping'?require('../src/lib/episodeMapping.ts'):id==='./linkaniSettings'?require('../src/lib/linkaniSettings.ts'):require(id),
     process:{env:{DATABASE_URL:'postgres://test'}},console,Buffer,setTimeout,clearTimeout});
   return exports;
 }
@@ -766,7 +766,7 @@ test('Postgres persists scoped ownership and episode exceptions without modifyin
     assert.deepEqual((await reviewed.findReviewedBundleFiles('aniall',ovaKey)).map(r=>r.pid),['pg-ova']);
     // The production settings module uses a real isolated Postgres connection.
     const exports={},code=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../src/lib/db.ts'),'utf8'),{compilerOptions}).outputText;
-    vm.runInNewContext(code,{exports,require:id=>id==='postgres'?()=>sql:id==='./subtitleLocalIdentity'?identity:id==='./episodeMapping'?require('../src/lib/episodeMapping.ts'):require(id),process:{env:{DATABASE_URL:url}},console,Buffer,setTimeout,clearTimeout});
+    vm.runInNewContext(code,{exports,require:id=>id==='postgres'?()=>sql:id==='./subtitleLocalIdentity'?identity:id==='./episodeMapping'?require('../src/lib/episodeMapping.ts'):id==='./linkaniSettings'?require('../src/lib/linkaniSettings.ts'):require(id),process:{env:{DATABASE_URL:url}},console,Buffer,setTimeout,clearTimeout});
     await Promise.all([exports.getSubtitleEpisodeOverrides('alice','re_tv'),exports.getSubtitleEpisodeOverrides('bob','re_tv')]);
     assert.equal(await exports.saveSubtitleBundleAssignment('alice','re_tv','aniall',tvKey,'TV'),true);
     assert.equal(await exports.saveSubtitleBundleAssignment('alice','re_ova','aniall',ovaKey,'OVA'),true);

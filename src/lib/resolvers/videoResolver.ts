@@ -562,7 +562,7 @@ export async function resolveAnissiaStream(
   }
 
   // ==========================================================
-  // Step 4: Linkkf 자체자막 스트림 폴백
+  // Step 4: Linkani 자체자막 스트림 폴백
   // ==========================================================
   try {
     if (!requestedSource || requestedSource === "linkkf") {
@@ -585,7 +585,7 @@ export async function resolveAnissiaStream(
           const stream = await linkkfProvider.getEpisodeStream(epItem.watch_url);
           if (stream && (stream.m3u8_url || stream.player_url)) {
             serverSources.push({
-              label: "Linkkf (자체자막)",
+              label: "Linkani (자체자막)",
               player_url: epItem.watch_url,
               id: "linkkf",
             });
@@ -608,7 +608,7 @@ export async function resolveAnissiaStream(
     }
     }
   } catch (err) {
-    console.warn("[videoResolver] Linkkf fallback attempt failed:", err);
+    console.warn("[videoResolver] Linkani fallback attempt failed:", err);
   }
 
   // ==========================================================

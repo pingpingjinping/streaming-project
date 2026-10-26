@@ -275,12 +275,12 @@ export default function Navbar() {
           <button
             type="button"
             onClick={() => setIsSourceModalOpen(true)}
-            title="스트리밍 소스 사이트 변경 (애니시아 허브 / ReAnime / Anikoto / Linkkf / Ohli24)"
+            title="스트리밍 소스 사이트 변경 (애니시아 허브 / ReAnime / Anikoto / Linkani / Ohli24)"
             className="flex items-center gap-1.5 rounded-full border border-purple-500/30 bg-slate-900/80 px-2.5 sm:px-3 py-1.5 text-xs text-white hover:border-purple-500/60 hover:bg-slate-800 transition shadow-sm"
           >
             <RefreshCw className="h-3.5 w-3.5 text-purple-400" />
             <span className="mobile-portrait-nav-label font-bold text-[11px] text-purple-300">
-              {activeSource === "anissia" ? "애니시아" : activeSource === "reanime" ? "ReAnime" : activeSource === "anikoto" ? "Anikoto" : activeSource === "ohli24" ? "Ohli24" : "Linkkf"}
+              {activeSource === "anissia" ? "애니시아" : activeSource === "reanime" ? "ReAnime" : activeSource === "anikoto" ? "Anikoto" : activeSource === "ohli24" ? "Ohli24" : "Linkani"}
             </span>
           </button>
 
@@ -340,7 +340,7 @@ export default function Navbar() {
                           <span>스트리밍 사이트</span>
                         </div>
                         <span className="rounded-full bg-purple-500/20 px-2 py-0.5 text-[10px] font-bold text-purple-300 border border-purple-500/30">
-                          {activeSource === "anissia" ? "애니시아" : activeSource === "reanime" ? "ReAnime" : activeSource === "anikoto" ? "Anikoto" : activeSource === "ohli24" ? "Ohli24" : "Linkkf"}
+                          {activeSource === "anissia" ? "애니시아" : activeSource === "reanime" ? "ReAnime" : activeSource === "anikoto" ? "Anikoto" : activeSource === "ohli24" ? "Ohli24" : "Linkani"}
                         </span>
                       </button>
 

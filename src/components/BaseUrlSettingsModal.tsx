@@ -34,7 +34,7 @@ export default function BaseUrlSettingsModal({ isOpen, onClose, onUpdated }: Bas
       ? "Anikoto"
       : selectedProvider === "ohli24"
       ? "Ohli24"
-      : "Linkkf";
+      : "Linkani";
 
   // 모달 열릴 때 현재 상태 조회
   const fetchStatus = async (provider = selectedProvider) => {
@@ -251,7 +251,7 @@ export default function BaseUrlSettingsModal({ isOpen, onClose, onUpdated }: Bas
                   : "text-slate-400 hover:text-white"
               }`}
             >
-              Linkkf
+              Linkani
             </button>
             <button
               type="button"
