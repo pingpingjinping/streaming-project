@@ -116,7 +116,7 @@ test('Postgres migration, collision rollback, refresh persistence and linked cat
     try {
       await admin.unsafe(`CREATE SCHEMA ${schema}`);
       sql=postgres(process.env.REVIEWED_TEST_DATABASE_URL,{max:3,connection:{search_path:schema}});
-      const db=load('src/lib/db.ts',{'postgres':()=>sql,'./subtitleLocalIdentity':{},'./episodeMapping':load('src/lib/episodeMapping.ts')},
+      const db=load('src/lib/db.ts',{'postgres':()=>sql,'./subtitleLocalIdentity':{},'./linkaniSettings':load('src/lib/linkaniSettings.ts'),'./episodeMapping':load('src/lib/episodeMapping.ts')},
         {process:{env:{DATABASE_URL:'test'}}});
       await db.initDb();
       await sql.unsafe(`CREATE TABLE anime_catalog_entries(source text,source_record_id text,payload jsonb);

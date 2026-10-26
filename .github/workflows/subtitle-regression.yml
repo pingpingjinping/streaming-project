@@ -77,6 +77,8 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Verify real ASS canvas rendering
         run: node scripts/test-subtitle-render-browser.cjs
+      - name: Verify Linkani P2P guard with the local HLS player scripts
+        run: node scripts/test-linkani-p2p-browser.cjs
       - name: Verify provider fullscreen keeps subtitle overlays
         run: node scripts/test-iframe-fullscreen-browser.cjs
       - name: Verify 4:3 fullscreen and Android native retry with Pi captions

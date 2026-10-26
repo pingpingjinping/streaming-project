@@ -16,6 +16,7 @@ import {
 import { getSessionUser } from "@/lib/auth";
 import { assertSafeProxyUrl, UnsafeProxyUrlError } from "@/lib/proxyGuard";
 import { checkUrlWithChromium } from "@/lib/chromiumFetch";
+import { normalizeLinkaniBaseUrl } from "@/lib/linkaniSettings";
 
 export const dynamic = "force-dynamic";
 
@@ -202,6 +203,7 @@ export async function POST(request: NextRequest) {
       formatted = `https://${formatted}`;
     }
     formatted = formatted.replace(/\/+$/, "");
+    if (provider === "linkkf") formatted = normalizeLinkaniBaseUrl(formatted);
 
     const defaultUrl =
       provider === "reanime"
@@ -280,7 +282,7 @@ export async function POST(request: NextRequest) {
         ? "Anikoto"
         : provider === "ohli24"
         ? "Ohli24"
-        : "Linkkf";
+        : "Linkani";
 
     return NextResponse.json({
       success: true,

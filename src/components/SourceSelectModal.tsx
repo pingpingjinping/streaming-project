@@ -45,7 +45,7 @@ export default function SourceSelectModal({
     loading: true,
   });
   const [linkkfHealth, setLinkkfHealth] = useState<SourceHealth>({
-    baseUrl: "https://linkkf.tv",
+    baseUrl: "https://linkani.tv",
     isHealthy: true,
     loading: true,
   });
@@ -141,7 +141,7 @@ export default function SourceSelectModal({
           setAnikotoHealth((prev) => ({ ...prev, isHealthy: false, loading: false }));
         });
 
-      // Linkkf 헬스체크
+      // Linkani 헬스체크
       fetch("/api/settings/base-url?provider=linkkf")
         .then((r) => r.json())
         .then((data) => {
@@ -417,7 +417,7 @@ export default function SourceSelectModal({
             </div>
           </div>
 
-          {/* 4. Linkkf Card */}
+          {/* 4. Linkani Card */}
           <div
             style={{ display: enabledSources.includes("linkkf") ? undefined : "none" }}
             onClick={() => setSelectedSource("linkkf")}
@@ -440,7 +440,7 @@ export default function SourceSelectModal({
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="font-bold text-sm text-white">Linkkf</span>
+                    <span className="font-bold text-sm text-white">Linkani</span>
                     <span className="rounded bg-slate-700/50 px-1.5 py-0.5 text-[10px] font-medium text-slate-300">
                       국내
                     </span>

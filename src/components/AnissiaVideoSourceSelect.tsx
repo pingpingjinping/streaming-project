@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 const SOURCES = [
   { id: "rean", label: "ReAnime", hint: "고화질" },
   { id: "anikoto", label: "Anikoto", hint: "해외" },
-  { id: "linkkf", label: "Linkkf", hint: "자체자막" },
+  { id: "linkkf", label: "Linkani", hint: "자체자막" },
   { id: "ohli24", label: "Ohli24", hint: "국내" },
 ] as const;
 

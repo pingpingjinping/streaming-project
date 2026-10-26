@@ -153,7 +153,7 @@ export default async function HomePage({
       reanime: "Re:Anime",
       anikoto: "Anikoto",
       ohli24: "Ohli24",
-      linkkf: "Linkkf",
+      linkkf: "Linkani",
     };
     const normalizedQuery = q.replace(/\s+/g, " ").trim();
     // The API-first current-site search needs no preflight title/DB lookup.
@@ -363,7 +363,7 @@ export default async function HomePage({
       total_pages = res.total_pages;
     }
   } else {
-    // Linkkf 소스 구조: 신작 방영, 인기 순위 (기간별), 카테고리 필터
+    // Linkani 소스 구조: 신작 방영, 인기 순위 (기간별), 카테고리 필터
     if (tab === "top") {
       const res = await provider.getAnimeList({ category: "top", page: 1, period });
       items = res.items;
@@ -749,7 +749,7 @@ export default async function HomePage({
             </Link>
           </div>
 
-          {/* Top Ranking Period Switcher (Linkkf 전용) */}
+          {/* Top Ranking Period Switcher (Linkani 전용) */}
           {activeSource === "linkkf" && tab === "top" && (
             <div className="flex items-center gap-1 rounded-lg bg-slate-900/80 p-1 text-xs border border-purple-500/20">
               {(
@@ -1118,11 +1118,11 @@ export default async function HomePage({
                 </div>
               </div>
             ) : (
-              /* =================== 3. Linkkf 전용 맞춤 탐색 =================== */
+              /* =================== 3. Linkani 전용 맞춤 탐색 =================== */
               <div className="space-y-4">
                 <div className="flex items-center gap-2 border-b border-purple-500/20 pb-3">
                   <span className="flex h-6 items-center rounded-full bg-gradient-to-r from-indigo-600 to-purple-600 px-2.5 text-[11px] font-extrabold text-white shadow-sm">
-                    Linkkf 고화질 아카이브
+                    Linkani 고화질 아카이브
                   </span>
                   <span className="text-xs text-slate-400">타입 • 장르 • 연도별 복합 필터</span>
                 </div>

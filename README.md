@@ -171,5 +171,6 @@ Next.js 15 App Router와 Vercel Serverless, Neon Postgres를 기반으로 구축
 
 ```env
 # 선택: 외부 소스 미러 도메인 변경 시
-# LINKKF_BASE_URL=https://...
+# Linkani (keeps the legacy Linkkf setting/provider key)
+# LINKKF_BASE_URL=https://linkani.tv
 ```

@@ -2,6 +2,7 @@ import postgres from "postgres";
 import { defaultSubtitleEpisodeStart } from "./episodeMapping";
 import {bundleScopesOverlap} from "./subtitleLocalIdentity";
 import { createHash } from "node:crypto";
+import { DEFAULT_LINKANI_URL, normalizeLinkaniBaseUrl } from "./linkaniSettings";
 
 let dbClient: ReturnType<typeof postgres> | null = null;
 
@@ -1104,7 +1105,7 @@ export const STREAMING_PROVIDER_LABELS: Record<StreamingProviderKey, string> = {
   reanime: "Re:Anime",
   anikoto: "Anikoto",
   ohli24: "Ohli24",
-  linkkf: "Linkkf",
+  linkkf: "Linkani",
 };
 
 export async function getStreamingProviderSettings(): Promise<Array<{ key: StreamingProviderKey; name: string; enabled: boolean }>> {
@@ -1563,7 +1564,7 @@ export async function deleteManualStreamSource(
 // System Settings & Dynamic Base URL Helpers
 // ----------------------------------------------------
 
-export const DEFAULT_LINKKF_URL = "https://linkkf.tv";
+export const DEFAULT_LINKKF_URL = DEFAULT_LINKANI_URL;
 let cachedBaseUrl: { url: string; timestamp: number } | null = null;
 
 export async function getLinkkfBaseUrl(): Promise<string> {
@@ -1581,7 +1582,7 @@ export async function getLinkkfBaseUrl(): Promise<string> {
         LIMIT 1;
       `;
       if (rows.length > 0 && rows[0].value) {
-        const val = String(rows[0].value).trim().replace(/\/+$/, "");
+        const val = normalizeLinkaniBaseUrl(String(rows[0].value));
         if (val) {
           cachedBaseUrl = { url: val, timestamp: Date.now() };
           return val;
@@ -1593,7 +1594,7 @@ export async function getLinkkfBaseUrl(): Promise<string> {
   }
 
   const envUrl = process.env.LINKKF_BASE_URL?.trim().replace(/\/+$/, "");
-  const finalUrl = envUrl || DEFAULT_LINKKF_URL;
+  const finalUrl = normalizeLinkaniBaseUrl(envUrl);
   cachedBaseUrl = { url: finalUrl, timestamp: Date.now() };
   return finalUrl;
 }
@@ -1608,6 +1609,7 @@ export async function setLinkkfBaseUrl(newUrl: string): Promise<boolean> {
     formatted = `https://${formatted}`;
   }
   formatted = formatted.replace(/\/+$/, "");
+  formatted = normalizeLinkaniBaseUrl(formatted);
 
   try {
     await sql`
