@@ -7,6 +7,7 @@ const compile=file=>ts.transpileModule(fs.readFileSync(path.join(root,file),'utf
 const read=(name,file)=>fs.readFileSync(path.join(path.dirname(require.resolve(name+'/package.json')),file),'utf8');
 const settings={};vm.runInNewContext(compile('src/components/PlayerSettingsModal.tsx'),{exports:settings,require:()=>({})});
 const modules={react:read('react','cjs/react.production.js'),'react/jsx-runtime':read('react','cjs/react-jsx-runtime.production.js'),scheduler:read('scheduler','cjs/scheduler.production.js'),'react-dom':read('react-dom','cjs/react-dom.production.js'),'react-dom/client':read('react-dom','cjs/react-dom-client.production.js')};
+modules['@/lib/providerSubtitlePolicy']=compile('src/lib/providerSubtitlePolicy.ts');
 for(const file of ['IframePlayer','VideoServerSelect','usePlayerFullscreen','useContainedPlayerFrame'])modules['./'+file]=compile('src/components/'+file+(file.startsWith('use')?'.ts':'.tsx'));
 for(const file of ['playerFullscreen','iframePlayback','subtitlePresentation','subtitleSrt','sponsorSubtitleSync'])modules['@/lib/'+file]=compile('src/lib/'+file+'.ts');
 const subtitle={name:'Pi track',is_ass:false,content:'WEBVTT\n\n00:01:59.000 --> 00:02:05.000\nPi caption\n'};

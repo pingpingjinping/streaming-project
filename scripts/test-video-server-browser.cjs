@@ -13,6 +13,7 @@ const modules={
  scheduler:readPackage('scheduler','cjs/scheduler.production.js'),
  'react-dom':readPackage('react-dom','cjs/react-dom.production.js'),
  'react-dom/client':readPackage('react-dom','cjs/react-dom-client.production.js'),
+ '@/lib/providerSubtitlePolicy':compile('src/lib/providerSubtitlePolicy.ts'),
  './IframePlayer':compile('src/components/IframePlayer.tsx'),
  './VideoServerSelect':compile('src/components/VideoServerSelect.tsx'),
  '@/lib/iframePlayback':compile('src/lib/iframePlayback.ts'),

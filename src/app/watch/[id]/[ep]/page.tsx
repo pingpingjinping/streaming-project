@@ -12,6 +12,7 @@ import { resolveAnissiaStream } from "@/lib/resolvers/videoResolver";
 import { getManualStreamSourceById, getSubtitleEpisodeStart } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { attachEpisodeCaptions, toSourceEpisode, toLocalEpisode } from "@/lib/episodeMapping";
+import { shouldSearchExternalSubtitles } from '@/lib/providerSubtitlePolicy';
 import { preloadPlaybackSubtitle } from '@/lib/playbackSubtitlePreload';
 import { notFound } from "next/navigation";
 import Link from "next/link";
@@ -228,9 +229,6 @@ export default async function WatchPage({
 
   // The mounted player also loads subtitles; only use a quickly available
   // preload and bound the entire title-resolution + blog-extraction wait.
-  const subtitlePreload = !isDub && initialSubUrl.startsWith('http')
-    ? preloadPlaybackSubtitle(initialCreator, initialSubUrl, subtitleTitle, sourceEpisode, epNum, id)
-    : Promise.resolve(null);
   const providerStreamInfo = activeManual
     ? null
     : isReanime && anime.video_available === false && requestedVideoSource === 'rean'
@@ -244,7 +242,6 @@ export default async function WatchPage({
           true, anikotoDetails, requestedVideoServer,
         )
       : await provider.getEpisodeStream(watchUrl, requestedVideoServer ? { serverKey: requestedVideoServer, allowServerFallback: true } : undefined);
-  const preloadedSub = await subtitlePreload;
 
   let streamInfo = activeManual
     ? manualSourceToStream(activeManual)
@@ -269,6 +266,15 @@ export default async function WatchPage({
     streamInfo = selectVideoServer(streamInfo, requestedVideoServer);
   }
   const activeVideoSource = streamInfo?.video_source || streamInfo?.server_sources?.[0]?.id || requestedVideoSource || (isAnissia ? "rean" : currentProviderSource);
+  let preloadedSub = null;
+  if (!isDub && initialSubUrl.startsWith('http')) {
+    const settings = activeVideoSource === 'linkkf' || activeVideoSource === 'ohli24'
+      ? await (await import('@/lib/db')).getUserSettings(user.username) : null;
+    if (shouldSearchExternalSubtitles(activeVideoSource, settings)) {
+      preloadedSub = await preloadPlaybackSubtitle(initialCreator, initialSubUrl, subtitleTitle, sourceEpisode, epNum, id);
+    }
+  }
+
 
   if (!streamInfo || (!streamInfo.m3u8_url && !streamInfo.embed_url)) {
     if (isReanime && !alternateSource) {

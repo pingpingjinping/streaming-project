@@ -6,7 +6,7 @@ function load(file,deps={}){
  const exports={};const code=ts.transpileModule(fs.readFileSync(path.join(root,file),'utf8'),{
   compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX},
  }).outputText;
- vm.runInNewContext(code,{exports,require:name=>deps[name]||{},URL,AbortSignal,console});return exports;
+ vm.runInNewContext(code,{exports,require:name=>name==='@/lib/providerSubtitlePolicy'?load('src/lib/providerSubtitlePolicy.ts'):deps[name]||{},URL,AbortSignal,console});return exports;
 }
 const identity=load('src/lib/animeWorkIdentity.ts',{'@/lib/db':{getDb:()=>null}});
 const resolver=load('src/lib/resolvers/videoResolver.ts',{'../animeWorkIdentity':identity});

@@ -1,4 +1,5 @@
 "use client";
+import { shouldSearchExternalSubtitles } from "@/lib/providerSubtitlePolicy";
 import { isSrtSubtitle, parseSrtCues } from "@/lib/subtitleSrt";
 import VideoServerSelect from "./VideoServerSelect";
 
@@ -296,6 +297,10 @@ export default function IframePlayer({
   fullscreenRef.current = isFullscreen;
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [playerSettings, setPlayerSettings] = useState<PlayerSettings>(DEFAULT_PLAYER_SETTINGS);
+  const [playerSettingsLoaded, setPlayerSettingsLoaded] = useState(false);
+  const subtitleProvider = activeProvider || videoSource;
+  const externalSubtitleSearch = shouldSearchExternalSubtitles(subtitleProvider, playerSettings);
+  const subtitleSettingsReady = (subtitleProvider !== "linkkf" && subtitleProvider !== "ohli24") || playerSettingsLoaded;
   const settingsEditedRef = useRef(false);
 
   useEffect(() => {
@@ -309,7 +314,7 @@ export default function IframePlayer({
       setPlayerSettings(merged);
       applyPlayerSettingsStyles(merged);
       try { localStorage.setItem("anime_player_settings", JSON.stringify(merged)); } catch {}
-    });
+    }).finally(() => { if (!cancelled) setPlayerSettingsLoaded(true); });
     return () => { cancelled = true; };
   }, []);
   const [currentVideoTime, setCurrentVideoTime] = useState(0);
@@ -339,7 +344,7 @@ export default function IframePlayer({
 
   // Subtitles & Creators (서버에서 사전 로드된 자막이 있으면 0초 딜레이로 즉시 바인딩)
   const [subtitles, setSubtitles] = useState<SubtitleOption[]>(() => {
-    if (initialSubtitle && initialSubtitle.content) {
+    if (initialSubtitle && initialSubtitle.content && shouldSearchExternalSubtitles(subtitleProvider, playerSettings)) {
       return [
         {
           name: initialSubtitle.name || initialCreator || "선택된 자막",
@@ -789,6 +794,13 @@ export default function IframePlayer({
 
   useEffect(() => {
     let isCancelled = false;
+    if (!externalSubtitleSearch || !subtitleSettingsReady) {
+      setSubtitles([]);
+      setCurrentSubIndex(-1);
+      setCreators([]);
+      setLoadingSubs(false);
+      return;
+    }
     async function fetchSubs() {
       setLoadingSubs(true);
       try {
@@ -848,7 +860,7 @@ export default function IframePlayer({
     return () => {
       isCancelled = true;
     };
-  }, [animeTitle, episodeNumber, animeId, initialSubUrl, initialCreator, showNotice,subtitleSettingsRevision]);
+  }, [animeTitle, episodeNumber, animeId, initialSubUrl, initialCreator, showNotice,subtitleSettingsRevision,externalSubtitleSearch,subtitleSettingsReady,subtitleProvider]);
 
   // 6. Load SubtitlesOctopus library script
   useEffect(() => {
