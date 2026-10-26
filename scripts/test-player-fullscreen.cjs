@@ -10,7 +10,7 @@ function load(file, deps = {}, globals = {}) {
   const code = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {
     compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX},
   }).outputText;
-  vm.runInNewContext(code, {exports, require: name => name === './VideoServerSelect' ? {default:'VideoServerSelect'}
+  vm.runInNewContext(code, {exports, require: name => name === '@/lib/providerSubtitlePolicy' ? load('src/lib/providerSubtitlePolicy.ts') : name === './VideoServerSelect' ? {default:'VideoServerSelect'}
     : name === '@/lib/subtitleSrt' ? load('src/lib/subtitleSrt.ts') : deps[name] || require(name), ...globals});
   return exports;
 }

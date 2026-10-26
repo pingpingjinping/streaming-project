@@ -17,6 +17,7 @@ function load(file, deps={}, globals={}) {
     compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true},
   }).outputText;
   vm.runInNewContext(code,{exports,require:name=>{
+    if(name==='@/lib/providerSubtitlePolicy')return load('src/lib/providerSubtitlePolicy.ts');
     if(name in deps) return deps[name];
     if(name.endsWith('/episodeMapping')||name==='@/lib/episodeMapping') return load('src/lib/episodeMapping.ts');
     if(name==='react/jsx-runtime')return {jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})};

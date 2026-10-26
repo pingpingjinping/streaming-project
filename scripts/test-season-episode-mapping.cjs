@@ -17,6 +17,7 @@ function load(file, deps = {}, globals = {}) {
       jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true},
   }).outputText;
   vm.runInNewContext(code, {exports, require: name => {
+    if(name==='@/lib/providerSubtitlePolicy')return load('src/lib/providerSubtitlePolicy.ts');
     if (name in deps) return deps[name];
     if (name === '@/lib/subtitleSrt') return load('src/lib/subtitleSrt.ts');
     if (name === '@/components/PlaybackPlaylistRetry') return 'PlaybackPlaylistRetry';

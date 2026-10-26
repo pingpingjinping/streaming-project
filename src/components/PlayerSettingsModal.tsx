@@ -22,6 +22,8 @@ import {
 } from "lucide-react";
 
 export interface PlayerSettings {
+  linkaniExternalSubtitles: boolean;
+  ohli24ExternalSubtitles: boolean;
   // ⏩ 재생 & 스킵 자동화
   autoSkip: boolean;            // OP/ED 자동 건너뛰기 (기본 ON)
   floatingSkipBtn: boolean;     // 스킵 플로팅 버튼 표시 (기본 ON)
@@ -49,6 +51,8 @@ export interface PlayerSettings {
 }
 
 export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
+  linkaniExternalSubtitles: false,
+  ohli24ExternalSubtitles: false,
   // ⏩ 재생 & 스킵 자동화
   autoSkip: true,
   floatingSkipBtn: true,
@@ -766,6 +770,18 @@ export default function PlayerSettingsModal({
             </div>
 
             <div className="space-y-2.5">
+              {([
+                ["linkaniExternalSubtitles", "Linkani"],
+                ["ohli24ExternalSubtitles", "Ohli24"],
+              ] as const).map(([key, label]) => (
+                <div key={key} className="flex items-center justify-between gap-3 rounded-2xl border border-white/5 bg-slate-900/60 p-3.5">
+                  <div>
+                    <div className="text-sm font-semibold text-white">{label} 외부 자막 자동 검색</div>
+                    <div className="text-xs text-slate-400">끄면 기본 자막을 사용하고 Pi 로컬·애니시아 자막을 자동으로 찾거나 연결하지 않습니다.</div>
+                  </div>
+                  <ToggleSwitch checked={settings[key] === true} onChange={() => toggleSetting(key)} />
+                </div>
+              ))}
               {/* 로컬 자막 파일 열기 버튼 */}
               <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/5 bg-slate-900/60 p-3.5 hover:border-purple-500/20 transition">
                 <div className="flex items-center gap-3">

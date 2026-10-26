@@ -44,6 +44,7 @@ import IframePlayer from "./IframePlayer";
 import SponsorSubtitleSyncModal from "./SponsorSubtitleSyncModal";
 import { effectiveSubtitleOffset, formatSyncTime, type SponsorSubtitleSync } from "@/lib/sponsorSubtitleSync";
 import { isReanimeId } from "@/lib/providers/ids";
+import { shouldSearchExternalSubtitles } from "@/lib/providerSubtitlePolicy";
 import { blockPeerConnections } from "@/lib/blockP2P";
 import type { ServerSource } from "@/lib/providers/types";
 
@@ -667,6 +668,9 @@ export default function Player(props: PlayerProps) {
   // Skip States & Preferences
   const [skipIntervals, setSkipIntervals] = useState<SkipInterval[]>([]);
   const [playerSettings, setPlayerSettings] = useState<PlayerSettings>(loadPlayerSettings);
+  const [playerSettingsLoaded, setPlayerSettingsLoaded] = useState(false);
+  const externalSubtitleSearch = shouldSearchExternalSubtitles(props.videoSource, playerSettings);
+  const subtitleSettingsReady = (props.videoSource !== "linkkf" && props.videoSource !== "ohli24") || playerSettingsLoaded;
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false);
   const [autoSkipEnabled, setAutoSkipEnabled] = useState<boolean>(() => loadPlayerSettings().autoSkip);
   const [autoNextEnabled, setAutoNextEnabled] = useState<boolean>(() => loadPlayerSettings().autoNext);
@@ -758,7 +762,7 @@ export default function Player(props: PlayerProps) {
         // 계정은 있으나 DB에 설정이 없는 경우, 현재 설정(PIP ON 포함)을 DB에 저장
         saveUserSettingsToDb(loadPlayerSettings()).catch(() => {});
       }
-    });
+    }).finally(() => { if (!isCancelled) setPlayerSettingsLoaded(true); });
 
     return () => {
       isCancelled = true;
@@ -3702,6 +3706,19 @@ export default function Player(props: PlayerProps) {
   // Asynchronous Subtitles Loading
   useEffect(() => {
     let isCancelled = false;
+    if (!externalSubtitleSearch || !subtitleSettingsReady) {
+      const native: SubtitleItem[] = currentVttUrl
+        ? [{ name: "기본 내장", format: "VTT", is_ass: false, url: currentVttUrl }] : [];
+      setSubs(native);
+      setCreators([]);
+      setSelectedSubIndex(native.length ? 0 : -1);
+      setIsLoadingSubs(false);
+      setNeedsManualSubtitleChoice(false);
+      setSubtitleNotice("");
+      applySubtitleRef.current?.(native[0] || null, currentSyncOffsetRef.current);
+      refreshSubtitleSettingsRef.current?.(native, native.length ? 0 : -1);
+      return;
+    }
     setIsLoadingSubs(true);
     setNeedsManualSubtitleChoice(false);setSubtitleNotice("");
 
@@ -3804,7 +3821,7 @@ export default function Player(props: PlayerProps) {
     return () => {
       isCancelled = true;
     };
-  }, [animeId,animeTitle, currentEp, currentVttUrl,subtitleSettingsRevision]);
+  }, [animeId,animeTitle, currentEp, currentVttUrl,subtitleSettingsRevision,externalSubtitleSearch,subtitleSettingsReady,props.videoSource]);
 
   // 4-Stage Audio Skip Trigger
   const triggerManualAudioSkip = async (isAuto = false) => {
