@@ -25,6 +25,10 @@ function provider(fetchPage, globals = {}, baseUrl = base) {
   const api = load('src/lib/providers/linkkf.ts', {
     '@/lib/db': { DEFAULT_LINKKF_URL: base, getLinkkfBaseUrl: async () => baseUrl },
     '@/lib/linkaniSettings': settings,
+    '@/lib/linkaniFetch': {fetchLinkaniHtml: async (url, options) => {
+      requests.push({url: String(url), options: {...options, cache: options.cacheTtlMs === 0 ? 'no-store' : undefined}});
+      return fetchPage(String(url));
+    }},
   }, {
     ...globals,
     fetch: async (url, options) => {

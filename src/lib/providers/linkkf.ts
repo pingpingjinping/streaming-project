@@ -1,4 +1,5 @@
 import * as cheerio from "cheerio";
+import { fetchLinkaniHtml } from "@/lib/linkaniFetch";
 import { getLinkkfBaseUrl, DEFAULT_LINKKF_URL } from "@/lib/db";
 import { isLegacyLinkkfUrl } from "@/lib/linkaniSettings";
 import {
@@ -118,12 +119,7 @@ export async function getAnimeListFiltered(params: {
 
   try {
     const headers = { ...LINKKF_HEADERS, Referer: `${baseUrl}/` };
-    const res = await fetch(url, { headers, next: { revalidate: 60 } });
-    if (!res.ok) {
-      return { items: [], page, has_next: false, total_pages: 1 };
-    }
-
-    const html = await res.text();
+    const html = await fetchLinkaniHtml(String(url), { headers, cacheTtlMs: 60_000 });
     const $ = cheerio.load(html);
     const items: AnimeListItem[] = [];
 
@@ -208,12 +204,7 @@ export async function getAnimeList(params: {
 
   try {
     const headers = { ...LINKKF_HEADERS, Referer: `${baseUrl}/` };
-    const res = await fetch(url, { headers, next: { revalidate: 60 } });
-    if (!res.ok) {
-      return { items: [], page, has_next: false, total_pages: 1 };
-    }
-
-    const html = await res.text();
+    const html = await fetchLinkaniHtml(String(url), { headers, cacheTtlMs: 60_000 });
     const $ = cheerio.load(html);
     const items: AnimeListItem[] = [];
 
@@ -291,12 +282,7 @@ export async function searchAnime(keyword: string, page = 1): Promise<AnimeListR
 
   try {
     const headers = { ...LINKKF_HEADERS, Referer: `${baseUrl}/` };
-    const res = await fetch(url, { headers, next: { revalidate: 60 } });
-    if (!res.ok) {
-      return { items: [], page, has_next: false, total_pages: 1 };
-    }
-
-    const html = await res.text();
+    const html = await fetchLinkaniHtml(String(url), { headers, cacheTtlMs: 60_000 });
     const $ = cheerio.load(html);
     const items: AnimeListItem[] = [];
 
@@ -362,10 +348,7 @@ export async function getAnimeDetail(animeId: string): Promise<AnimeDetail | nul
   const url = `${baseUrl}/ani/${animeId}/`;
   try {
     const headers = { ...LINKKF_HEADERS, Referer: `${baseUrl}/` };
-    const res = await fetch(url, { headers, next: { revalidate: 120 } });
-    if (!res.ok) return null;
-
-    const html = await res.text();
+    const html = await fetchLinkaniHtml(url, { headers, cacheTtlMs: 120_000 });
     const $ = cheerio.load(html);
 
     const titleEl = $(".detail-info-title, h1.title, .page-title").first();
@@ -497,10 +480,7 @@ export async function getEpisodeStream(watchUrl: string): Promise<EpisodeStreamI
 
   try {
     const headers = { ...LINKKF_HEADERS, Referer: `${baseUrl}/` };
-    const res = await fetch(watchUrl, { headers, cache: "no-store" });
-    if (!res.ok) return null;
-
-    const html = await res.text();
+    const html = await fetchLinkaniHtml(watchUrl, { headers, cacheTtlMs: 0 });
     const $ = cheerio.load(html);
 
     const serverSources: ServerSource[] = [];
@@ -541,9 +521,7 @@ export async function getEpisodeStream(watchUrl: string): Promise<EpisodeStreamI
     const isDirectStream = /\.m3u8(?:[?#]|$)/i.test(actualPlayerUrl);
     let pHtml = "";
     if (!isDirectStream) {
-      const pRes = await fetch(actualPlayerUrl, { headers: playerHeaders });
-      if (!pRes.ok) return null;
-      pHtml = await pRes.text();
+      pHtml = await fetchLinkaniHtml(actualPlayerUrl, { headers: playerHeaders, cacheTtlMs: 0 });
     }
 
     let m3u8Url = isDirectStream ? actualPlayerUrl : "";
