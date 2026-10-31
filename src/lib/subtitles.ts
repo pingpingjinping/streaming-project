@@ -10,6 +10,8 @@ import { getMonthlyAnissiaCandidates } from "@/lib/reanimeMatches";
 import { extractTistoryWinPngFiles } from "@/lib/tistoryWinPng";
 import { getAnimeWorkIdentity, canSelectUnnumberedMovie, type AnimeWorkIdentity } from "@/lib/animeWorkIdentity";
 import { driveFolderId, listOnlineDriveFolder, selectOnlineDriveFolderFile, driveFileViewUrl } from "@/lib/googleDriveFolderSubtitles";
+import { googleDriveFileId, boxSharedFile, downloadSubtitleFile } from "@/lib/subtitleDownload";
+import { fetchSubtitleBlogPage, subtitleBlogContent, subtitleAttachmentIdentity, naverScriptAttachments } from "@/lib/subtitleBlogPage";
 
 export const HEADERS: Record<string, string> = {
   "User-Agent":
@@ -396,10 +398,7 @@ export function extractSubtitleFromBuffer(
 }
 
 export function extractGdriveId(url: string): string | null {
-  if (!url) return null;
-  const cleanUrl = url.replace(/&amp;/g, "&");
-  const m = cleanUrl.match(/(?:\/file\/d\/|[\?&]id=)([a-zA-Z0-9_-]{25,})/i);
-  return m ? m[1] : null;
+  return googleDriveFileId(url);
 }
 
 // 8. Convert Google Drive and cloud links to direct download URLs
@@ -417,53 +416,10 @@ async function downloadFileWithMetadata(
   url: string,
   referer?: string,
   timeoutMs = 4500
-): Promise<{ buffer: Buffer; filename: string } | null> {
-  try {
-    const headers: Record<string, string> = { ...HEADERS };
-    if (referer) headers["Referer"] = referer;
-
-    const directUrl = convertToDirectDownloadUrl(url);
-
-    let res = await fetch(directUrl, {
-      headers,
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-
-    // Fallback for Google Drive
-    if (!res.ok && directUrl.includes("drive.usercontent.google.com")) {
-      const gId = extractGdriveId(url);
-      if (gId) {
-        res = await fetch(
-          `https://docs.google.com/uc?export=download&id=${gId}&confirm=t`,
-          {
-            headers,
-            signal: AbortSignal.timeout(timeoutMs),
-          }
-        );
-      }
-    }
-
-    if (!res.ok) return null;
-    const arrayBuffer = await res.arrayBuffer();
-    const buf = Buffer.from(arrayBuffer);
-
-    // Reject HTML responses
-    if (buf.length > 0) {
-      const sample = buf.subarray(0, 300).toString("utf-8").toLowerCase();
-      if (sample.includes("<!doctype html") || sample.includes("<html")) {
-        return null;
-      }
-    }
-
-    const disposition = res.headers.get("content-disposition") || "";
-    const encodedName = disposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i)?.[1];
-    const plainName = disposition.match(/filename\s*=\s*(?:"([^"]+)"|([^;]+))/i);
-    let filename = plainName?.[1] || plainName?.[2]?.trim() || "";
-    if (encodedName) { try { filename = decodeURIComponent(encodedName.trim()); } catch {} }
-    return { buffer: buf, filename };
-  } catch {
-    return null;
-  }
+): ReturnType<typeof downloadSubtitleFile> {
+  // Cloud confirmation/share pages add a second request before the file body.
+  const budget = extractGdriveId(url) || boxSharedFile(url) ? Math.max(timeoutMs, 25000) : timeoutMs;
+  return downloadSubtitleFile(url, { ...HEADERS, ...(referer ? { Referer: referer } : {}) }, budget);
 }
 
 export async function downloadFileWithTimeout(url: string, referer?: string, timeoutMs = 4500): Promise<Buffer | null> {
@@ -517,12 +473,11 @@ export async function extractSubtitleFromBlogPage(
   const postEvidence = readEpisodeEvidence(postTitle);
   const movie = canSelectUnnumberedMovie(work, postTitle, localEpisode, episodeNumber, targetSeason);
   if (!evidenceAgrees(postEvidence, request)) return null;
-  const content = $(".tt_article_useless_p_margin, .post-body, .entry-content, .se-main-container, #postViewArea").first();
-  const scope = content.length ? content : $("body");
+  const scope = subtitleBlogContent($, postUrl);
   scope.find("nav, aside, header, footer, .related-articles, .another_category, script, style").remove();
   const links = new Map<string, { url: string; evidence: EpisodeEvidence[]; filename: string }>();
   const add = (url: string, evidence: EpisodeEvidence[], filename = "") => {
-    const identity = extractGdriveId(url) || url;
+    const identity = extractGdriveId(url) || subtitleAttachmentIdentity(url);
     const prior = links.get(identity);
     if (prior) { prior.evidence.push(...evidence); return; }
     links.set(identity, { url, evidence, filename });
@@ -535,7 +490,7 @@ export async function extractSubtitleFromBlogPage(
     if (!/^https?:/i.test(url)) return;
     const filename = subtitleFilenameFromUrl(url);
     const label = $(anchor).text().trim();
-    if (!driveFolderId(url) && !extractGdriveId(url) && !filename && !/tfile|attachment|kakaocdn\.net|download\.blog|blogfiles\.naver|attach/i.test(url)
+    if (!driveFolderId(url) && !extractGdriveId(url) && !boxSharedFile(url) && !filename && !/tfile|attachment|kakaocdn\.net|download\.blog|blogfiles\.naver|attach/i.test(url)
         && !/\.(zip|ass|ssa|srt|smi|vtt)\b|자막\s*다운/i.test(label)) return;
     if (/\.(?:png|jpe?g|gif|webp)(?:[?#]|$)/i.test(url)) return;
     const labels = [label, $(anchor).attr("download") || "", $(anchor).attr("title") || "",
@@ -547,6 +502,9 @@ export async function extractSubtitleFromBlogPage(
   // anchor stays in the map and can never be resurrected as an unlabelled URL.
   for (const match of (scope.html() || "").matchAll(/https?:\/\/(?:drive|docs)\.google\.com\/(?:file\/d\/|uc\?[^"'\s<>]*?id=|open\?id=)([a-zA-Z0-9_-]{25,})/gi)) {
     if (!links.has(match[1])) add(match[0], []);
+  }
+  for (const item of naverScriptAttachments(html, postUrl)) {
+    add(item.url, [readEpisodeEvidence(item.filename, true)], item.filename);
   }
   for (const item of links.values()) {
     const outer = [postEvidence, ...item.evidence, readEpisodeEvidence(item.filename, true)];
@@ -560,6 +518,7 @@ export async function extractSubtitleFromBlogPage(
     }
     const downloaded = await downloadFileWithMetadata(item.url, postUrl, Math.max(timeoutMs + 1500, 12000));
     if (!downloaded) continue;
+    if (downloaded.sourceFilename) outer.push(readEpisodeEvidence(downloaded.sourceFilename, true));
     const extracted = extractSubtitleFromBuffer(downloaded.buffer, episodeNumber,
       downloaded.filename || item.filename || item.url, true, targetSeason,
       { localEpisode, evidence: outer, allowUnnumberedMovie: movie && links.size === 1 && outer.every(e => !e.episodes.length && !e.range && !e.conflict && !e.multipleSeasons) });
@@ -932,20 +891,26 @@ export async function fetchCreatorSubtitle(
       return extractOnlineDriveFolderSubtitle(
         website, creatorName, episodeNumber, targetSeason, timeoutMs, localEpisode);
     }
+    if (extractGdriveId(website) || boxSharedFile(website)) {
+      const downloaded = await downloadFileWithMetadata(website, undefined, Math.max(timeoutMs, 12000));
+      if (!downloaded) return null;
+      const extracted = extractSubtitleFromBuffer(downloaded.buffer, episodeNumber,
+        downloaded.filename, true, targetSeason, { localEpisode,
+          evidence: downloaded.sourceFilename ? [readEpisodeEvidence(downloaded.sourceFilename, true)] : [] });
+      return extracted ? { name: creatorName, episode: localEpisode, ...extracted,
+        url: website, sourceCreatorWebsite: website } : null;
+    }
 
     // 단일 페이지에서 자막 파일(첨부파일/구글드라이브/다운로드링크) 추출 헬퍼 함수
     const tryExtractFromPage = async (targetUrl: string, providedHtml?: string): Promise<SubtitleResult | null> => {
       try {
         let postUrl = targetUrl;
-        if (domain.includes("blog.naver.com")) {
-          const match = targetUrl.match(/blog\.naver\.com\/([^/?&]+)\/(\d+)/);
-          if (match) postUrl = `https://blog.naver.com/PostView.naver?blogId=${match[1]}&logNo=${match[2]}`;
-        }
-        let html = postUrl === targetUrl ? providedHtml : undefined;
+        let html = providedHtml;
         if (!html) {
-          const response = await fetch(postUrl, { headers: HEADERS, signal: AbortSignal.timeout(timeoutMs) });
-          if (!response.ok) return null;
-          html = await response.text();
+          const page = await fetchSubtitleBlogPage(postUrl, HEADERS, timeoutMs);
+          if (!page) return null;
+          html = page.html;
+          postUrl = page.url;
         }
         return await extractSubtitleFromBlogPage(html, postUrl, creatorName, episodeNumber,
           targetSeason, timeoutMs, localEpisode, work);
@@ -961,16 +926,16 @@ export async function fetchCreatorSubtitle(
     let isInitialUrlCurrentEp = false;
     let postSeasonMatch = true;
     let initialPageHtml = "";
+    let initialPageUrl = website;
     let initialWorkTitle = "";
 
     try {
-      const initRes = await fetch(website, {
-        headers: HEADERS,
-        signal: AbortSignal.timeout(domain.includes("tistory.com") ? 8000 : 4000),
-      });
-      if (initRes.ok) {
-        const initHtml = await initRes.text();
+      const initialPage = await fetchSubtitleBlogPage(website, HEADERS,
+        domain.includes("tistory.com") ? 8000 : Math.max(4000, timeoutMs));
+      if (initialPage) {
+        const initHtml = initialPage.html;
         initialPageHtml = initHtml;
+        initialPageUrl = initialPage.url;
         const $init = cheerio.load(initHtml);
         const pageTitle = subtitlePostTitle($init);
         const postHeading = pageTitle;
@@ -1043,7 +1008,7 @@ export async function fetchCreatorSubtitle(
     } catch {}
 
     if (isSpecificPost && postSeasonMatch) {
-      const initExtracted = await tryExtractFromPage(website, initialPageHtml);
+      const initExtracted = await tryExtractFromPage(initialPageUrl, initialPageHtml);
       if (initExtracted) return initExtracted;
     }
 

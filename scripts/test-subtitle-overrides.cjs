@@ -184,7 +184,7 @@ function renderSubtitleModal(candidate,{animeId,episode=1,tab='creators',searchE
   const dependencies={react,'react/jsx-runtime':{jsx,jsxs:jsx},'react-dom':{createPortal:tree=>tree},
     'lucide-react':new Proxy({},{get:(_,name)=>name}),'@/lib/subtitleLocalIdentity':identity,
     '@/lib/subtitleEpisodes':episodeEvidence,
-    './SubtitleFolderAssignments':()=>null,'./SubtitleEpisodeExceptions':()=>null};
+    './SubtitleFolderAssignments':()=>null,'./SubtitleEpisodeExceptions':()=>null,'./ErulaboDownloadButton':()=>null};
   const code=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../src/components/SubtitleSelectModal.tsx'),'utf8'),
     {compilerOptions:{...compilerOptions,jsx:ts.JsxEmit.ReactJSX}}).outputText;
   vm.runInNewContext(code,{module,exports:module.exports,require:id=>{

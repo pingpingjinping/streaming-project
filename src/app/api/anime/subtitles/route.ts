@@ -33,6 +33,7 @@ import {resolveSubtitleOverride, distinctLocalSubtitles} from "@/lib/subtitleOve
 import { getAdminLinkedSubtitles } from "@/lib/adminSubtitleLinker";
 import { activeSubtitleFolderRange } from "@/lib/subtitleFolderRanges";
 import { pruneVerifiedSubtitleCache } from "@/lib/subtitleCache";
+import { getErulaboSubtitle } from "@/lib/erulaboDownloads";
 
 async function pruneLocalCache(animeId: string, episode: number, subtitles: Array<{content: string; format: string}>) {
   if (!animeId || !subtitles.length) return;
@@ -92,7 +93,7 @@ function creatorBlogKey(website: string): string {
   try {
     const url = new URL(website);
     const host = url.hostname.toLowerCase();
-    if (host.endsWith(".tistory.com") || host.endsWith(".blogspot.com")) return host;
+    if (host.endsWith(".tistory.com") || host.endsWith(".blogspot.com") || host === "erulabo.com") return host;
     if (host === "blog.naver.com" || host === "m.blog.naver.com") {
       const id = url.searchParams.get("blogId") || url.pathname.split("/")[1];
       return id && !id.endsWith(".naver") ? `naver:${id}` : "";
@@ -668,15 +669,17 @@ export async function POST(request: NextRequest) {
 
     const isErusha = (creatorName.includes("에루샤") || (website && website.toLowerCase().includes("erulabo")))
       && !(localArchive && sourceProvider === "anissia");
+    let sub = null;
     if (isErusha) {
-      return NextResponse.json({
-        success: false,
-        message: "에루샤 님의 배포처(erulabo.com)는 Cloudflare 보안 캡차가 적용되어 있어 자동 추출이 지원되지 않습니다. 블로그에서 직접 다운로드해 주세요.",
-      });
+      const linked = animeId.startsWith("re_") ? await getReanimeMatch(animeId) : null;
+      sub = animeId && website ? await getErulaboSubtitle({ animeId, title: targetTitle, episode: ep,
+        sourceEpisode, season: targetSeason, website: String(website),
+        animeNo: linked?.anissiaNo || Number(animeId.match(/^(?:ani_)?(\d+)$/)?.[1]) || null }) : null;
+      if (!sub) return NextResponse.json({ success: false, requiresDownload: true,
+        message: "에루샤 자막은 ‘자막 받아오기’를 누르면 준비할 수 있어요." });
     }
 
-    let sub = null;
-    if (localArchive && sourceProvider === "anissia") {
+    if (!sub && localArchive && sourceProvider === "anissia") {
       const animeNoMatch = animeId.match(/^(?:ani_)?(\d+)$/);
       const animeNo = animeNoMatch ? Number(animeNoMatch[1]) : null;
       const archives = await getAnissiaArchiveSubtitles(
@@ -702,9 +705,9 @@ export async function POST(request: NextRequest) {
           url: local.website || undefined,
         };
       }
-    } else if (creatorName.includes("카이란") || (website && website.toLowerCase().includes("kairan"))) {
+    } else if (!sub && (creatorName.includes("카이란") || (website && website.toLowerCase().includes("kairan")))) {
       sub = await findKairanSubtitle(targetTitle, sourceEpisode, 5000, ep);
-    } else if (website) {
+    } else if (!sub && website) {
       if (sourceProvider === "aniall") {
         const blogTitle = String(creatorName).replace(/^AniAll\s*[·|]\s*/i, "").trim();
         sub = await getAniAllArchiveSubtitle(blogTitle, ep, targetSeason, sourceEpisodeStart, String(website));

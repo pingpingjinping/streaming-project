@@ -307,6 +307,7 @@ test('server detail page and watch navigation render only local 1-13; recent sou
 test('explicit subtitle selection passes source 13/25 and retains local 1/13 extraction context', async () => {
   const calls = [];
   const api = load('src/app/api/anime/subtitles/route.ts', {
+    '@/lib/erulaboDownloads':{getErulaboSubtitle:async()=>{throw Error('not an Erulabo selection');}},
     'next/server':{NextResponse:response}, '@/lib/auth':{getSessionUser:async()=>({username:'viewer'})},
     '@/lib/db':{getSubtitleEpisodeStart:async()=>13,getSubtitleRejections:async()=>[],saveSubtitleCreatorPreference:async()=>true},
     '@/lib/subtitles':{resolveKoreanTitle:async title=>title,parseSeason:()=>2,

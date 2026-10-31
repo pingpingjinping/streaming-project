@@ -46,7 +46,8 @@ async function locked<T>(base: string, wait: boolean, task: () => Promise<T>): P
 }
 
 export async function getVerifiedSubtitleCache(animeId: string, episode: number,
-  source?: {sourceProvider: 'aniall' | 'anissia'; sourceUrl: string; matchedTitle: string}) {
+  source?: {sourceProvider: 'aniall' | 'anissia'; sourceUrl: string; matchedTitle: string;
+    sourceEpisode?: number; season?: number | null}) {
   const dir = directory(cacheRoot(), animeId, episode);
   let names: string[];
   try { names = await readdir(dir); } catch (error: any) { if (error?.code === 'ENOENT') return null; throw error; }
@@ -60,6 +61,8 @@ export async function getVerifiedSubtitleCache(animeId: string, episode: number,
       if (source && (entry.metadata.sourceProvider !== source.sourceProvider
           || entry.metadata.sourceUrl !== source.sourceUrl
           || entry.metadata.matchedTitle !== source.matchedTitle)) continue;
+      if (source?.sourceEpisode !== undefined && entry.metadata.sourceEpisode !== source.sourceEpisode) continue;
+      if (source?.season !== undefined && (entry.metadata.season ?? 1) !== (source.season ?? 1)) continue;
       if (!['ASS','VTT'].includes(entry.metadata.format)) continue;
       const format = entry.metadata.format as 'ASS' | 'VTT';
       const content = await readFile(path.join(dir, `${entry.name.slice(0,-5)}.${extension(format)}`), 'utf8');
