@@ -166,7 +166,7 @@ export async function GET(request: NextRequest) {
     ? await Promise.all([
         getSubtitleRejections(animeIdParam),
         getSubtitleBundleAssignment(user.username, animeIdParam),
-        getSubtitleBundleAssignments(user.username),
+        getSubtitleBundleAssignments(user.username, animeIdParam),
         getSubtitleCreatorPreference(user.username, animeIdParam),
         getSubtitleEpisodeOverrides(user.username,animeIdParam),
       ])
@@ -388,7 +388,7 @@ export async function GET(request: NextRequest) {
               label:bundleAssignment?.label || chosen.sourceBundleLabel || title,exclusive:true};
             else {
               const current=await getSubtitleBundleAssignment(user.username,animeIdParam);
-              const others=await getSubtitleBundleAssignments(user.username);
+              const others=await getSubtitleBundleAssignments(user.username, animeIdParam);
               const preference=await getSubtitleCreatorPreference(user.username,animeIdParam);
               const claimed=others.some(entry=>entry.animeId!==animeIdParam && entry.provider===chosen.sourceProvider
                 && entry.exclusive && bundleScopesOverlap(entry.bundleKey,selectedKey));

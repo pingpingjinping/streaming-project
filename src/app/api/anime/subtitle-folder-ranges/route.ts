@@ -31,7 +31,7 @@ export async function PUT(request:NextRequest) {
   }
   const folder=await getLocalSubtitleFolder(data.bundleKey);
   if(!folder)return reply({success:false,message:'폴더가 없거나 접근할 수 없습니다.'},409);
-  const assignments=await getSubtitleBundleAssignments(user.username);
+  const assignments=await getSubtitleBundleAssignments(user.username, animeId);
   if(assignments.some(item=>item.animeId!==animeId && item.exclusive
       && item.provider===scope.provider && bundleScopesOverlap(item.bundleKey,data.bundleKey))) {
     return reply({success:false,message:'다른 작품에 지정된 폴더입니다. 먼저 소유권을 확인해 주세요.'},409);

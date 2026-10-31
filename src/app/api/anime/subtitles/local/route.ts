@@ -63,7 +63,7 @@ export async function GET(request: NextRequest) {
       getSubtitleRejections(animeId),
       getSubtitleSourcePriority(),
       animeId ? getSubtitleBundleAssignment(user.username, animeId) : Promise.resolve(null),
-      animeId ? getSubtitleBundleAssignments(user.username) : Promise.resolve([]),
+      animeId ? getSubtitleBundleAssignments(user.username, animeId) : Promise.resolve([]),
     ]);
     const isRejected = (provider: string, sourceKey: string) =>
       rejected.some((entry) => entry.provider === provider && entry.sourceKey === sourceKey);

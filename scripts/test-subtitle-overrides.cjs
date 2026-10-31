@@ -10,6 +10,9 @@ const srt=text=>Buffer.from(`1\n00:00:01,000 --> 00:00:03,000\n${text}\n`);
 const ass=text=>Buffer.from(`[Script Info]\nScriptType: v4.00+\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,${text}\n`);
 function put(relative,bytes){const file=path.join(root,relative);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,bytes);return file;}
 function zipFile(relative,files){const zip=new AdmZip();for(const[name,bytes]of Object.entries(files))zip.addFile(name,bytes);const bytes=zip.toBuffer();put(relative,bytes);return bytes;}
+const hellTitle='헬 모드 ~파고들기 좋아하는 게이머는 폐급 설정 이세계에서 무쌍한다~ 2nd Season';
+const hellRe='re_hell-mode-the-hardcore-gamer-dominates-in-another-world-with-garbage-balancing-season-2-f383t6';
+for(const ep of [1,2])put(`anissia_subtitles/${hellTitle}/HELL MODE The Hardcore Gamer Dominates in Another World with Garbage Balancing - s02e${String(ep).padStart(2,'0')}.ko.ass`,ass(`hell season two episode ${ep}`));
 zipFile('anissia_subtitles/101__작품 A/1화/제작자/subtitle.zip',{'01ns.srt':srt('A one ns'),'01s.srt':srt('A one sponsor')});
 zipFile('anissia_subtitles/101__작품 A/2화/제작자/subtitle.zip',{'02ns.srt':srt('A two ns'),'02s.srt':srt('A two sponsor')});
 zipFile('anissia_subtitles/102__작품 B/1화/제작자/subtitle.zip',{'01ns.srt':srt('B one ns')});
@@ -684,6 +687,94 @@ function loadSettingsDb(sql) {
     process:{env:{DATABASE_URL:'postgres://test'}},console,Buffer,setTimeout,clearTimeout});
   return exports;
 }
+
+function ownershipDb(manual=[], imported=[]) {
+  return loadSettingsDb(async(parts,...values)=>{
+    const query=parts.join('?');
+    if(query.includes('FROM anime_work_match_overrides'))return manual;
+    if(query.includes('FROM anime_reanime_matches'))return imported.filter(row=>
+      ['검토된 사항','자동확정'].includes(row.review_status) && row.anissia_no &&
+      (values.length===1 ? row.anissia_no===values[0]
+        : row.reanime_id===values[0] || String(row.anissia_no)===values[1]));
+    return [];
+  });
+}
+test('bundle ownership shares only explicit or unique reviewed IDs, in both directions',async()=>{
+  const manual=[{reanime_id:hellRe.slice(3),anissia_no:3485}];
+  const imported=[{reanime_id:'old-season',anissia_no:3485,review_status:'자동확정'},
+    {reanime_id:hellRe.slice(3),anissia_no:3298,review_status:'검토된 사항'}];
+  const api=ownershipDb(manual,imported);
+  for(const id of [hellRe,'ani_3485','3485'])assert.deepEqual([...(await api.getSubtitleBundleWorkIds(id))],['ani_3485',hellRe]);
+  for(const id of ['ani_3298','re_old-season'])assert.deepEqual([...(await api.getSubtitleBundleWorkIds(id))],[id]);
+  const reviewed=ownershipDb([], [{reanime_id:'reviewed',anissia_no:12,review_status:'자동확정'}]);
+  for(const id of ['ani_12','re_reviewed'])assert.deepEqual([...(await reviewed.getSubtitleBundleWorkIds(id))],['ani_12','re_reviewed']);
+});
+test('candidate and ambiguous imported pairs cannot bypass another work ownership',async()=>{
+  const api=ownershipDb([], [{reanime_id:'candidate',anissia_no:12,review_status:'후보'},
+    {reanime_id:'one',anissia_no:13,review_status:'검토된 사항'},
+    {reanime_id:'two',anissia_no:13,review_status:'자동확정'}]);
+  for(const id of ['re_candidate','ani_12','re_one','re_two','ani_13','ak_combined'])
+    assert.deepEqual([...(await api.getSubtitleBundleWorkIds(id))],[id]);
+});
+test('missing match tables retain exact ownership and unexpected DB errors are surfaced',async()=>{
+  const missing=loadSettingsDb(async()=>{throw {code:'42P01'};});
+  assert.deepEqual([...(await missing.getSubtitleBundleWorkIds(hellRe))],[hellRe]);
+  const broken=loadSettingsDb(async()=>{throw new Error('connection failed');});
+  await assert.rejects(broken.getSubtitleBundleWorkIds(hellRe),/connection failed/);
+});
+
+test('Hell Mode legacy Anissia folder plays through its manually linked ReAnime ID without stealing another season',
+  {skip:!process.env.REVIEWED_TEST_DATABASE_URL},async()=>{
+  const postgres=require('postgres'),schema=`bundle_alias_${process.pid}_${Date.now()}`;
+  const admin=postgres(process.env.REVIEWED_TEST_DATABASE_URL,{max:1});let sql;
+  const restored=[];
+  const replace=(obj,key,value)=>{restored.push([obj,key,obj[key]]);obj[key]=value;};
+  try {
+    await admin.unsafe(`CREATE SCHEMA ${schema}`);
+    sql=postgres(process.env.REVIEWED_TEST_DATABASE_URL,{max:5,connection:{search_path:schema}});
+    const api=loadSettingsDb(sql);await api.initDb();
+    await sql.unsafe('CREATE TABLE anime_reanime_matches(reanime_id text,korean_title text,anissia_no integer,review_status text)');
+    await sql`INSERT INTO anime_work_match_overrides(reanime_id,anissia_no,updated_by) VALUES(${hellRe.slice(3)},3485,'test')`;
+    const folder=identity.bundleScopeKey({type:'folder',provider:'anissia',work:hellTitle,kind:'main',season:2});
+    const seasonOne=identity.bundleScopeKey({type:'folder',provider:'anissia',work:'헬 모드 1기',kind:'main',season:1});
+    await sql`INSERT INTO subtitle_bundle_assignments(user_id,anime_id,provider,bundle_key,label) VALUES
+      ('alice','ani_3485','anissia',${folder},${hellTitle}),
+      ('alice','ani_3298','anissia',${seasonOne},'헬 모드 1기'),
+      ('bob','ani_3485','anissia',${folder},'Bob choice')`;
+    assert.equal((await api.getSubtitleBundleAssignment('alice',hellRe)).bundleKey,folder);
+    const context=await api.getSubtitleBundleAssignments('alice',hellRe);
+    assert.equal(context.find(row=>row.bundleKey===folder).animeId,hellRe);
+    assert.equal(context.find(row=>row.bundleKey===seasonOne).animeId,'ani_3298');
+    for(const key of ['getSubtitleBundleAssignment','getSubtitleBundleAssignments','saveSubtitleBundleAssignment'])replace(db,key,api[key]);
+    replace(db,'getDb',()=>sql);
+    replace(matches,'getReanimeMatch',async id=>id===hellRe?{koreanTitle:hellTitle,anissiaNo:3485}:null);
+    for(const ep of [1,2]) {
+      const response=await play(hellRe,hellTitle,ep);
+      assert.equal(response.count,1);assert.equal(response.needs_manual_subtitle_choice,false);
+      assert.ok(response.subtitles[0].content.includes(`hell season two episode ${ep}`));
+    }
+    assert.equal((await play('ani_3485',hellTitle,1)).count,1);
+    assert.equal((await api.getSubtitleBundleAssignment('alice','ani_3298')).bundleKey,seasonOne);
+    const selected=await api.getSubtitleBundleAssignment('alice',hellRe);
+    assert.equal(await api.saveSubtitleBundleAssignment('alice','re_unrelated','anissia',selected.bundleKey,'steal','',true),false);
+    assert.equal(await api.saveSubtitleBundleAssignment('alice',hellRe,'anissia',folder,'stale','',true),false);
+    assert.equal((await api.getSubtitleBundleAssignment('bob',hellRe)).bundleKey,folder);
+    // Read a historical ReAnime-only choice from the Anissia page, then
+    // consolidate a deliberate edit and delete through either alias.
+    await api.deleteSubtitleBundleAssignment('alice',hellRe);
+    await sql`INSERT INTO subtitle_bundle_assignments(user_id,anime_id,provider,bundle_key,label)
+      VALUES('alice',${hellRe},'anissia',${folder},'Legacy ReAnime')`;
+    assert.equal((await api.getSubtitleBundleAssignment('alice','ani_3485')).bundleKey,folder);
+    assert.equal(await api.saveSubtitleBundleAssignment('alice',hellRe,'anissia',folder,'Updated'),true);
+    assert.equal((await sql`SELECT anime_id FROM subtitle_bundle_assignments WHERE user_id='alice' AND anime_id=ANY(${['ani_3485',hellRe]}::text[])`)[0].anime_id,'ani_3485');
+    await api.deleteSubtitleBundleAssignment('alice',hellRe);
+    assert.equal(await api.getSubtitleBundleAssignment('alice','ani_3485'),null);
+    assert.equal((await api.getSubtitleBundleAssignment('bob',hellRe)).bundleKey,folder);
+  } finally {
+    for(const[obj,key,value]of restored.reverse())obj[key]=value;
+    if(sql)await sql.end();await admin.unsafe(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await admin.end();
+  }
+});
 
 test('Final Stage subtitle offset defaults to 21 without replacing a viewer override',async()=>{
   let saved=null;
