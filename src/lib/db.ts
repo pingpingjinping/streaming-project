@@ -583,6 +583,37 @@ function toSubtitleBundleAssignment(row: any): SubtitleBundleAssignment {
   };
 }
 
+/** Bundle ownership follows only an explicit or uniquely reviewed Anissia/ReAnime
+ * pair. Candidate links and title similarity never make two seasons one owner. */
+export async function getSubtitleBundleWorkIds(animeId: string): Promise<string[]> {
+  const anissia = /^(?:ani_)?([1-9]\d*)$/.exec(animeId)?.[1] || "";
+  const reanime = /^re_([A-Za-z0-9_-]+)$/.exec(animeId)?.[1] || "";
+  const exact = anissia ? `ani_${anissia}` : animeId;
+  const sql = getDb();
+  if (!sql || (!anissia && !reanime)) return [exact];
+  let manual: Array<{reanime_id: string; anissia_no: number}> = [];
+  try {
+    manual = await sql`SELECT reanime_id, anissia_no FROM anime_work_match_overrides`;
+  } catch (error: any) { if (error?.code !== '42P01') throw error; }
+  const selected = manual.find(row => reanime ? row.reanime_id === reanime : String(row.anissia_no) === anissia);
+  if (selected) return [`ani_${selected.anissia_no}`, `re_${selected.reanime_id}`];
+  const effective = (rows: typeof manual) => rows.filter(row => !manual.some(override =>
+    override.reanime_id === row.reanime_id || override.anissia_no === row.anissia_no));
+  try {
+    let rows = effective(await sql`SELECT reanime_id, anissia_no FROM anime_reanime_matches
+      WHERE review_status IN ('검토된 사항','자동확정') AND anissia_no IS NOT NULL
+        AND (reanime_id=${reanime} OR anissia_no::text=${anissia})`);
+    if (rows.length !== 1) return [exact];
+    // A reverse link must also be unique: never share a combined page or an
+    // ambiguous import with several separately identified ReAnime works.
+    if (reanime) rows = effective(await sql`SELECT reanime_id, anissia_no FROM anime_reanime_matches
+      WHERE review_status IN ('검토된 사항','자동확정') AND anissia_no=${rows[0].anissia_no}`);
+    if (rows.length === 1 && (!reanime || rows[0].reanime_id === reanime))
+      return [`ani_${rows[0].anissia_no}`, `re_${rows[0].reanime_id}`];
+  } catch (error: any) { if (error?.code !== '42P01') throw error; }
+  return [exact];
+}
+
 export async function getSubtitleBundleAssignment(
   userId: string,
   animeId: string,
@@ -591,31 +622,35 @@ export async function getSubtitleBundleAssignment(
   if (!sql || !userId || !animeId) return null;
   await initDb();
   try {
+    const workIds = await getSubtitleBundleWorkIds(animeId);
     const rows = await sql`
       SELECT anime_id, provider, bundle_key, label, exclusive
       FROM subtitle_bundle_assignments
-      WHERE user_id = ${userId} AND anime_id = ${animeId}
+      WHERE user_id = ${userId} AND anime_id = ANY(${workIds}::text[])
+      ORDER BY CASE WHEN anime_id = ${workIds[0]} THEN 0 ELSE 1 END, updated_at DESC
       LIMIT 1
     `;
-    return rows[0] ? toSubtitleBundleAssignment(rows[0]) : null;
+    return rows[0] ? {...toSubtitleBundleAssignment(rows[0]), animeId} : null;
   } catch (e) {
     console.warn("[getSubtitleBundleAssignment warning]:", e);
     return null;
   }
 }
 
-export async function getSubtitleBundleAssignments(userId: string): Promise<SubtitleBundleAssignment[]> {
+export async function getSubtitleBundleAssignments(userId: string, animeId?: string): Promise<SubtitleBundleAssignment[]> {
   const sql = getDb();
   if (!sql || !userId) return [];
   await initDb();
   try {
+    const workIds = animeId ? await getSubtitleBundleWorkIds(animeId) : [];
     const rows = await sql`
       SELECT anime_id, provider, bundle_key, label, exclusive
       FROM subtitle_bundle_assignments
       WHERE user_id = ${userId}
       ORDER BY updated_at DESC
     `;
-    return rows.map(toSubtitleBundleAssignment);
+    return rows.map(row => ({...toSubtitleBundleAssignment(row),
+      animeId: animeId && workIds.includes(String(row.anime_id)) ? animeId : String(row.anime_id)}));
   } catch (e) {
     console.warn("[getSubtitleBundleAssignments warning]:", e);
     return [];
@@ -637,36 +672,42 @@ export async function saveSubtitleBundleAssignment(
       !bundleKey || bundleKey.length > 2000 || label.length > 1000) return false;
   await initDb();
   try {
+    const workIds = await getSubtitleBundleWorkIds(animeId);
+    const ownerId = workIds[0];
     return await sql.begin(async (tx) => {
       await tx`SELECT pg_advisory_xact_lock(hashtext(${userId}))`;
       const all=await tx`SELECT anime_id,provider,bundle_key FROM subtitle_bundle_assignments WHERE user_id=${userId}`;
       const current=all.filter(row=>row.provider===provider);
+      const own=all.filter(row=>workIds.includes(String(row.anime_id)));
       // Automatic selection/refinement must not overwrite a newer manual choice
       // or a different episode's refinement while this request was in flight.
       if(expectedBundleKey!==undefined && (expectedBundleKey===''
-        ? all.some(row=>row.anime_id===animeId)
-        : !current.some(row=>row.anime_id===animeId && row.bundle_key===expectedBundleKey)))return false;
+        ? own.length>0
+        : own.length!==1 || !current.some(row=>workIds.includes(String(row.anime_id)) && row.bundle_key===expectedBundleKey)))return false;
       if(automatic) {
-        if(current.some(row=>row.anime_id!==animeId && bundleScopesOverlap(bundleKey,row.bundle_key)))return false;
-        const preference=await tx`SELECT anime_id FROM subtitle_creator_preferences WHERE user_id=${userId} AND anime_id=${animeId}`;
+        if(current.some(row=>!workIds.includes(String(row.anime_id)) && bundleScopesOverlap(bundleKey,row.bundle_key)))return false;
+        const preference=await tx`SELECT anime_id FROM subtitle_creator_preferences WHERE user_id=${userId} AND anime_id=ANY(${workIds}::text[])`;
         if(preference.length)return false;
       }
       for(const row of current) {
-        if(row.anime_id!==animeId && bundleScopesOverlap(bundleKey,row.bundle_key)) {
+        if(row.anime_id!==ownerId && bundleScopesOverlap(bundleKey,row.bundle_key)) {
           await tx`DELETE FROM subtitle_bundle_assignments WHERE user_id=${userId} AND anime_id=${row.anime_id}`;
         }
       }
+      // Consolidate legacy choices made through either page into one owner.
+      await tx`DELETE FROM subtitle_bundle_assignments WHERE user_id=${userId}
+        AND anime_id=ANY(${workIds}::text[]) AND anime_id<>${ownerId}`;
       // A local bundle has one owner per user. Reassigning it moves ownership
       // from a wrong season/work instead of leaving the bundle visible twice.
       await tx`
         DELETE FROM subtitle_bundle_assignments
         WHERE user_id = ${userId} AND provider = ${provider}
-          AND bundle_key = ${bundleKey} AND anime_id <> ${animeId}
+          AND bundle_key = ${bundleKey} AND anime_id <> ${ownerId}
       `;
       await tx`
         INSERT INTO subtitle_bundle_assignments
           (user_id, anime_id, provider, bundle_key, label, exclusive, updated_at)
-        VALUES (${userId}, ${animeId}, ${provider}, ${bundleKey}, ${label}, TRUE, CURRENT_TIMESTAMP)
+        VALUES (${userId}, ${ownerId}, ${provider}, ${bundleKey}, ${label}, TRUE, CURRENT_TIMESTAMP)
         ON CONFLICT (user_id, anime_id)
         DO UPDATE SET provider = EXCLUDED.provider, bundle_key = EXCLUDED.bundle_key,
           label = EXCLUDED.label, exclusive = TRUE, updated_at = CURRENT_TIMESTAMP
@@ -674,7 +715,7 @@ export async function saveSubtitleBundleAssignment(
       // A deliberate local bundle choice replaces an older online creator preference.
       await tx`
         DELETE FROM subtitle_creator_preferences
-        WHERE user_id = ${userId} AND anime_id = ${animeId}
+        WHERE user_id = ${userId} AND anime_id = ANY(${workIds}::text[])
       `;
       return true;
     });
@@ -689,9 +730,10 @@ export async function deleteSubtitleBundleAssignment(userId: string, animeId: st
   if (!sql || !userId || !animeId) return false;
   await initDb();
   try {
+    const workIds = await getSubtitleBundleWorkIds(animeId);
     await sql`
       DELETE FROM subtitle_bundle_assignments
-      WHERE user_id = ${userId} AND anime_id = ${animeId}
+      WHERE user_id = ${userId} AND anime_id = ANY(${workIds}::text[])
     `;
     return true;
   } catch (e) {
@@ -730,13 +772,15 @@ export async function getSubtitleCreatorPreference(
   if (!sql || !userId || !animeId) return null;
   await initDb();
   try {
+    const workIds = await getSubtitleBundleWorkIds(animeId);
     const rows = await sql`
       SELECT anime_id, source_provider, creator_name, website, matched_title, creator_episode
       FROM subtitle_creator_preferences
-      WHERE user_id = ${userId} AND anime_id = ${animeId}
+      WHERE user_id = ${userId} AND anime_id = ANY(${workIds}::text[])
+      ORDER BY CASE WHEN anime_id = ${workIds[0]} THEN 0 ELSE 1 END, updated_at DESC
       LIMIT 1
     `;
-    return rows[0] ? toSubtitleCreatorPreference(rows[0]) : null;
+    return rows[0] ? {...toSubtitleCreatorPreference(rows[0]), animeId} : null;
   } catch (e) {
     console.warn("[getSubtitleCreatorPreference warning]:", e);
     return null;
@@ -756,18 +800,22 @@ export async function saveSubtitleCreatorPreference(
       value.matchedTitle.length > 1000 || value.creatorEpisode.length > 64) return false;
   await initDb();
   try {
+    const workIds = await getSubtitleBundleWorkIds(animeId);
+    const ownerId = workIds[0];
     await sql.begin(async (tx) => {
       await tx`SELECT pg_advisory_xact_lock(hashtext(${userId}))`;
       // An explicit blog-creator choice and a local bundle choice are mutually exclusive.
       await tx`
         DELETE FROM subtitle_bundle_assignments
-        WHERE user_id = ${userId} AND anime_id = ${animeId}
+        WHERE user_id = ${userId} AND anime_id = ANY(${workIds}::text[])
       `;
+      await tx`DELETE FROM subtitle_creator_preferences WHERE user_id=${userId}
+        AND anime_id=ANY(${workIds}::text[]) AND anime_id<>${ownerId}`;
       await tx`
         INSERT INTO subtitle_creator_preferences
           (user_id, anime_id, source_provider, creator_name, website, matched_title, creator_episode, updated_at)
         VALUES (
-          ${userId}, ${animeId}, ${value.sourceProvider}, ${value.creatorName},
+          ${userId}, ${ownerId}, ${value.sourceProvider}, ${value.creatorName},
           ${value.website}, ${value.matchedTitle}, ${value.creatorEpisode}, CURRENT_TIMESTAMP
         )
         ON CONFLICT (user_id, anime_id)
@@ -789,9 +837,10 @@ export async function deleteSubtitleCreatorPreference(userId: string, animeId: s
   if (!sql || !userId || !animeId) return false;
   await initDb();
   try {
+    const workIds = await getSubtitleBundleWorkIds(animeId);
     await sql`
       DELETE FROM subtitle_creator_preferences
-      WHERE user_id = ${userId} AND anime_id = ${animeId}
+      WHERE user_id = ${userId} AND anime_id = ANY(${workIds}::text[])
     `;
     return true;
   } catch (e) {
