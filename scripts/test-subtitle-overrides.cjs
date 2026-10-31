@@ -770,6 +770,17 @@ test('Hell Mode legacy Anissia folder plays through its manually linked ReAnime 
     await api.deleteSubtitleBundleAssignment('alice',hellRe);
     assert.equal(await api.getSubtitleBundleAssignment('alice','ani_3485'),null);
     assert.equal((await api.getSubtitleBundleAssignment('bob',hellRe)).bundleKey,folder);
+    await api.saveSubtitleBundleAssignment('alice','ani_3485','anissia',folder,'Local');
+    const creator={sourceProvider:'anissia',creatorName:'에루샤',website:'https://erulabo.com/855',matchedTitle:hellTitle,creatorEpisode:'13'};
+    assert.equal(await api.saveSubtitleCreatorPreference('alice',hellRe,creator),true);
+    assert.equal(await api.getSubtitleBundleAssignment('alice','ani_3485'),null);
+    assert.equal((await api.getSubtitleCreatorPreference('alice','ani_3485')).website,creator.website);
+    assert.equal(await api.saveSubtitleBundleAssignment('alice','ani_3485','anissia',folder,'stale','',true),false);
+    await api.saveSubtitleBundleAssignment('alice',hellRe,'anissia',folder,'Back to local');
+    assert.equal(await api.getSubtitleCreatorPreference('alice','ani_3485'),null);
+    await api.saveSubtitleCreatorPreference('alice',hellRe,creator);
+    await api.deleteSubtitleCreatorPreference('alice',hellRe);
+    assert.equal(await api.getSubtitleCreatorPreference('alice','ani_3485'),null);
   } finally {
     for(const[obj,key,value]of restored.reverse())obj[key]=value;
     if(sql)await sql.end();await admin.unsafe(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await admin.end();

@@ -772,13 +772,15 @@ export async function getSubtitleCreatorPreference(
   if (!sql || !userId || !animeId) return null;
   await initDb();
   try {
+    const workIds = await getSubtitleBundleWorkIds(animeId);
     const rows = await sql`
       SELECT anime_id, source_provider, creator_name, website, matched_title, creator_episode
       FROM subtitle_creator_preferences
-      WHERE user_id = ${userId} AND anime_id = ${animeId}
+      WHERE user_id = ${userId} AND anime_id = ANY(${workIds}::text[])
+      ORDER BY CASE WHEN anime_id = ${workIds[0]} THEN 0 ELSE 1 END, updated_at DESC
       LIMIT 1
     `;
-    return rows[0] ? toSubtitleCreatorPreference(rows[0]) : null;
+    return rows[0] ? {...toSubtitleCreatorPreference(rows[0]), animeId} : null;
   } catch (e) {
     console.warn("[getSubtitleCreatorPreference warning]:", e);
     return null;
@@ -798,18 +800,22 @@ export async function saveSubtitleCreatorPreference(
       value.matchedTitle.length > 1000 || value.creatorEpisode.length > 64) return false;
   await initDb();
   try {
+    const workIds = await getSubtitleBundleWorkIds(animeId);
+    const ownerId = workIds[0];
     await sql.begin(async (tx) => {
       await tx`SELECT pg_advisory_xact_lock(hashtext(${userId}))`;
       // An explicit blog-creator choice and a local bundle choice are mutually exclusive.
       await tx`
         DELETE FROM subtitle_bundle_assignments
-        WHERE user_id = ${userId} AND anime_id = ${animeId}
+        WHERE user_id = ${userId} AND anime_id = ANY(${workIds}::text[])
       `;
+      await tx`DELETE FROM subtitle_creator_preferences WHERE user_id=${userId}
+        AND anime_id=ANY(${workIds}::text[]) AND anime_id<>${ownerId}`;
       await tx`
         INSERT INTO subtitle_creator_preferences
           (user_id, anime_id, source_provider, creator_name, website, matched_title, creator_episode, updated_at)
         VALUES (
-          ${userId}, ${animeId}, ${value.sourceProvider}, ${value.creatorName},
+          ${userId}, ${ownerId}, ${value.sourceProvider}, ${value.creatorName},
           ${value.website}, ${value.matchedTitle}, ${value.creatorEpisode}, CURRENT_TIMESTAMP
         )
         ON CONFLICT (user_id, anime_id)
@@ -831,9 +837,10 @@ export async function deleteSubtitleCreatorPreference(userId: string, animeId: s
   if (!sql || !userId || !animeId) return false;
   await initDb();
   try {
+    const workIds = await getSubtitleBundleWorkIds(animeId);
     await sql`
       DELETE FROM subtitle_creator_preferences
-      WHERE user_id = ${userId} AND anime_id = ${animeId}
+      WHERE user_id = ${userId} AND anime_id = ANY(${workIds}::text[])
     `;
     return true;
   } catch (e) {
