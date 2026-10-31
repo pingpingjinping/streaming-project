@@ -3,6 +3,7 @@ import SubtitleFolderAssignments from "./SubtitleFolderAssignments";
 import {parseBundleScope,bundleSelectionMatches} from "@/lib/subtitleLocalIdentity";
 import {readEpisodeEvidence} from "@/lib/subtitleEpisodes";
 import SubtitleEpisodeExceptions from "./SubtitleEpisodeExceptions";
+import ErulaboDownloadButton from "./ErulaboDownloadButton";
 
 import { useState, useRef, useEffect, DragEvent, ChangeEvent } from "react";
 import { createPortal } from "react-dom";
@@ -1217,7 +1218,11 @@ export default function SubtitleSelectModal({
                         <button type="button" onClick={() => changeRejection(creatorSource(c), true)}
                           disabled={Boolean(savingRejection)}
                           className="rounded-lg px-2 py-2 text-[11px] text-slate-400 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50">이 자막은 아니야</button>
-                        <button
+                        {!c.localArchive && (c.name.includes("에루샤") || /^https?:\/\/erulabo\.com\//i.test(c.website)) ? (
+                          <ErulaboDownloadButton request={{ animeId, title: searchKeyword || animeTitle,
+                            matchedTitle: c.matchedTitle, episodeNumber, creatorEpisode: c.episode, website: c.website }}
+                            disabled={isLoading || isCurrent || Boolean(loadingCreator)} onApply={() => handleSelectCreator(c)} />
+                        ) : <button
                           onClick={() => handleSelectCreator(c)}
                           disabled={isLoading || isCurrent}
                           className={`flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold transition shadow-md ${
@@ -1238,7 +1243,7 @@ export default function SubtitleSelectModal({
                           ) : (
                             c.localArchive ? "Pi 로컬 자막 적용" : "이 제작자 자막 적용"
                           )}
-                        </button>
+                        </button>}
                         </div>
                       </div>
                     );
@@ -1317,11 +1322,15 @@ export default function SubtitleSelectModal({
                         <p className="font-semibold text-white">{creator.matchedTitle || creator.name}</p>
                         <p className="truncate text-slate-400">{creator.name} · 최신 등록 {creator.episode || "알 수 없음"}화</p>
                       </div>
-                      <button type="button" onClick={() => handleSelectCreator(creator, searchEp, searchKeyword)}
+                      {!creator.localArchive && (creator.name.includes("에루샤") || /^https?:\/\/erulabo\.com\//i.test(creator.website)) ? (
+                        <ErulaboDownloadButton request={{ animeId, title: searchKeyword || animeTitle,
+                          matchedTitle: creator.matchedTitle, episodeNumber: searchEp, creatorEpisode: creator.episode, website: creator.website }}
+                          disabled={Boolean(loadingCreator)} onApply={() => handleSelectCreator(creator, searchEp, searchKeyword)} />
+                      ) : <button type="button" onClick={() => handleSelectCreator(creator, searchEp, searchKeyword)}
                         disabled={Boolean(loadingCreator)}
                         className="shrink-0 rounded-lg bg-purple-600 px-3 py-2 text-xs text-white disabled:opacity-50">
                         {loadingCreator === creatorKey(creator) ? "확인 중…" : "이 회차 확인"}
-                      </button>
+                      </button>}
                     </div>
                   ))}
                   {creatorError && <p className="text-xs text-red-400">{creatorError}</p>}
